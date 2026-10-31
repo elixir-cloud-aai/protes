@@ -407,3 +407,11 @@ clients may choose per task (`gateway`: `plugins_url`, the path of
 and the capabilities of the plugins, without their identifiers or
 versions; see [Choices of clients](plugins.md#choices-of-clients)); set
 `runtime_fields` to `null` in an overlay to hide them.
+
+!!! warning "The service info lists the TES instances publicly"
+
+    `GET /service-info` needs no token, so anyone can read the identifier,
+    URL, source, group and labels of each TES instance, also of those at
+    internal URLs and of those discovered in registries. Setting
+    `runtime_fields` to `null` hides `backends` and `gateway` together;
+    there is no setting to hide only `backends` yet.

@@ -32,7 +32,7 @@ phases:
    to that TES instance (its query, its headers and the task), and drop the
    credentials of the TES instance (`auth: none`); each TES instance gets
    its own copy. proTES then adds the credentials of the TES instance
-   (plugins never see them, and can't choose others), removes credentials
+   (they are not passed to plugins, which can't choose others), removes credentials
    from the URLs of inputs and outputs, and sends the task. Requests whose
    method or path a plugin changed (tasks are created with
    `POST /ga4gh/tes/v1/tasks`), whose task a plugin made invalid, or whose
@@ -46,11 +46,24 @@ phases:
    whose plugins fail or reject the response are skipped: the task runs at
    the TES instance, so it is kept and tracked.
 
-Plugins see the task, the request path, query and headers (without
+Plugins are passed the task, the request path, query and headers (without
 `Authorization`, `Cookie` and `Proxy-Authorization`) and the caller (its
-identity, roles, token claims and its validated access token), never the
-credentials of TES instances. Enable only plugins that you trust with the
-tokens of callers. Plugins can't set the headers `Host`, `Connection`,
+identity, roles, token claims and its validated access token), but not the
+credentials of TES instances.
+
+!!! warning "Plugins are fully trusted code"
+
+    Plugins run in the processes of proTES, with its rights: they can read
+    its environment (e.g., `PROTES_CLIENT_ID`, `PROTES_CLIENT_SECRET` and
+    the variables of Basic credentials), get its access tokens for TES
+    instances, and use its database. The limits of the plugin API (what is
+    passed to plugins, which headers they may set, time limits) guard
+    against mistakes, not against plugins written to get around them.
+    Enable only plugins that you have reviewed and trust with the
+    credentials of proTES and the tokens of callers, and install them
+    pinned by hash (see [Plugin images](plugin-images.md)).
+
+Plugins can't set the headers `Host`, `Connection`,
 `Content-Length`, `Transfer-Encoding`, `TE`, `Trailer`, `Upgrade` and
 `Proxy-Authorization` of requests to TES instances, which would change
 where or how they are sent.
@@ -104,10 +117,11 @@ list or of the pipeline can't be loaded, e.g., because it isn't installed
 or doesn't support the TES API.
 
 For example, with the routing plugins of
-[foca-plugins](https://foca-plugins.readthedocs.io/en/latest/) (once they
-are published), tasks go to the TES instances closest to their input data,
-with random order as the fallback, as with the former middlewares of
-proTES:
+[foca-plugins](https://foca-plugins.readthedocs.io/en/latest/), tasks go to
+the TES instances closest to their input data, with random order as the
+fallback, as with the former middlewares of proTES (the releases of these
+plugins for FOCA 0.19 are not published yet, see
+[Routing](upgrading.md#routing)):
 
 ```yaml
 plugins:
@@ -157,9 +171,16 @@ available: <id>`), invalid JSON, or a choice that the admin disabled
   proTES use other TES instances.
 
 Users (role `user`) list what they may choose with `GET /ga4gh/tes/v1/plugins`
-(the plugins and presets, the default pipeline, the limits of
+(the plugins that they may choose, the presets, the limits of
 `plugins.client_pipelines` and `plugins.client_backends`, and the tag
 prefix), and get a plugin with `GET /ga4gh/tes/v1/plugins/{plugin_id}`.
+The listing has only the plugins that the caller may use in pipelines of
+its own (with `plugins.client_pipelines` enabled for inline pipelines, and
+`client_selectable` and `roles` in `plugins.available`), and the steps
+of the default pipeline (and of `prepend` and `append`) only for callers
+who may choose pipelines (a preset for their roles, or
+`plugins.client_pipelines` enabled for inline pipelines): with the
+defaults, its `plugins` and `default_pipeline` are empty.
 Each plugin is listed with the data it sends to third parties
 (`data_transfers`), the data it keeps in its store (`data_stored`) and the
 store's mode (`storage`: `shared`, `local` or `off`; see [Plugin

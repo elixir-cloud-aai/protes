@@ -10,17 +10,22 @@ the recipe of this page: it installs exactly the distribution files that you
 pinned, reviewed and verified, and nothing else. Then enable the plugins in
 the config (see [Plugins](plugins.md)): installed is not enabled.
 
-!!! note "No plugins of foca-plugins published yet"
+!!! note "Plugins of foca-plugins"
 
     The plugins of ELIXIR On-Cloud, e.g., `tes.routing.distance`, are
-    developed in the repository foca-plugins and will be published to PyPI
-    as single distributions (`foca-plugin-<group>-<subgroup>-<name>`) and
-    as release trains (extras of the distribution `foca-plugins`, e.g.,
-    `foca-plugins[tes-routing]`); see its
+    developed in the repository foca-plugins and published to PyPI as
+    single distributions (`foca-plugin-<group>-<subgroup>-<name>`, e.g.,
+    `foca-plugin-tes-routing-distance` and
+    `foca-plugin-generic-routing-random`); release trains (extras of the
+    distribution `foca-plugins`, e.g., `foca-plugins[tes-routing]`) are not
+    published yet. See its
     [documentation](https://foca-plugins.readthedocs.io/en/latest/installing/).
-    The names below follow that scheme; the recipe works the same for
-    plugins of any repository, and CI tests it with a test plugin (see
-    [Testing the recipe](#testing-the-recipe)).
+    The releases 0.1.0 of the routing plugins support FOCA 0.18 only, so
+    `resolve.sh` fails for them against the images of this release, which
+    run FOCA 0.19, until releases for FOCA 0.19 are published (see
+    [Routing](upgrading.md#routing)). The recipe works the same for plugins
+    of any repository, and CI tests it with a test plugin (see [Testing the
+    recipe](#testing-the-recipe)).
 
 The commands below run in a directory of their own (the build context),
 with Docker and [jq](https://jqlang.org/), and the files `resolve.sh`,
@@ -139,7 +144,11 @@ plugins:
   available:
     tes.routing.distance:
       distribution: foca-plugin-tes-routing-distance
-      version: "==0.1.0"  # as in plugins.txt
+      version: ">0.1.0"  # a release for FOCA 0.19; or `==` the version of plugins.txt
+      config:
+        # a GeoIP database, e.g., added by a `COPY` of your own (see the
+        # plugin's README)
+        database: /opt/geoip/dbip-city-lite.mmdb
   pipeline:
     - id: route
       alternatives:

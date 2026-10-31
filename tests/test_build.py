@@ -1,6 +1,7 @@
-"""Tests of the build: the base image, the FOCA pin and the Python version."""
+"""Tests of the build: base image, FOCA pin, Python version and context."""
 
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+import posixpath
 import re
 import tomllib
 
@@ -97,3 +98,68 @@ def test_python_version() -> None:
                     assert version == image, f"{workflow.name}: {name}"
     readthedocs = yaml.safe_load((ROOT / ".readthedocs.yaml").read_text())
     assert readthedocs["build"]["tools"]["python"] == image
+
+
+def _ignored(path: str, patterns: list[str]) -> bool:
+    """Tell whether Docker leaves a path out of the build context.
+
+    As Docker does: the last pattern that matches the path, or one of its
+    parent directories, decides; patterns starting with `!` re-include, and
+    are normalized (a leading `/` is dropped). An approximation for `*`,
+    `**`, `!` and character classes without negation (Docker uses Go's
+    `filepath.Match`).
+
+    Args:
+        path: Path relative to the build context.
+        patterns: Patterns of `.dockerignore`, in order.
+
+    Returns:
+        Whether the path is left out.
+    """
+    parts = PurePosixPath(path).parts
+    prefixes = [PurePosixPath(*parts[: n + 1]) for n in range(len(parts))]
+    ignored = False
+    for pattern in patterns:
+        include = pattern.startswith("!")
+        glob = posixpath.normpath(pattern.removeprefix("!").strip()).lstrip("/")
+        if any(prefix.full_match(glob) for prefix in prefixes):
+            ignored = not include
+    return ignored
+
+
+def test_dockerignore_secrets() -> None:
+    """The build context has no secret files, also in re-included paths.
+
+    `.dockerignore` re-includes whole directories (e.g., `pro_tes/`), so
+    `.env` files (but `.env.example`) and key files in them are left out
+    again; they would otherwise land in a layer of the image.
+    """
+    # as Docker reads it: comments start in the first column
+    patterns = [
+        line.strip()
+        for line in (ROOT / ".dockerignore").read_text().splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+    for path in (
+        ".env",
+        "pro_tes/.env",
+        "pro_tes/.env.local",
+        "pro_tes/config/.env.production",
+        "pro_tes/.ENV",
+        "pro_tes/.Env.production",
+        "pro_tes/.env.example/secret",
+        "pro_tes/tls.key",
+        "pro_tes/TLS.KEY",
+        "pro_tes/certs/server.pem",
+        "pro_tes/certs/client.p12",
+        "pro_tes/certs/client.pfx",
+    ):
+        assert _ignored(path, patterns), f"{path} is sent to the build"
+    for path in (
+        "pro_tes/app.py",
+        "pro_tes/config.yaml",
+        "pro_tes/.env.example",
+        "pyproject.toml",
+        "scripts/image_requirements.py",
+    ):
+        assert not _ignored(path, patterns), f"{path} is not sent to the build"

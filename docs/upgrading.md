@@ -1,19 +1,67 @@
 # Upgrading
 
-The [release notes](changelog.md) list the breaking changes of each release
-and how to upgrade. This page describes how existing setups and data are
-affected by changes since the last deployed version (images tagged by date,
-FOCA 0.12).
+The [release notes](changelog.md) list the breaking changes of each release.
+This page describes how existing setups and data are affected, and what to
+change: first for upgrades from 0.3.0 ([To version 0.4.0](#to-version-040)),
+then for deployments from before 0.3.0, i.e., images tagged by date, on FOCA
+0.12 ([From versions before 0.3.0](#from-versions-before-030)), which apply
+the steps of both parts.
 
-## Configuration
+## To version 0.4.0
 
-proTES runs on FOCA 0.19 and Python 3.13. Custom configs must apply the
-config changes of FOCA 0.14 to 0.19 (see the FOCA release notes and
-migration guides), e.g., `exceptions.mapping` instead of the old exception
-members, and no `validation_methods`, `validation_checks`, `environment` or
-`use_reloader`.
+Check each item; the sections below have the details.
 
-With FOCA 0.18, settings and checks that proTES had of its own are FOCA's:
+1. **Image and chart:** deploy the image and the Helm chart of this release
+   together; both are built on FOCA 0.19 (see [FOCA 0.18 and
+   0.19](#foca-018-and-019) for the config changes of FOCA, and [Image and
+   chart](#image-and-chart)).
+2. **Plugins instead of middlewares:** `custom.middlewares` is refused at
+   startup; remove it and configure the top-level section `plugins` (see
+   [Plugins](#plugins)). Custom middlewares must be ported to FOCA plugins.
+3. **Routing default:** tasks no longer go to the TES instance closest to
+   their input data (with random order as the fallback), but to the TES
+   instances in the order of `custom.tes.backends`, to the next one only if
+   one doesn't accept a task (FOCA's `foca.routing.ordered`). With several
+   TES instances and the default settings, all tasks go to the first one,
+   without an error or warning. See [Routing](#routing) for how to keep
+   distance-based routing.
+4. **TES instances:** `custom.tes.service_list` and `custom.tes.discovery`
+   are replaced by `custom.tes.backends` (in the Helm chart, by
+   `tes.backends`); with a service registry, set the public URL of proTES
+   (see [TES instance list](#tes-instance-list)).
+5. **Access control rules:** custom lists of
+   `security.access_control.policies` must add the new rules
+   `users-list-plugins`, `users-get-plugins`, `owners-get-provenance` and
+   `admins-get-provenance`, or users get `403` (see [Task
+   provenance](#task-provenance)); overlays that change rules by name keep
+   them.
+6. **Database:** proTES uses new collections in the database of the tasks:
+   `plugin_builds`, `pipelines` and `failed_runs` (see [Task
+   provenance](#task-provenance)) and `plugin_store` (see [Plugin
+   store](#plugin-store)), and creates indexes on startup: the database
+   user of proTES needs the right `createIndex` (part of `readWrite`).
+   Custom configs used instead of the base config must declare the new
+   collections. The collection `middlewares` is no longer used and can be
+   dropped (see [Middleware management API](#middleware-management-api)).
+7. **Clients:** tasks that no TES instance accepts fail with `503` (was
+   `500`), requests that already passed proTES with `508 Loop Detected`
+   (if loop detection is configured), and tasks with tags under `gateway.`
+   other than `gateway.backends` (and `gateway.pipeline`, if enabled) with
+   `400`, which affects clients that submit fetched tasks again (see
+   [Plugins](#plugins) and [Task provenance](#task-provenance)). The plugin
+   listing has new required fields (see [Plugin store](#plugin-store)).
+   `logs[].metadata.forwarded_to` is deprecated.
+8. **Code that uses proTES as a library** (e.g., custom controllers):
+   `TaskRuns.create_task()`, `TesClient` and the exceptions changed (see
+   [Plugins](#plugins)), and the TES instances are read with
+   `get_backends()` (see [TES instance list](#tes-instance-list)).
+
+### FOCA 0.18 and 0.19
+
+proTES runs on FOCA 0.19 (was 0.17). Custom configs must apply the config
+changes of FOCA 0.18 and 0.19 (see the FOCA release notes and migration
+guides). With FOCA 0.18, settings and checks that proTES had of its own are
+FOCA's:
 
 - `custom.access_control.require_admin` moved to
   `security.access_control.require_admin` (`true` in the base config, as
@@ -60,6 +108,264 @@ With FOCA 0.18, settings and checks that proTES had of its own are FOCA's:
   (see [Task owners](operations.md#task-owners)).
   Deployments with a single trusted issuer are not affected.
 
+### TES instance list
+
+TES instances are listed in `custom.tes.backends`, a typed backend list of
+FOCA, in order (see [TES instances](configuration.md#tes-instances)): TES
+instances (`type: ga4gh-tes`) and service registries whose verified TES
+instances are used in their place (`type: ga4gh-service-registry`). It
+replaces `custom.tes.service_list` and `custom.tes.discovery` (of 0.3.0), which stop
+the app with a hint of the mapping: first the entries of `service_list`, in
+order, each with `type: ga4gh-tes` (and its `url`, `auth` and `basic`),
+then the registry of `discovery`, if any, as one entry with `type:
+ga4gh-service-registry`, its `registry_url` as `url`, and its other
+settings (`refresh_interval`, `timeout`, `versions`, `environments`,
+`auth`, `allow_private_addresses`), which keeps the order of earlier
+versions. For example, this config of 0.3.0:
+
+```yaml
+custom:
+  tes:
+    service_list:
+      - url: https://tes.example.org
+      - url: https://tes.example.com
+        auth: none
+    discovery:
+      registry_url: https://registry.example.org/ga4gh/registry/v1
+      environments: [prod]
+    client_credentials:
+      issuer: https://login.example.org/oidc/
+```
+
+becomes:
+
+```yaml
+server:
+  public_url: https://protes.example.org/
+custom:
+  tes:
+    backends:
+      - type: ga4gh-tes
+        url: https://tes.example.org
+      - type: ga4gh-tes
+        url: https://tes.example.com
+        auth: none
+      - type: ga4gh-service-registry
+        url: https://registry.example.org/ga4gh/registry/v1
+        environments: [prod]
+    client_credentials:
+      issuer: https://login.example.org/oidc/
+```
+
+With a registry, set the public URL of proTES (`server.public_url`; the Helm
+chart sets it from `hostName` or `publicUrl`): proTES refuses to start
+without it. TES instances at or below the public URL are never used, also
+without registries, and proTES refuses to start if one of the configured TES
+instances is (e.g., `https://<hostName>/funnel` behind the same ingress, if
+proTES is served at `https://<hostName>/`: serve proTES under a host or path
+prefix of its own, and set `publicUrl` to it, or move the TES instance to
+another host). `url_schemes` is set per entry: entries with `http` URLs (for
+local tests only) need `url_schemes: [https, http]`;
+`custom.tes.url_schemes` applies to the identity provider only. A registry
+whose last good read is older than `max_stale` seconds (default: 3600)
+yields no TES instances until it can be read again (earlier versions kept
+its last list indefinitely), and its own host must have public addresses,
+unless `registry_allow_private_addresses` is set. The service info lists the
+TES instances as objects (`backends`: `id`, `url`, `source`, `group` and
+`labels` of each) instead of URLs.
+
+### Plugins
+
+FOCA's plugin engine replaces the middlewares of proTES (see
+[Plugins](plugins.md)). The packages `pro_tes.middleware` and
+`pro_tes.plugins` are removed, and with them the distance-based and random
+task distribution and the dependency `geopy`.
+
+- `custom.middlewares` is refused: the app stops with a hint to the
+  top-level section `plugins`. Remove it from custom configs; set
+  `plugins.pipeline` instead (see [Plugins](plugins.md)). The Helm chart
+  sets the plugins from the values `plugins` (e.g., `plugins.pipeline`,
+  with camelCase keys, see the chart's [README](deployment.md)) and refuses
+  `config.custom.middlewares`.
+- Tasks go to the TES instances in the order of `custom.tes.backends`
+  by default, instead of by distance (see [Routing](#routing)).
+- Tasks that no TES instance accepts fail with `503 Service Unavailable`
+  (was `500 Internal Server Error`), also if no TES instance is configured;
+  errors of the plugin engine have a `problem_type`. Tasks with tags under
+  `gateway.` other than `gateway.backends` (and `gateway.pipeline`, if
+  enabled) are rejected with `400 Bad Request`; TES instances get the tasks
+  without these tags. If the public URL of proTES
+  (`server.public_url`) or `plugins.gateway_id` is set (the Helm chart sets
+  the former), requests to TES instances carry a `Via` header, and requests
+  that already passed proTES are refused with `508 Loop Detected` (see
+  [Plugins](plugins.md#how-a-task-is-processed)).
+- Custom middlewares must be ported to FOCA plugins (see FOCA's
+  documentation): installed packages with entry points of the group
+  `foca.plugins`.
+- Code that calls `TaskRuns.create_task()` directly (e.g., custom
+  controllers) passes the inbound request and the caller
+  (`inbound=foca.plugins.adapter.inbound_from_request(task)`,
+  `principal=foca.plugins.adapter.current_principal()`), and gets the
+  response body and headers (`(body, headers)`) instead of the body.
+  `TesClient.create_task()` is replaced by `TesClient.forward()`, and the
+  exceptions `NoTesInstancesAvailable`, `MiddlewareException`,
+  `InvalidMiddleware`, `InputUriError`, `IPDistanceCalculationError` and
+  `TesUriError` are removed (FOCA's `NoBackendAvailable` and other
+  `GatewayError`s take their place).
+
+Code that calls `TaskRuns` directly passes the request path of the tasks:
+`create_task(task=…, collection=…, …)` and `list_tasks(collection=…, …)`;
+`TaskRuns` no longer reads them from the request.
+
+### Routing
+
+0.3.0 sent each task to the TES instance closest to its input data
+(middleware `TaskDistributionDistance`, which located TES instances and
+inputs with DB-IP and Nominatim), with random order as the fallback
+(`TaskDistributionRandom`). This version has no routing of its own: the
+default pipeline is FOCA's ordered failover (`foca.routing.ordered`), the
+TES instances in the order of `custom.tes.backends` (those of each registry
+shuffled), the next one if a TES instance doesn't accept the task. proTES no
+longer calls third-party services to locate TES instances and inputs.
+
+To keep distance-based routing, deploy an image derived from that of this
+release with the routing plugins of
+[foca-plugins](https://foca-plugins.readthedocs.io/en/latest/), which are
+published on PyPI as `foca-plugin-tes-routing-distance` (plugin
+`tes.routing.distance`) and `foca-plugin-generic-routing-random` (plugin
+`generic.routing.random`), see [Plugin images](plugin-images.md), and
+enable them, e.g., in the values of the Helm chart. By default, the
+distance plugin locates addresses offline, with a GeoIP database that the
+derived image must contain; the online lookups of 0.3.0 (DB-IP and
+Nominatim) are an opt-in (`provider: dbip`; see the plugin's
+[README](https://github.com/elixir-cloud-aai/foca-plugins/tree/dev/plugins/tes/routing/distance)):
+
+```yaml
+protes:
+  image: registry.example.org/protes-plugins@sha256:<digest>
+  tag: ""
+plugins:
+  available:
+    tes.routing.distance:
+      distribution: foca-plugin-tes-routing-distance
+      version: ">0.1.0"  # a release for FOCA 0.19; or `==` the version of plugins.txt
+      config:
+        # a GeoIP database added to the image (see the plugin's README)
+        database: /opt/geoip/dbip-city-lite.mmdb
+    generic.routing.random:
+      distribution: foca-plugin-generic-routing-random
+      version: ">0.1.0"
+  pipeline:
+    - id: route
+      alternatives:
+        - plugin: tes.routing.distance
+        - plugin: generic.routing.random
+```
+
+!!! warning "Plugin releases for FOCA 0.19"
+
+    The releases 0.1.0 of both plugins support FOCA 0.18 only
+    (`foca>=0.18.0,<0.19`), so they can't be installed into the images of
+    this release: `resolve.sh` of the recipe fails. Until releases for FOCA
+    0.19 are published (see
+    [foca-plugins#32](https://github.com/elixir-cloud-aai/foca-plugins/issues/32)),
+    deployments that need distance-based routing stay on 0.3.0, or
+    accept the ordered failover in the meantime (order
+    `custom.tes.backends` by preference).
+
+### Task provenance
+
+New tasks have the provenance of their plugin pipeline in `provenance` of
+their document (see [Task provenance](operations.md#task-provenance));
+tasks stored by earlier versions have none, and are read, tracked and
+canceled as before. proTES declares three collections in the database of the
+tasks: `plugin_builds`, `pipelines` and `failed_runs`, whose TTL index on
+`failed_at` (30 days) it creates on startup; MongoDB creates the
+collections with their first document. Custom configs that are used
+instead of the base config (not as overlays, which keep its collections)
+must declare them, too. Records of failed runs are stored only with
+`plugins.provenance.record_failed: true`; without it, `failed_runs` stays
+empty.
+
+Owners and admins get the provenance with `GET /tasks/{id}/provenance`
+(rules `owners-get-provenance` and `admins-get-provenance` of the base
+config; custom lists of `security.access_control.policies` must add them).
+New tasks have the gateway tags of FOCA (`gateway.pipeline_source`,
+`gateway.backend`, ...; see [Gateway tags](api.md#gateway-tags)), served
+with the task: clients that submit a fetched task again must drop the tags
+under `gateway.` other than `gateway.backends` and `gateway.pipeline`, or
+it is rejected (`400`). `logs[].metadata.forwarded_to` is deprecated in
+favour of these tags, and will be removed in a later release.
+
+Users list what they may choose per task with `GET /plugins`, and the
+service info has a field `gateway` (see [Choices of
+clients](plugins.md#choices-of-clients)). Custom lists of
+`security.access_control.policies` must add the rules of the base config,
+or users get `403`:
+
+```yaml
+security:
+  access_control:
+    policies:
+      users-list-plugins: [p, user, /ga4gh/tes/v1/plugins, (GET)|(HEAD)]
+      users-get-plugins: [p, user, "/ga4gh/tes/v1/plugins/:id", (GET)|(HEAD)]
+```
+
+### Plugin store
+
+FOCA 0.19 gives plugins a key-value store (`ctx.store`, e.g., for caches
+and per-user counters; see [Plugin store](operations.md#plugin-store)).
+proTES keeps its entries in the collection `plugin_store` of the database of
+the tasks and creates its indexes on startup, so the database user of
+proTES needs the right to create indexes (`createIndex`, part of the role
+`readWrite`, which the Helm chart grants its app user; for an external
+MongoDB, check the roles of the user). Without it, proTES starts anyway and
+logs an error, and writes of plugins to the store fail. The new settings
+`plugins.defaults.store` and `plugins.available.<id>.store` (`enabled`,
+`max_entry_size`, `max_ttl`; see [Plugins](configuration.md#plugins)) have
+defaults, so configs need no change.
+
+The plugin listing (`GET /plugins`, `GET /plugins/{plugin_id}`) has two new
+required fields per plugin, from version 1.1.0 of FOCA's specification of
+the listing on: what the plugin keeps in its store (`data_stored`) and the
+store's mode (`storage`: `shared`, `local` or `off`). Clients that validate
+listings against an earlier specification must accept them.
+
+### Middleware management API
+
+The middleware management API is no longer registered, and its
+specification is removed: plugins are configured only (see
+[Plugins](plugins.md)). Its collection (`middlewares`) is no longer
+created, so it can be dropped.
+
+### Image and chart
+
+The image serves the app with FOCA's Gunicorn settings for containers
+(`gunicorn --config python:foca.gunicorn_config 'pro_tes.app:init_app()'`,
+its default command); `pro_tes.gunicorn_config` of 0.3.0 is gone, so
+deployments that override the command must change the module. The Helm
+chart of this release needs the image of this release.
+
+TES instances are listed in the chart's value `tes.backends`, with the
+chart's camelCase keys (e.g., `urlSchemes`, `basic.usernameEnv`), instead
+of `config.custom.tes.service_list` and `discovery`, on which rendering
+fails (see the chart's README, Configuration). The chart sets the public URL
+of proTES (`server.public_url`) to `https://<hostName>/`, or to `publicUrl`
+if set.
+
+## From versions before 0.3.0
+
+Deployments from before 0.3.0 (images tagged by date, FOCA 0.12) apply the
+steps of [To version 0.4.0](#to-version-040), too, and those of this part.
+
+### Configuration
+
+proTES runs on Python 3.13. Custom configs must apply the
+config changes of FOCA 0.14 to 0.17 (see the FOCA release notes and
+migration guides), e.g., `exceptions.mapping` instead of the old exception
+members, and no `validation_methods`, `validation_checks`, `environment` or
+`use_reloader`.
+
 The service info is configured in `service_info.service` (see [Service
 info](configuration.md#service-info)); it is no longer stored in the
 database, so the `service_info` collection can be dropped.
@@ -88,7 +394,7 @@ earlier versions again afterwards (see FOCA's [migration guide to
 0.17](https://foca.readthedocs.io/en/latest/migration-0.17/), also for
 downgrades).
 
-## Authentication
+### Authentication
 
 The TES API requires access tokens of trusted issuers, and roles from groups
 of the identity provider (see [Access control](access-control.md)); before,
@@ -112,7 +418,7 @@ responses for invalid tokens has an `error_description`, too. The new
 option `security.auth.clients` limits the accepted tokens to those of
 certain clients (by default, clients are not restricted).
 
-## Task ownership
+### Task ownership
 
 Users see, read and cancel only their own tasks, and admins no longer may do
 everything: they can't see the tasks of others, and only manage the access
@@ -136,7 +442,7 @@ through the API; operators can give them to their users, or purge them (see
 [Task owners](operations.md#task-owners)). Each new task adds two rules to
 the access control database.
 
-## Task identifiers
+### Task identifiers
 
 Task identifiers (`task.id`) are unique in the database: on startup,
 proTES creates a unique index on them (and an index on `worker_id`), and
@@ -195,72 +501,10 @@ e.g., with `mongosh` (`use <database>`), and start proTES again:
     db.policy_rules.deleteMany({ ptype: "g2", v0: "user:<sub>", v2: { $in: paths } })
     ```
 
-## TES instances and their credentials
+### TES instances and their credentials
 
-TES instances are listed in `custom.tes.backends`, a typed backend list of
-FOCA, in order (see [TES instances](configuration.md#tes-instances)): TES
-instances (`type: ga4gh-tes`) and service registries whose verified TES
-instances are used in their place (`type: ga4gh-service-registry`). It
-replaces `custom.tes.service_list` and `custom.tes.discovery` (of the
-previous release; before, `service_list` was a list of URLs), which stop
-the app with a hint of the mapping: first the entries of `service_list`, in
-order, each with `type: ga4gh-tes` (and its `url`, `auth` and `basic`),
-then the registry of `discovery`, if any, as one entry with `type:
-ga4gh-service-registry`, its `registry_url` as `url`, and its other
-settings (`refresh_interval`, `timeout`, `versions`, `environments`,
-`auth`, `allow_private_addresses`), which keeps the order of earlier
-versions. For example, this config of the previous release:
-
-```yaml
-custom:
-  tes:
-    service_list:
-      - url: https://tes.example.org
-      - url: https://tes.example.com
-        auth: none
-    discovery:
-      registry_url: https://registry.example.org/ga4gh/registry/v1
-      environments: [prod]
-    client_credentials:
-      issuer: https://login.example.org/oidc/
-```
-
-becomes:
-
-```yaml
-server:
-  public_url: https://protes.example.org/
-custom:
-  tes:
-    backends:
-      - type: ga4gh-tes
-        url: https://tes.example.org
-      - type: ga4gh-tes
-        url: https://tes.example.com
-        auth: none
-      - type: ga4gh-service-registry
-        url: https://registry.example.org/ga4gh/registry/v1
-        environments: [prod]
-    client_credentials:
-      issuer: https://login.example.org/oidc/
-```
-
-With a registry, set the public URL of proTES (`server.public_url`; the Helm
-chart sets it from `hostName` or `publicUrl`): proTES refuses to start
-without it. TES instances at or below the public URL are never used, also
-without registries, and proTES refuses to start if one of the configured TES
-instances is (e.g., `https://<hostName>/funnel` behind the same ingress, if
-proTES is served at `https://<hostName>/`: serve proTES under a host or path
-prefix of its own, and set `publicUrl` to it, or move the TES instance to
-another host). `url_schemes` is set per entry: entries with `http` URLs (for
-local tests only) need `url_schemes: [https, http]`;
-`custom.tes.url_schemes` applies to the identity provider only. A registry
-whose last good read is older than `max_stale` seconds (default: 3600)
-yields no TES instances until it can be read again (earlier versions kept
-its last list indefinitely), and its own host must have public addresses,
-unless `registry_allow_private_addresses` is set. The service info lists the
-TES instances as objects (`backends`: `id`, `url`, `source`, `group` and
-`labels` of each) instead of URLs.
+TES instances are listed in `custom.tes.backends` (see [TES instance
+list](#tes-instance-list)).
 
 Each entry of a TES instance has the URL of the TES instance (`url`) and how
 proTES authenticates at it (`auth`), instead of a URL; `auth` defaults to
@@ -323,12 +567,12 @@ The Celery task that tracks tasks no longer takes credentials
 versions queued but no worker started yet: upgrade while no tasks are being
 submitted, so that the queue is empty.
 
-## Errors
+### Errors
 
 Errors are [problem details](api.md#errors) (`title`, `status`, `detail`)
 instead of objects with `message` and `code`.
 
-## Stored tasks
+### Stored tasks
 
 `logs[].metadata.forwarded_to` of tasks is a list of forwards (`id`, `url`,
 `forward_time`), in the order of forwarding, instead of a nested
@@ -349,7 +593,7 @@ that failed requests don't fill the database. Tasks that a TES instance may
 have accepted (`502`) are still stored as `SYSTEM_ERROR`. Tasks stored as
 `SYSTEM_ERROR` by earlier versions are kept.
 
-## Task tracking
+### Task tracking
 
 Tasks are tracked by short polls that schedule the next one, instead of one
 Celery task per task that held a worker process until the task finished (see
@@ -372,7 +616,7 @@ positive, and `wait` and `max_wait` below 1800. The workers no longer set
 `INITIALIZING` when they start tracking a task: the state is the one
 reported by its TES instance.
 
-## Task times and remote identifiers
+### Task times and remote identifiers
 
 Times of tasks (`creation_time`, and `start_time` and `end_time` of the
 logs) are in UTC, in RFC 3339 format (e.g.,
@@ -399,7 +643,7 @@ more than `custom.controllers.post_task.max_create_time` seconds ago
 stored by earlier versions (see [Task
 tracking](operations.md#task-tracking)).
 
-## Task listing
+### Task listing
 
 `GET /tasks` returns an empty `next_page_token` on the last page (it
 returned the last task's identifier, so clients kept paging), and an empty
@@ -418,120 +662,7 @@ Tasks with an inline content of an input (`inputs[].content`) of more than
 with `413 Content Too Large`; raise the limit (and
 `server.max_content_length`) if needed, or use inputs with URLs.
 
-## Plugins
-
-FOCA's plugin engine replaces the middlewares of proTES (see
-[Plugins](plugins.md)). The packages `pro_tes.middleware` and
-`pro_tes.plugins` are removed, and with them the distance-based and random
-task distribution and the dependency `geopy`.
-
-- `custom.middlewares` is refused: the app stops with a hint to the
-  top-level section `plugins`. Remove it from custom configs; set
-  `plugins.pipeline` instead (see [Plugins](plugins.md)). The Helm chart
-  sets the plugins from the values `plugins` (e.g., `plugins.pipeline`,
-  with camelCase keys, see the chart's [README](deployment.md)) and refuses
-  `config.custom.middlewares`.
-- Tasks go to the TES instances in the order of `custom.tes.backends`
-  (those of each registry shuffled), to the next one if a TES instance
-  doesn't accept the task (FOCA's `foca.routing.ordered`). There is no
-  distance-based or random distribution in proTES anymore, and proTES no
-  longer calls third-party services (DB-IP, Nominatim) to locate TES
-  instances and inputs. The routing plugins `tes.routing.distance` and
-  `generic.routing.random` of
-  [foca-plugins](https://github.com/elixir-cloud-aai/foca-plugins) take
-  their place once they are published; install them and list them in
-  `plugins.available` and `plugins.pipeline`.
-- Tasks that no TES instance accepts fail with `503 Service Unavailable`
-  (was `500 Internal Server Error`), also if no TES instance is configured;
-  errors of the plugin engine have a `problem_type`. Tasks with tags under
-  `gateway.` other than `gateway.backends` (and `gateway.pipeline`, if
-  enabled) are rejected with `400 Bad Request`; TES instances get the tasks
-  without these tags. Requests to TES instances carry a `Via` header, and
-  requests that already passed proTES are refused with `508 Loop Detected`.
-- Custom middlewares must be ported to FOCA plugins (see FOCA's
-  documentation): installed packages with entry points of the group
-  `foca.plugins`.
-- Code that calls `TaskRuns.create_task()` directly (e.g., custom
-  controllers) passes the inbound request and the caller
-  (`inbound=foca.plugins.adapter.inbound_from_request(task)`,
-  `principal=foca.plugins.adapter.current_principal()`), and gets the
-  response body and headers (`(body, headers)`) instead of the body.
-  `TesClient.create_task()` is replaced by `TesClient.forward()`, and the
-  exceptions `NoTesInstancesAvailable`, `MiddlewareException`,
-  `InvalidMiddleware`, `InputUriError`, `IPDistanceCalculationError` and
-  `TesUriError` are removed (FOCA's `NoBackendAvailable` and other
-  `GatewayError`s take their place).
-
-Code that calls `TaskRuns` directly passes the request path of the tasks:
-`create_task(task=…, collection=…, …)` and `list_tasks(collection=…, …)`;
-`TaskRuns` no longer reads them from the request.
-
-## Task provenance
-
-New tasks have the provenance of their plugin pipeline in `provenance` of
-their document (see [Task provenance](operations.md#task-provenance));
-tasks stored by earlier versions have none, and are read, tracked and
-canceled as before. proTES declares three collections in the database of the
-tasks: `plugin_builds`, `pipelines` and `failed_runs`, whose TTL index on
-`failed_at` (30 days) it creates on startup; MongoDB creates the
-collections with their first document. Custom configs that are used
-instead of the base config (not as overlays, which keep its collections)
-must declare them, too. Records of failed runs are stored only with
-`plugins.provenance.record_failed: true`; without it, `failed_runs` stays
-empty.
-
-Owners and admins get the provenance with `GET /tasks/{id}/provenance`
-(rules `owners-get-provenance` and `admins-get-provenance` of the base
-config; custom lists of `security.access_control.policies` must add them).
-New tasks have the gateway tags of FOCA (`gateway.pipeline_source`,
-`gateway.backend`, ...; see [Gateway tags](api.md#gateway-tags)), served
-with the task: clients that submit a fetched task again must drop the tags
-under `gateway.` other than `gateway.backends` and `gateway.pipeline`, or
-it is rejected (`400`). `logs[].metadata.forwarded_to` is deprecated in
-favour of these tags, and will be removed in a later release.
-
-Users list what they may choose per task with `GET /plugins`, and the
-service info has a field `gateway` (see [Choices of
-clients](plugins.md#choices-of-clients)). Custom lists of
-`security.access_control.policies` must add the rules of the base config,
-or users get `403`:
-
-```yaml
-security:
-  access_control:
-    policies:
-      users-list-plugins: [p, user, /ga4gh/tes/v1/plugins, (GET)|(HEAD)]
-      users-get-plugins: [p, user, "/ga4gh/tes/v1/plugins/:id", (GET)|(HEAD)]
-```
-
-## Plugin store
-
-FOCA 0.19 gives plugins a key-value store (`ctx.store`, e.g., for caches
-and per-user counters; see [Plugin store](operations.md#plugin-store)).
-proTES keeps its entries in the collection `plugin_store` of the database of
-the tasks and creates its indexes on startup, so the database user of
-proTES needs the right to create indexes (`createIndex`, part of the role
-`readWrite`, which the Helm chart grants its app user; for an external
-MongoDB, check the roles of the user). Without it, proTES starts anyway and
-logs an error, and writes of plugins to the store fail. The new settings
-`plugins.defaults.store` and `plugins.available.<id>.store` (`enabled`,
-`max_entry_size`, `max_ttl`; see [Plugins](configuration.md#plugins)) have
-defaults, so configs need no change.
-
-The plugin listing (`GET /plugins`, `GET /plugins/{plugin_id}`) has two new
-required fields per plugin, from version 1.1.0 of FOCA's specification of
-the listing on: what the plugin keeps in its store (`data_stored`) and the
-store's mode (`storage`: `shared`, `local` or `off`). Clients that validate
-listings against an earlier specification must accept them.
-
-## Middleware management API
-
-The middleware management API is no longer registered, and its
-specification is removed: plugins are configured only (see
-[Plugins](plugins.md)). Its collection (`middlewares`) is no longer
-created, so it can be dropped.
-
-## Image
+### Image
 
 The image installs proTES as a package: it serves the app with `gunicorn
 --config python:foca.gunicorn_config 'pro_tes.app:init_app()'` (its
@@ -555,14 +686,7 @@ the image tag from `protes.tag`, which defaults to the chart's `appVersion`:
 [Image](deployment.md#image)). `protes.image` may still include a tag (e.g.,
 `elixircloud/protes:{{ version }}`); the Celery worker runs the app's image.
 
-## Helm chart
-
-TES instances are listed in the chart's value `tes.backends`, with the
-chart's camelCase keys (e.g., `urlSchemes`, `basic.usernameEnv`), instead
-of `config.custom.tes.service_list` and `discovery`, on which rendering
-fails (see the chart's README, Configuration). The chart sets the public URL
-of proTES (`server.public_url`) to `https://<hostName>/`, or to `publicUrl`
-if set.
+### Helm chart
 
 The Helm chart is replaced by a chart on FOCA's library chart `foca-common`
 (see [Deployment](deployment.md)): other values (camelCase, e.g., `hostName`
@@ -582,7 +706,7 @@ chart can't be upgraded: uninstall them and install the new chart, keeping
 the data as described in [From the legacy
 chart](deployment.md#from-the-legacy-chart).
 
-## Docker Compose
+### Docker Compose
 
 Docker Compose runs MongoDB 7.0 (was 3.6, which current PyMongo releases
 can't connect to), and keeps the data in named volumes instead of
