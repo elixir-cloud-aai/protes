@@ -16,5 +16,7 @@
 # files of the build context land in a layer of the image
 **/.env*
 !**/.env.example
-**/*.pem
-**/*.key
+**/*.[Pp][Ee][Mm]
+**/*.[Kk][Ee][Yy]
+**/*.[Pp]12
+**/*.[Pp][Ff][Xx]

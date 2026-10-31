@@ -1,6 +1,7 @@
 """Tests of the build: base image, FOCA pin, Python version and context."""
 
 from pathlib import Path, PurePosixPath
+import posixpath
 import re
 import tomllib
 
@@ -103,7 +104,10 @@ def _ignored(path: str, patterns: list[str]) -> bool:
     """Tell whether Docker leaves a path out of the build context.
 
     As Docker does: the last pattern that matches the path, or one of its
-    parent directories, decides; patterns starting with `!` re-include.
+    parent directories, decides; patterns starting with `!` re-include, and
+    are normalized (a leading `/` is dropped). An approximation for `*`,
+    `**`, `!` and character classes without negation (Docker uses Go's
+    `filepath.Match`).
 
     Args:
         path: Path relative to the build context.
@@ -117,7 +121,7 @@ def _ignored(path: str, patterns: list[str]) -> bool:
     ignored = False
     for pattern in patterns:
         include = pattern.startswith("!")
-        glob = pattern.removeprefix("!").rstrip("/")
+        glob = posixpath.normpath(pattern.removeprefix("!").strip()).lstrip("/")
         if any(prefix.full_match(glob) for prefix in prefixes):
             ignored = not include
     return ignored
@@ -130,10 +134,11 @@ def test_dockerignore_secrets() -> None:
     `.env` files (but `.env.example`) and key files in them are left out
     again; they would otherwise land in a layer of the image.
     """
+    # as Docker reads it: comments start in the first column
     patterns = [
         line.strip()
         for line in (ROOT / ".dockerignore").read_text().splitlines()
-        if line.strip() and not line.lstrip().startswith("#")
+        if line.strip() and not line.startswith("#")
     ]
     for path in (
         ".env",
@@ -141,7 +146,10 @@ def test_dockerignore_secrets() -> None:
         "pro_tes/.env.local",
         "pro_tes/config/.env.production",
         "pro_tes/tls.key",
+        "pro_tes/TLS.KEY",
         "pro_tes/certs/server.pem",
+        "pro_tes/certs/client.p12",
+        "pro_tes/certs/client.pfx",
     ):
         assert _ignored(path, patterns), f"{path} is sent to the build"
     for path in (
