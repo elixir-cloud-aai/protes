@@ -11,3 +11,13 @@
 **/__pycache__
 **/*.py[cod]
 **/*.egg-info
+
+# Exclude secrets also within the included paths (e.g., `pro_tes/.env`):
+# files of the build context land in a layer of the image
+**/.[Ee][Nn][Vv]*
+!**/.env.example
+**/.env.example/**
+**/*.[Pp][Ee][Mm]
+**/*.[Kk][Ee][Yy]
+**/*.[Pp]12
+**/*.[Pp][Ff][Xx]
