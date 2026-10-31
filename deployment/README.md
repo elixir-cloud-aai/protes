@@ -208,13 +208,12 @@ Always`), so that moving tags such as `dev` deploy the latest image; set
 the nodes (e.g., with `kind load`). The images of MongoDB, RabbitMQ and
 Flower are pinned to patch versions and pulled only if missing.
 
-The chart needs images built with FOCA 0.18 or later (installed as a
-package, with the worker entry point `pro_tes.celery_worker`, and with
-`security.access_control.require_admin`, which older images refuse; see
-[Image](https://protes.readthedocs.io/en/latest/upgrading/#image)); the
-store settings of plugins (`plugins.available.<id>.store`,
-`config.plugins.defaults.store`) need images built with FOCA 0.19 or later,
-which refuse them otherwise.
+The chart needs images of its release, built with FOCA 0.19 (installed as a
+package, with the worker entry point `pro_tes.celery_worker`,
+`security.access_control.require_admin`, and the store settings of plugins,
+`plugins.available.<id>.store` and `config.plugins.defaults.store`, which
+older images refuse; see [Image and
+chart](https://protes.readthedocs.io/en/latest/upgrading/#image-and-chart)).
 
 ## Installation
 

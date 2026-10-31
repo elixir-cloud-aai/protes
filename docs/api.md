@@ -13,10 +13,10 @@ control](access-control.md)).
 | --- | --- |
 | `GET /service-info` | The service info of the deployment (see [Service info](configuration.md#service-info)). |
 | `POST /tasks` | Create a task: proTES forwards it to a TES instance (see [Tasks](#tasks)) and returns its own identifier of the task. |
-| `GET /tasks` | List the caller's tasks, newest first, one page at a time (`page_size`, at most `max_page_size` of the [config](configuration.md#tasks), and `max_page_size_full` for the view `FULL`; `page_token` from `next_page_token` of the previous page, which is empty on the last page), optionally only those whose name starts with `name_prefix` (taken literally). |
+| `GET /tasks` | List the caller's tasks, newest first, one page at a time (`page_size`, at most `max_page_size` of the [config](configuration.md#tasks), and `max_page_size_full` for the view `FULL`; `page_token` from `next_page_token` of the previous page, which is empty on the last page), optionally only those whose name starts with `name_prefix` (taken literally; matched against the name of the task as submitted, before plugins may have renamed it). |
 | `GET /tasks/{id}` | Get a task of the caller, with its state as last tracked from the TES instance. |
 | `GET /tasks/{id}/provenance` | proTES extension: get the provenance of a task, for its owner and for admins (see [Provenance](#provenance)). |
-| `GET /plugins` | proTES extension (FOCA's plugin listing): list the plugins and presets that the caller may choose for its tasks, the default pipeline and the limits, for users (see [Choices of clients](plugins.md#choices-of-clients)). |
+| `GET /plugins` | proTES extension (FOCA's plugin listing): list the plugins and presets that the caller may choose for its tasks, and the limits, for users; the default pipeline only for callers who may choose pipelines (see [Choices of clients](plugins.md#choices-of-clients)). |
 | `GET /plugins/{plugin_id}` | proTES extension: describe a plugin that the caller may choose (`404 Not Found` otherwise). |
 | `POST /tasks/{id}:cancel` | Cancel a task of the caller that has not finished yet (also in state `UNKNOWN`, e.g., not tracked yet), at the TES instance that runs it; finished tasks are left as they are, also tasks that finish while they are canceled (their final state is kept). Unfinished tasks whose identifier at their TES instance is unknown (e.g., while they are being forwarded, or if forwarding failed unexpectedly) can't be canceled (`409 Conflict`). |
 
