@@ -118,10 +118,15 @@ plugins:
   # defaults in `config.plugins.defaults.store`; plugins of one
   # distribution share their entries, so give them the same `enabled`, else
   # the app warns at startup) and more
+  # Plugins other than FOCA's must be installed in the image (`protes.image`,
+  # see docs/plugin-images.md), e.g., the routing plugins of foca-plugins
+  # (`foca-plugin-tes-routing-distance` on PyPI)
   available: {}
   #   tes.routing.distance:
-  #     version: ">=1.0,<2"
-  #     config: {}
+  #     distribution: foca-plugin-tes-routing-distance
+  #     version: ">0.1.0"
+  #     config:
+  #       database: /opt/geoip/dbip-city-lite.mmdb
   #     store:
   #       maxTtl: 86400
   # Steps that process each new task, in order, each with alternatives

@@ -209,7 +209,12 @@ options](https://foca.readthedocs.io/en/latest/configuration/auth/)).
 
 The app logs the groups of each role on startup, and warns if no group has
 the role `user` (nobody can create tasks then) and if `group_mapping` is
-set without `claim_groups` (no group gets a role then). It refuses to start
+set without `claim_groups` (no group gets a role then). FOCA also warns on
+every startup that `group_mapping` is set without
+`security.access_control.keep_group_subjects`, so that rules granted to
+groups (`group:<value>`) don't apply: this warning is harmless for proTES,
+whose rules grant roles only, and is expected (see
+[foca#577](https://github.com/elixir-cloud-aai/foca/issues/577)). It refuses to start
 if access control is not enabled and enforced
 (`security.access_control.enabled` and `enforce`), as users could access
 the tasks of others then. The Docker Compose setup
@@ -282,15 +287,25 @@ credentials grant; it is a client of its own, not the client of the front
 ends whose tokens proTES accepts (`security.auth.audience`). All TES
 instances with `client_credentials` get the same token, so each of them
 could use it at the others until it expires: configure only TES instances
-that you trust, and keep the lifetime of the tokens short. Tasks are only
+that you trust, and keep the lifetime of the tokens short. This includes
+the TES instances discovered in service registries, whose entries default
+to `auth: client_credentials`: every TES instance that a registry's admins
+verify gets the token, and could use it at the other TES instances of
+proTES, also at the configured ones. The token has no audience per TES
+instance. Use registries whose admins you trust as much as the TES
+instances that you configure yourself, or set `auth: none` for registry
+entries whose TES instances don't need the token of proTES. Tasks are only
 forwarded to configured TES instances, and to those discovered in the
 service registries of `custom.tes.backends` (only verified ones, see
 [Discovery in a service
 registry](configuration.md#discovery-in-a-service-registry)); plugins
-can only choose among them (see [Plugins](plugins.md)). Plugins never see
-the credentials of TES instances, and can't choose other credentials for
-a TES instance than its own; in the `forward` phase, they may only drop
-them (`none`), e.g., to send credentials of their own. Keep TES instances in the list until their tasks have finished:
+can only choose among them (see [Plugins](plugins.md)). The credentials of
+TES instances are not passed to plugins, and the plugin API doesn't let
+them choose other credentials for a TES instance than its own; in the
+`forward` phase, they may only drop them (`none`), e.g., to send
+credentials of their own. Plugins are fully trusted code, though: they run
+in the processes of proTES and can read its credentials (see
+[Plugins](plugins.md#how-a-task-is-processed)). Keep TES instances in the list until their tasks have finished:
 tasks of TES instances that are no longer configured can't be tracked or
 canceled (their state becomes `UNKNOWN`, and is tracked again once the TES
 instance is configured again).

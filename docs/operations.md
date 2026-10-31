@@ -161,8 +161,16 @@ header values or claims, and take at most 1 MiB. Owners and admins get
 them with `GET /tasks/{id}/provenance` (see [Provenance](api.md#provenance)),
 and tasks carry a summary in their tags (`gateway.*`, see [Gateway
 tags](api.md#gateway-tags)). Tasks created by earlier versions have none.
-Records add no personal data to the task, besides the request identifier,
-and are deleted with it.
+Records are deleted with the task. They add no personal data to the task
+besides the request identifier, as long as the plugins that ran add none:
+records hold the resolved pipeline with the parameters of each plugin
+(`pipeline.resolved`, also for pipelines chosen by clients) and what plugins
+annotate. Plugins must declare secret parameters as `pydantic.SecretStr`
+(shown as `**********` in the records) and must not annotate personal
+data; check this when you review a plugin (see FOCA's
+[documentation](https://foca.readthedocs.io/en/latest/plugins/)), and
+don't put secrets in parameters of presets or the default pipeline
+otherwise. Owners and admins get the records, with the parameters.
 
 Shared parts are stored once, by hash (`_id`), in two more collections of
 the database of the tasks, and the records refer to them:
