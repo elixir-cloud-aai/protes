@@ -213,10 +213,13 @@ def check_backends(conf: Tes | None = None, public_url: str | None = None) -> No
             " host or path prefix of its own (and set `server.public_url` to"
             " it), or move the backends to other hosts"
         )
+    # registries too: the backends that their admins verify get the token
     token_backends = [
         entry.url
+        if isinstance(entry, ServiceEntry)
+        else f"those verified by registry {entry.url}"
         for entry in entries
-        if isinstance(entry, ServiceEntry) and entry.auth == "client_credentials"
+        if entry.auth == "client_credentials"
     ]
     if token_backends:
         # logs the URLs of the backends, not tokens

@@ -115,11 +115,19 @@ instances, as it may run already: it fails with `SYSTEM_ERROR` (see
 URL of a plain HTTP port) and of proxies count as unknown outcomes too, so
 they stop the failover: check the URLs of the TES instances. Set the
 timeout long enough for slow TES instances, but keep the duration of a
-request to create a task (per TES instance tried, up to 5 seconds to
-connect, and up to the timeout each to create the task and to get its
-state) below the read timeout of a reverse proxy in front of proTES (e.g.,
-60 seconds by default for ingress-nginx): clients that retry requests that
-timed out may create tasks twice. Requests in flight when an instance of
+request to create a task below the read timeout of a reverse proxy in front
+of proTES (e.g., 60 seconds by default for ingress-nginx): clients that
+retry requests that timed out may create tasks twice. Forwarding attempts
+start within `plugins.defaults.forward_timeout` seconds (20 in the base
+config; see [Plugins](plugins.md#how-a-task-is-processed)), but the last
+attempt may still take up to the timeout to be answered, and getting the
+state of the accepted task up to 5 seconds to connect and the timeout
+again, so a request takes up to `forward_timeout + 2 * timeout + 5`
+seconds (55 with the defaults), plus the time of the plugins (up to
+`plugins.defaults.pipeline_timeout` before and the timeouts of the
+`response` steps after forwarding; the default pipeline's plugin takes
+almost none). Raise the proxy's timeout, or lower these settings
+together. Requests in flight when an instance of
 proTES stops are cut off after Gunicorn's graceful timeout (20 seconds in
 the chart).
 
