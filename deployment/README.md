@@ -99,7 +99,11 @@ of the config:
   ordered failover as the pipeline).
 - Other settings of the app's `plugins` (e.g., `defaults`, with the
   defaults of the plugin store, `defaults.store`, and `gateway_id`) are
-  set in `config.plugins`.
+  set in `config.plugins`. The app's base config sets
+  `defaults.forward_timeout` to 20 seconds, so that requests to create
+  tasks end within the 60 seconds of common proxies; change it together
+  with `config.custom.tes.timeout` and the proxy's read timeout (see [TES
+  instances](https://protes.readthedocs.io/en/latest/configuration/#tes-instances)).
 - Rendering fails if a setting is set both in `plugins` and in
   `config.plugins`, and on `config.custom.middlewares`, which the plugins
   replaced.

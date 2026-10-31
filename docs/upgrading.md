@@ -190,7 +190,10 @@ task distribution and the dependency `geopy`.
 - Tasks go to the TES instances in the order of `custom.tes.backends`
   by default, instead of by distance (see [Routing](#routing)).
 - Tasks that no TES instance accepts fail with `503 Service Unavailable`
-  (was `500 Internal Server Error`), also if no TES instance is configured;
+  (was `500 Internal Server Error`), also if no TES instance is configured,
+  and if none accepted within `plugins.defaults.forward_timeout` (20 seconds
+  in the base config, so that requests to create tasks end within 60
+  seconds; see [TES instances](configuration.md#tes-instances));
   errors of the plugin engine have a `problem_type`. Tasks with tags under
   `gateway.` other than `gateway.backends` (and `gateway.pipeline`, if
   enabled) are rejected with `400 Bad Request`; TES instances get the tasks

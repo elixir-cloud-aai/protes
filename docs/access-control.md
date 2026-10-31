@@ -294,7 +294,10 @@ verify gets the token, and could use it at the other TES instances of
 proTES, also at the configured ones. The token has no audience per TES
 instance. Use registries whose admins you trust as much as the TES
 instances that you configure yourself, or set `auth: none` for registry
-entries whose TES instances don't need the token of proTES. Tasks are only
+entries whose TES instances don't need the token of proTES. On startup,
+proTES logs which TES instances get its token (`TES backends with access
+tokens of proTES: ...`), with the registries whose verified TES instances
+get it (`those verified by registry <url>`). Tasks are only
 forwarded to configured TES instances, and to those discovered in the
 service registries of `custom.tes.backends` (only verified ones, see
 [Discovery in a service

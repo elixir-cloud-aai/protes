@@ -20,6 +20,10 @@ BASE_PATH = "/ga4gh/tes/v1"
 # Read timeout of reverse proxies in front of proTES (e.g., ingress-nginx's
 # default), within which requests to create tasks must end
 PROXY_READ_TIMEOUT = 60
+# Time left for what the bound of `test_create_task_budget` leaves out: the
+# plugins of the default pipeline and the database (cf. "TES instances" in
+# `docs/configuration.md` for the other parts that it doesn't cover)
+HEADROOM = 5
 # Config overlay of the Compose smoke test
 SMOKE_CONFIG = Path(__file__).parent / "smoke" / "config.yaml"
 # Compose override of the smoke test
@@ -43,8 +47,10 @@ def test_create_task_budget(app: FlaskApp) -> None:
     Forwarding attempts start within `plugins.defaults.forward_timeout`; the
     last one may then still take `custom.tes.timeout` to be answered, and
     getting the state of the accepted task takes up to `CONNECT_TIMEOUT` and
-    `custom.tes.timeout` more (cf. `TaskRuns`). The rest (fast plugins of
-    the default pipeline, the database) must fit into what is left.
+    `custom.tes.timeout` more (cf. `TaskRuns`). A guard against drift of the
+    defaults only: registry reads, token requests, hosts with several
+    addresses and slow plugins aren't covered (see "TES instances" in
+    `docs/configuration.md`).
     """
     with app.app.app_context():
         conf = get_config()
@@ -56,7 +62,7 @@ def test_create_task_budget(app: FlaskApp) -> None:
         + CONNECT_TIMEOUT
         + tes.timeout
     )
-    assert worst <= PROXY_READ_TIMEOUT - 5
+    assert worst <= PROXY_READ_TIMEOUT - HEADROOM
 
 
 def test_service_info(client: FlaskClient) -> None:
