@@ -114,8 +114,9 @@ dependencies = [
     # FOCA minors are bumped by hand, together with the base image in the
     # `Dockerfile` (`.github/dependabot.yml`).
     "foca>=0.19.0,<0.20",
-    # The routing plugins of the default pipeline (`pro_tes/config.yaml`):
-    # `tes.routing.distance` and `generic.routing.random`. The release train
+    # The routing plugins in the image: `generic.routing.random` (default
+    # pipeline, `pro_tes/config.yaml`) and `tes.routing.distance` (opt-in,
+    # as it looks up addresses at third parties). The release train
     # pins each plugin to an exact version, which `uv.lock` records with
     # hashes; Dependabot bumps the train
     "foca-plugins[generic-routing,tes-routing]==0.1.0",

@@ -334,32 +334,22 @@ custom:
 # of `custom.tes.backends`, and change the request to each backend. Only
 # installed plugins listed in `available` (by entry point name) are loaded;
 # FOCA's built-in ones (`foca.*`) are always available. The default pipeline
-# routes tasks to the backends closest to their input data
-# (`tes.routing.distance`), or, if that doesn't apply (e.g., no input URLs, or
-# a lookup fails), in random order (`generic.routing.random`); both plugins
-# are installed in the image (foca-plugins). Steps have alternatives, tried in
+# routes tasks to the backends in random order (`generic.routing.random`,
+# installed in the image from foca-plugins), without third-party location
+# lookups (tasks still go to the configured backends). Routing to the backends closest to the input data
+# (`tes.routing.distance`, also installed) is an opt-in: it locates the hosts
+# of inputs with DB-IP and Nominatim, which receive their public addresses
+# (see `docs/plugins.md`, Pipelines). Steps have alternatives, tried in
 # order; clients may choose backends (tag `gateway.backends`), and pipelines
 # if `client_pipelines` is enabled. See `docs/plugins.md`
 # Cf. https://foca.readthedocs.io/en/latest/plugins/
 plugins:
   available:
-    # Locates inputs and backends with DB-IP and Nominatim, as the former
-    # middleware did: the public addresses of the hosts of inputs and of
-    # backends without a configured `location` are sent to these services
-    # (see `docs/plugins.md`, Pipelines). To keep data in the
-    # gateway, set `provider: offline` and a GeoIP database of your own
-    # (`database`), or use FOCA's `foca.routing.ordered` (see
-    # `docs/upgrading.md`)
-    tes.routing.distance:
-      distribution: foca-plugin-tes-routing-distance
-      config:
-        provider: dbip
     generic.routing.random:
       distribution: foca-plugin-generic-routing-random
   pipeline:
     - id: route
       alternatives:
-        - plugin: tes.routing.distance
         - plugin: generic.routing.random
   # Limits of plugin calls and forwarding (FOCA's defaults otherwise).
   # Forwarding attempts start within `forward_timeout` seconds (FOCA's

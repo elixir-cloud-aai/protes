@@ -32,9 +32,10 @@ security:
 #         url: https://tes.example.org
 #         auth: none
 # Plugins that process new tasks (see `docs/plugins.md`). The default
-# pipeline (distance routing with lookups at DB-IP and Nominatim) would send
-# the addresses of the hosts of task inputs to third parties, so this overlay
-# uses FOCA's ordered failover (the TES instances in the order listed above)
+# pipeline routes in random order; this overlay uses FOCA's ordered failover
+# instead (the TES instances in the order listed above). Routing by the
+# distance to the input data (`tes.routing.distance`) is an opt-in, as it
+# sends the addresses of the hosts of task inputs to third parties
 plugins:
   pipeline:
     - id: route

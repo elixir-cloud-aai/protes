@@ -253,9 +253,10 @@ state becomes `UNKNOWN` until it is discovered again).
 
 The top-level section `plugins` sets which installed plugins are available
 (`available`) and the pipeline of steps that process each new task
-(`pipeline`): by default, distance routing with random order as the
-fallback, with the routing plugins that the image contains (they look up the
-hosts of inputs at DB-IP and Nominatim); see [Plugins](plugins.md).
+(`pipeline`): by default, random order, with the routing plugin that the
+image contains (no third-party location lookups). Distance routing, which
+looks up the hosts of inputs at DB-IP and Nominatim or in a GeoIP database,
+is an opt-in; see [Plugins](plugins.md#pipelines).
 The former `custom.middlewares` is refused: the app stops with a hint to
 `plugins` (see [Upgrading](upgrading.md#plugins)).
 

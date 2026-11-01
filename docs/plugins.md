@@ -90,15 +90,39 @@ fail, the task fails with `500 Internal Server Error` (unless the step has
 own (e.g., `403 Forbidden`), and then no other alternative is tried. Tasks
 that fail or are rejected before they are forwarded are not kept.
 
-The default pipeline routes each task to the TES instance closest to its
-input data (`tes.routing.distance`), and, if that doesn't apply (e.g., the
-task has no input URLs, or none of its inputs or TES instances could be
-located), to the TES instances in random order (`generic.routing.random`),
-the next one if a TES instance didn't accept the task. Both plugins are
-published by [foca-plugins](https://foca-plugins.readthedocs.io/en/latest/)
-and installed in the image of proTES (the release train `foca-plugins`,
-pinned by its exact versions and hashes in `uv.lock`). The base config sets
-the pipeline explicitly:
+The default pipeline routes each task to the TES instances in random order
+(`generic.routing.random`), the next one if a TES instance didn't accept the
+task, and makes no third-party location lookups (tasks still go to your configured TES instances). The plugin is published by
+[foca-plugins](https://foca-plugins.readthedocs.io/en/latest/) and installed
+in the image of proTES (the release train `foca-plugins`, pinned by its exact
+versions and hashes in `uv.lock`). The base config sets the pipeline
+explicitly:
+
+```yaml
+plugins:
+  available:
+    generic.routing.random:
+      distribution: foca-plugin-generic-routing-random
+  pipeline:
+    - id: route
+      alternatives:
+        - plugin: generic.routing.random
+```
+
+### Routing by distance to the data (opt-in)
+
+The plugin `tes.routing.distance`, also installed in the image, routes each
+task to the TES instance closest to its input data; if that doesn't apply
+(e.g., the task has no input URLs, or none of its inputs or TES instances
+could be located), the next alternative routes. It is not enabled by
+default, because it must locate the hosts of inputs, and that needs either a
+lookup service or a GeoIP database (see below). A configured `location` of
+TES instances (`custom.tes.backends`) saves their lookups, but the inputs
+still need them.
+
+To enable it with the lookup services (as proTES 0.3.0 and 0.4.0 did), set
+`provider: dbip` and put the plugin before the random routing in the
+pipeline (overlays replace lists, so repeat the random step):
 
 ```yaml
 plugins:
@@ -107,8 +131,6 @@ plugins:
       distribution: foca-plugin-tes-routing-distance
       config:
         provider: dbip
-    generic.routing.random:
-      distribution: foca-plugin-generic-routing-random
   pipeline:
     - id: route
       alternatives:
@@ -116,44 +138,53 @@ plugins:
         - plugin: generic.routing.random
 ```
 
-!!! warning "The default pipeline calls third-party services"
+In the Helm chart, set the same under `plugins` (see the [chart's
+README](https://github.com/elixir-cloud-aai/protes/blob/dev/deployment/README.md)).
 
-    As the former middlewares of proTES did, the default settings
-    locate the hosts of task inputs and the TES instances with DB-IP and
-    Nominatim (`provider: dbip`): **the public IP addresses of the hosts of
+!!! warning "Privacy: what leaves the deployment with `provider: dbip`"
+
+    With `provider: dbip`, **the public IP addresses of the hosts of task
     inputs** (which may show where users keep their data) and of TES
-    instances without a configured `location` go to
-    `api.db-ip.com`, and the city, region and country of those addresses to
-    `nominatim.openstreetmap.org`. Private addresses are never sent. Both
-    services are rate limited (DB-IP's free API: 500 requests per day,
-    Nominatim: one per second); the plugin caches lookups, and when they
-    can't be made, the next alternative routes the task at random. Tell your
-    users, e.g., in your privacy notice. Settings of overlays and of the chart's `plugins.available` are merged
-    with these, so a `database` alone doesn't switch to offline lookups:
-    set `provider: offline`, too. Two ways to keep data in the gateway:
-    locate offline, with a GeoIP database that you add to a derived image
-    (see below), or route by order instead.
+    instances without a configured `location` go to `api.db-ip.com`, and the
+    city, region and country of those addresses to
+    `nominatim.openstreetmap.org`. Private addresses are never sent, and
+    neither are the URLs, paths or contents of inputs, or any other part of a
+    task. The services see the address of the gateway and may log the
+    requests; check their terms and tell your users, e.g., in your privacy
+    notice. Both services are rate limited (DB-IP's free API: 500 requests
+    per day, Nominatim: one per second); the plugin caches lookups, and when
+    they can't be made, the next alternative routes the task at random.
+    Without the opt-in, no request goes to either service.
 
-Without third-party lookups, locate addresses offline, with a GeoIP database
-in MaxMind DB format (e.g., DB-IP's free IP to City Lite; see the [plugin's
+To locate addresses offline, without third-party services, use a GeoIP
+database in MaxMind DB format (e.g., DB-IP's free IP to City Lite; see the
+[plugin's
 README](https://github.com/elixir-cloud-aai/foca-plugins/tree/dev/plugins/tes/routing/distance)),
 which the image doesn't contain: add it in an image derived from that of
-proTES (see [Plugin images](plugin-images.md)), and set it in the overlay:
+proTES (see [Plugin images](plugin-images.md)), and set it in the overlay
+(`offline` is the default provider of the plugin; it needs the database):
 
 ```yaml
 plugins:
   available:
     tes.routing.distance:
+      distribution: foca-plugin-tes-routing-distance
       config:
         provider: offline
         database: /opt/geoip/dbip-city-lite.mmdb
+  pipeline:
+    - id: route
+      alternatives:
+        - plugin: tes.routing.distance
+        - plugin: generic.routing.random
 ```
 
-To route by the order of `custom.tes.backends` only, with FOCA's ordered
+### Routing by order
+
+To route by the order of `custom.tes.backends` instead, with FOCA's ordered
 failover (`foca.routing.ordered`: the TES instances of each registry
 shuffled, the next one if a TES instance didn't accept the task), replace
-the pipeline (overlays replace lists), and no third-party services are
-called:
+the pipeline (overlays replace lists); no third-party services are called:
 
 ```yaml
 plugins:
@@ -175,7 +206,7 @@ limit it to roles (`roles`). The app refuses to start if a plugin of the
 list or of the pipeline can't be loaded, e.g., because it isn't installed
 or doesn't support the TES API.
 
-The routing plugins of the default pipeline are examples of plugins from
+The routing plugins are examples of plugins from
 foca-plugins; further ones need a derived image. To enable a plugin that the
 image contains, list it in `plugins.available` (installed is not enabled).
 

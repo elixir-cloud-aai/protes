@@ -44,12 +44,12 @@ network. Plugins (FOCA's gateway plugins, shared with other gateways) serve
 specific requirements, such as access control, request or response
 processing or validation, or the selection of suitable TES instances
 considering data use restrictions and client preferences. By default,
-tasks go to the TES instances closest to their input data, to bring compute
-to the data, or, if that doesn't apply, to a random one, for load balancing,
-with the routing plugins of
-[foca-plugins](https://github.com/elixir-cloud-aai/foca-plugins) that the
-image contains; FOCA's ordered failover (the TES instances in their
-configured order) is the alternative without third-party lookups.
+tasks go to a random TES instance, for load balancing, with the routing
+plugin of [foca-plugins](https://github.com/elixir-cloud-aai/foca-plugins)
+that the image contains, without third-party location lookups. Routing to
+the TES instances closest to the input data of a task, to bring compute to
+the data, is an opt-in (see [Plugins](plugins.md#pipelines)): it locates
+inputs with lookup services, or with a GeoIP database that you provide.
 
 proTES is a [Flask](https://flask.palletsprojects.com/) app built with
 [FOCA](https://github.com/elixir-cloud-aai/foca), configured declaratively in

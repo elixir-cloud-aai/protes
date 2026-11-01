@@ -106,12 +106,12 @@ tes:
 # `clientPipelines` as `client_pipelines`, `onFailure` as `on_failure`; the
 # `config` of plugins, the `params` of pipeline steps, the identifiers of
 # plugins and the names of presets are kept as they are). Empty values are
-# left out, so the app's defaults apply: distance routing with random order
-# as the fallback (`tes.routing.distance`, `generic.routing.random`, installed
-# in the image) as the pipeline; with the default `provider: dbip`, the public
-# addresses of the hosts of task inputs go to DB-IP and Nominatim. Plugins
-# other than FOCA's built-in ones and those of the default pipeline must be
-# installed in the image (`protes.image`), derived from that of proTES (see
+# left out, so the app's defaults apply: random routing (`generic.routing.random`,
+# installed in the image) as the pipeline, which makes no third-party
+# location lookups (tasks still go to your TES instances). Distance routing (`tes.routing.distance`, also installed in the
+# image) is an opt-in, see `available` below. Plugins other than FOCA's
+# built-in ones and the two routing plugins must be installed in the image
+# (`protes.image`), derived from that of proTES (see
 # https://protes.readthedocs.io/en/latest/plugin-images/).
 plugins:
   # Installed plugins that may be used, by identifier (FOCA's built-in
@@ -122,24 +122,32 @@ plugins:
   # distribution share their entries, so give them the same `enabled`, else
   # the app warns at startup) and more
   # Plugins other than FOCA's must be installed in the image (`protes.image`,
-  # see docs/plugin-images.md); the two routing plugins of foca-plugins of
-  # the default pipeline are (merged with what you list here), e.g., to
-  # locate offline, with a GeoIP database that a derived image adds:
+  # see docs/plugin-images.md); the random routing plugin of foca-plugins of
+  # the default pipeline is available as well (merged with what you list
+  # here). Opt-in to routing by the distance to the input data: `provider:
+  # dbip` sends the public addresses of the hosts of task inputs (and of TES
+  # instances without a `location`) to DB-IP and Nominatim; `provider: offline`
+  # locates with a GeoIP database that a derived image adds and sends nothing.
+  # Add the plugin to `pipeline`, too (see below)
   available: {}
   #   tes.routing.distance:
+  #     distribution: foca-plugin-tes-routing-distance
   #     config:
-  #       provider: offline
-  #       database: /opt/geoip/dbip-city-lite.mmdb
+  #       provider: dbip
+  #       # provider: offline
+  #       # database: /opt/geoip/dbip-city-lite.mmdb
   #     store:
   #       maxTtl: 86400
   # Steps that process each new task, in order, each with alternatives
   # tried in order (the long form of FOCA's steps only)
   pipeline: []
-  # A non-empty list replaces the default pipeline, e.g., FOCA's ordered
-  # failover:
+  # A non-empty list replaces the default pipeline, e.g., distance routing
+  # (see `available`) with random order as the fallback, or FOCA's ordered
+  # failover (`foca.routing.ordered`):
   #   - id: route
   #     alternatives:
-  #       - plugin: foca.routing.ordered
+  #       - plugin: tes.routing.distance
+  #       - plugin: generic.routing.random
   # Pipelines that clients may choose by name (tag `gateway.pipeline`)
   presets: {}
   # Whether and how clients may choose pipelines (`enabled`, off by default)
