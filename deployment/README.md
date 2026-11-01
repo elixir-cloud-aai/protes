@@ -95,8 +95,11 @@ of the config:
   of plugins and the names of presets are kept as they are. Steps of
   pipelines take the long form (`alternatives`), not FOCA's short forms (a
   plugin's identifier, or `plugin` and `params`).
-- Empty values are left out, so that the app's defaults apply (FOCA's
-  ordered failover as the pipeline).
+- Empty values are left out, so that the app's defaults apply: the routing
+  plugins of foca-plugins that the image contains, `tes.routing.distance`
+  with `generic.routing.random` as the fallback (as before the plugins; with
+  `provider: dbip`, which sends the public addresses of the hosts of task
+  inputs to DB-IP and Nominatim).
 - Other settings of the app's `plugins` (e.g., `defaults`, with the
   defaults of the plugin store, `defaults.store`, and `gateway_id`) are
   set in `config.plugins`. The app's base config sets
@@ -109,8 +112,8 @@ of the config:
   `config.plugins`, and on `config.custom.middlewares`, which the plugins
   replaced.
 
-Plugins other than FOCA's built-in ones must be installed in the image:
-build an image derived from that of proTES, with the plugins pinned by hash
+Plugins other than FOCA's built-in ones and the two routing plugins of the
+default pipeline must be installed in the image: build an image derived from that of proTES, with the plugins pinned by hash
 (see [Plugin
 images](https://protes.readthedocs.io/en/latest/plugin-images/)), and set
 it in `protes.image` (see [Image](#image)). For example:
@@ -122,12 +125,20 @@ protes:
   imagePullPolicy: IfNotPresent
 plugins:
   available:
-    tes.routing.distance: {}
+    org.example.plugin:
+      distribution: foca-plugin-<group>-<subgroup>-<name>
+    # Locate offline, with a GeoIP database that the image adds, instead of
+    # with DB-IP and Nominatim (the default)
+    tes.routing.distance:
+      config:
+        provider: offline
+        database: /opt/geoip/dbip-city-lite.mmdb
   pipeline:
     - id: route
       alternatives:
+        - plugin: org.example.plugin
         - plugin: tes.routing.distance
-        - plugin: foca.routing.ordered
+        - plugin: generic.routing.random
 ```
 
 Keep the values of each deployment in its own values file outside this

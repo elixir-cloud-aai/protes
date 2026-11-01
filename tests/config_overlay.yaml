@@ -14,6 +14,14 @@ security:
     group_mapping:
       compute-users: user
       "urn:example:group:compute-admins#login.example.org": admin
+# Ordered failover, so that tasks go to the backends in a fixed order and no
+# lookups are attempted (the default pipeline is tested in
+# `tests/ga4gh/tes/test_default_routing.py`)
+plugins:
+  pipeline:
+    - id: route
+      alternatives:
+        - plugin: foca.routing.ordered
 custom:
   tes:
     backends:

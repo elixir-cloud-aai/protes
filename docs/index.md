@@ -43,13 +43,13 @@ When proTES receives a task, it runs the configured pipeline of
 network. Plugins (FOCA's gateway plugins, shared with other gateways) serve
 specific requirements, such as access control, request or response
 processing or validation, or the selection of suitable TES instances
-considering data use restrictions and client preferences. By default, tasks
-go to the TES instances in their configured order, to the next one if a TES
-instance doesn't accept the task; routing plugins of
-[foca-plugins](https://github.com/elixir-cloud-aai/foca-plugins), once
-they are published, distribute tasks randomly, for load balancing, or to the
-TES instances closest to the task's input data, to bring compute to the
-data.
+considering data use restrictions and client preferences. By default,
+tasks go to the TES instances closest to their input data, to bring compute
+to the data, or, if that doesn't apply, to a random one, for load balancing,
+with the routing plugins of
+[foca-plugins](https://github.com/elixir-cloud-aai/foca-plugins) that the
+image contains; FOCA's ordered failover (the TES instances in their
+configured order) is the alternative without third-party lookups.
 
 proTES is a [Flask](https://flask.palletsprojects.com/) app built with
 [FOCA](https://github.com/elixir-cloud-aai/foca), configured declaratively in

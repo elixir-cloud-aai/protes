@@ -3,9 +3,12 @@
 Plugins are Python distributions that must be installed in the image of
 proTES: nothing is installed at runtime, and the Helm chart keeps the root
 file system of the containers read-only. The published images of proTES
-have FOCA's built-in plugins only (there is no image with all plugins, as
-plugins come from several repositories, in many combinations). To deploy
-other plugins, build an image derived from a release image of proTES with
+have FOCA's built-in plugins and the routing plugins of the default pipeline
+(`tes.routing.distance` and `generic.routing.random`, from foca-plugins);
+there is no image with all plugins, as plugins come from several
+repositories, in many combinations. To deploy other plugins, or to add data
+that plugins need (e.g., the GeoIP database of the offline provider of
+`tes.routing.distance`), build an image derived from a release image of proTES with
 the recipe of this page: it installs exactly the distribution files that you
 pinned, reviewed and verified, and nothing else. Then enable the plugins in
 the config (see [Plugins](plugins.md)): installed is not enabled.
@@ -16,15 +19,15 @@ the config (see [Plugins](plugins.md)): installed is not enabled.
     developed in the repository foca-plugins and published to PyPI as
     single distributions (`foca-plugin-<group>-<subgroup>-<name>`, e.g.,
     `foca-plugin-tes-routing-distance` and
-    `foca-plugin-generic-routing-random`); release trains (extras of the
-    distribution `foca-plugins`, e.g., `foca-plugins[tes-routing]`) are not
-    published yet. See its
+    `foca-plugin-generic-routing-random`) and as release trains (extras of
+    the distribution `foca-plugins`, e.g., `foca-plugins[tes-routing]`). See
+    its
     [documentation](https://foca-plugins.readthedocs.io/en/latest/installing/).
-    The releases 0.1.0 of the routing plugins support FOCA 0.18 only, so
-    `resolve.sh` fails for them against the images of this release, which
-    run FOCA 0.19, until releases for FOCA 0.19 are published (see
-    [Routing](upgrading.md#routing)). The recipe works the same for plugins
-    of any repository, and CI tests it with a test plugin (see [Testing the
+    The images of proTES contain the two routing plugins already (the
+    release train `foca-plugins`, pinned in `pyproject.toml`, with exact
+    versions and hashes in the repository's `uv.lock`); don't list them in
+    `plugins.in`. The recipe works the same for plugins of any repository, and CI
+    tests it with a test plugin (see [Testing the
     recipe](#testing-the-recipe)).
 
 The commands below run in a directory of their own (the build context),
@@ -50,7 +53,7 @@ List the plugins in `plugins.in`, as pip requirements: single distributions
 or a release train, e.g.:
 
 ```text
-foca-plugin-tes-routing-distance==<version>
+foca-plugin-<group>-<subgroup>-<name>==<version>
 ```
 
 Resolve them against the image:
@@ -142,18 +145,15 @@ protes:
   imagePullPolicy: IfNotPresent
 plugins:
   available:
+    org.example.plugin:
+      distribution: foca-plugin-<group>-<subgroup>-<name>
+    # The routing plugins of the image: locate addresses offline with a
+    # GeoIP database that your image adds, e.g., by a `COPY` of your own
+    # (see the plugin's README), instead of with DB-IP and Nominatim
     tes.routing.distance:
-      distribution: foca-plugin-tes-routing-distance
-      version: ">0.1.0"  # a release for FOCA 0.19; or `==` the version of plugins.txt
       config:
-        # a GeoIP database, e.g., added by a `COPY` of your own (see the
-        # plugin's README)
+        provider: offline
         database: /opt/geoip/dbip-city-lite.mmdb
-  pipeline:
-    - id: route
-      alternatives:
-        - plugin: tes.routing.distance
-        - plugin: foca.routing.ordered
 ```
 
 The app refuses to start if an enabled plugin isn't installed, doesn't match
@@ -174,7 +174,7 @@ package index and with their dependencies; Docker Compose passes the host's
 `PLUGINS`:
 
 ```bash
-PLUGINS="foca-plugin-tes-routing-distance==<version>" docker compose up --build --wait
+PLUGINS="foca-plugin-<group>-<subgroup>-<name>==<version>" docker compose up --build --wait
 ```
 
 Enable them in the config overlay (e.g., `config.dev.yaml`). These builds

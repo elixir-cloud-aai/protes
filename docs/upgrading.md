@@ -18,13 +18,12 @@ Check each item; the sections below have the details.
 2. **Plugins instead of middlewares:** `custom.middlewares` is refused at
    startup; remove it and configure the top-level section `plugins` (see
    [Plugins](#plugins)). Custom middlewares must be ported to FOCA plugins.
-3. **Routing default:** tasks no longer go to the TES instance closest to
-   their input data (with random order as the fallback), but to the TES
-   instances in the order of `custom.tes.backends`, to the next one only if
-   one doesn't accept a task (FOCA's `foca.routing.ordered`). With several
-   TES instances and the default settings, all tasks go to the first one,
-   without an error or warning. See [Routing](#routing) for how to keep
-   distance-based routing.
+3. **Routing default:** as in 0.3.0, tasks go to the TES instance closest to
+   their input data, with random order as the fallback, now with the plugins
+   `tes.routing.distance` and `generic.routing.random` of foca-plugins, which
+   the image contains. With the default settings, the hosts of inputs are
+   still looked up at DB-IP and Nominatim; see [Routing](#routing) for the
+   offline alternative and for FOCA's ordered failover.
 4. **TES instances:** `custom.tes.service_list` and `custom.tes.discovery`
    are replaced by `custom.tes.backends` (in the Helm chart, by
    `tes.backends`); with a service registry, set the public URL of proTES
@@ -195,8 +194,9 @@ task distribution and the dependency `geopy`.
   sets the plugins from the values `plugins` (e.g., `plugins.pipeline`,
   with camelCase keys, see the chart's [README](deployment.md)) and refuses
   `config.custom.middlewares`.
-- Tasks go to the TES instances in the order of `custom.tes.backends`
-  by default, instead of by distance (see [Routing](#routing)).
+- Tasks go to the TES instance closest to their input data by default,
+  with random order as the fallback, as before, but with plugins instead of
+  middlewares (see [Routing](#routing)).
 - Tasks that no TES instance accepts fail with `503 Service Unavailable`
   (was `500 Internal Server Error`), also if no TES instance is configured,
   and if none accepted within `plugins.defaults.forward_timeout` (20 seconds
@@ -234,56 +234,34 @@ Code that calls `TaskRuns` directly passes the request path of the tasks:
 0.3.0 sent each task to the TES instance closest to its input data
 (middleware `TaskDistributionDistance`, which located TES instances and
 inputs with DB-IP and Nominatim), with random order as the fallback
-(`TaskDistributionRandom`). This version has no routing of its own: the
-default pipeline is FOCA's ordered failover (`foca.routing.ordered`), the
-TES instances in the order of `custom.tes.backends` (those of each registry
-shuffled), the next one if a TES instance doesn't accept the task. proTES no
-longer calls third-party services to locate TES instances and inputs.
+(`TaskDistributionRandom`). This version does the same with the routing
+plugins of [foca-plugins](https://foca-plugins.readthedocs.io/en/latest/),
+which the image contains (the release train `foca-plugins` 0.1.0, with
+`foca-plugin-tes-routing-distance` and `foca-plugin-generic-routing-random`
+0.1.1): the default pipeline is `tes.routing.distance`, then
+`generic.routing.random`, and the plugins' defaults in the base config
+(`provider: dbip`) locate addresses as 0.3.0 did, so the default behavior
+and the data sent to third parties are those of 0.3.0 (see
+[Plugins](plugins.md#pipelines)). Check:
 
-To keep distance-based routing, deploy an image derived from that of this
-release with the routing plugins of
-[foca-plugins](https://foca-plugins.readthedocs.io/en/latest/), which are
-published on PyPI as `foca-plugin-tes-routing-distance` (plugin
-`tes.routing.distance`) and `foca-plugin-generic-routing-random` (plugin
-`generic.routing.random`), see [Plugin images](plugin-images.md), and
-enable them, e.g., in the values of the Helm chart. By default, the
-distance plugin locates addresses offline, with a GeoIP database that the
-derived image must contain; the online lookups of 0.3.0 (DB-IP and
-Nominatim) are an opt-in (`provider: dbip`; see the plugin's
-[README](https://github.com/elixir-cloud-aai/foca-plugins/tree/dev/plugins/tes/routing/distance)):
+- Nothing to change if you relied on the default of 0.3.0. Overlays that set
+  `plugins.pipeline` replace the default pipeline (lists are replaced), and
+  `plugins.available` is merged with the base config's.
+- Offline lookups without third parties: set `provider: offline` and a GeoIP
+  database that you add in a derived image (see
+  [Plugins](plugins.md#pipelines) and [Plugin images](plugin-images.md)).
+- To route by order instead (the TES instances in the order of
+  `custom.tes.backends`, those of each registry shuffled, the next one if a
+  TES instance doesn't accept the task), set the pipeline to FOCA's
+  `foca.routing.ordered`:
 
 ```yaml
-protes:
-  image: registry.example.org/protes-plugins@sha256:<digest>
-  tag: ""
 plugins:
-  available:
-    tes.routing.distance:
-      distribution: foca-plugin-tes-routing-distance
-      version: ">0.1.0"  # a release for FOCA 0.19; or `==` the version of plugins.txt
-      config:
-        # a GeoIP database added to the image (see the plugin's README)
-        database: /opt/geoip/dbip-city-lite.mmdb
-    generic.routing.random:
-      distribution: foca-plugin-generic-routing-random
-      version: ">0.1.0"
   pipeline:
     - id: route
       alternatives:
-        - plugin: tes.routing.distance
-        - plugin: generic.routing.random
+        - plugin: foca.routing.ordered
 ```
-
-!!! warning "Plugin releases for FOCA 0.19"
-
-    The releases 0.1.0 of both plugins support FOCA 0.18 only
-    (`foca>=0.18.0,<0.19`), so they can't be installed into the images of
-    this release: `resolve.sh` of the recipe fails. Until releases for FOCA
-    0.19 are published (see
-    [foca-plugins#32](https://github.com/elixir-cloud-aai/foca-plugins/issues/32)),
-    deployments that need distance-based routing stay on 0.3.0, or
-    accept the ordered failover in the meantime (order
-    `custom.tes.backends` by preference).
 
 ### Task provenance
 

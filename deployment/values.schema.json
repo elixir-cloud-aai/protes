@@ -754,7 +754,7 @@
           "items": {
             "$ref": "#/properties/plugins/definitions/step"
           },
-          "description": "Steps that process each new task; FOCA's ordered failover if empty"
+          "description": "Steps that process each new task; the app's default pipeline (distance routing, random fallback) if empty"
         },
         "presets": {
           "type": "object",

@@ -253,7 +253,9 @@ state becomes `UNKNOWN` until it is discovered again).
 
 The top-level section `plugins` sets which installed plugins are available
 (`available`) and the pipeline of steps that process each new task
-(`pipeline`), FOCA's ordered failover by default; see [Plugins](plugins.md).
+(`pipeline`): by default, distance routing with random order as the
+fallback, with the routing plugins that the image contains (they look up the
+hosts of inputs at DB-IP and Nominatim); see [Plugins](plugins.md).
 The former `custom.middlewares` is refused: the app stops with a hint to
 `plugins` (see [Upgrading](upgrading.md#plugins)).
 
