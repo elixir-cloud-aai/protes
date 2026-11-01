@@ -342,8 +342,8 @@ Tasks stored by earlier versions have no gateway tags; they are served
 without `forwarded_to` and the other backend references of earlier
 versions in their log metadata (`remote_task_id`, `tes_uri`); other string
 metadata is served as stored. They are still canceled at the TES instance
-they were forwarded to (by `tes_endpoint.task_id`, or by the forwards that
-stay in the database, for tasks stored before 0.3.0), and tracked if they
+they were forwarded to (by `tes_endpoint.task_id`, or by the forwards or
+`remote_task_id` that stay in the database, for tasks stored before 0.3.0), and tracked if they
 have `tes_endpoint.task_id`: unfinished tasks stored before 0.3.0 keep
 their last state (see [Task tracking](#task-tracking)).
 Their final logs are stored without the forwards once they have finished.
@@ -625,7 +625,8 @@ instead of objects with `message` and `code`.
 `logs[].metadata.forwarded_to` of tasks is a list of forwards (`id`, `url`,
 `forward_time`), in the order of forwarding, instead of a nested
 `tesNextTes` object. Tasks stored by earlier versions are still read, and
-can be tracked and canceled as before. Since 0.4.0, forwards are no longer
+can be canceled as before (unfinished ones keep their last state, see
+[Task tracking](#task-tracking)). Since 0.4.0, forwards are no longer
 recorded or served (see [Forwards in task logs](#forwards-in-task-logs)).
 
 Earlier versions kept polling tasks that their backend reported as

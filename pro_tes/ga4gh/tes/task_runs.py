@@ -969,7 +969,7 @@ class TaskRuns:
                 "tes_endpoint": False,
                 "provenance": False,
                 # backend references in the logs of tasks stored before
-                # 0.4.0 (the gateway tags serve them now)
+                # 0.4.0 (newer tasks have them in their gateway tags)
                 "task.logs.metadata.forwarded_to": False,
                 "task.logs.metadata.remote_task_id": False,
                 "task.logs.metadata.tes_uri": False,
@@ -981,7 +981,7 @@ class TaskRuns:
                 "tes_endpoint": False,
                 "provenance": False,
                 # backend references in the logs of tasks stored before
-                # 0.4.0 (the gateway tags serve them now)
+                # 0.4.0 (newer tasks have them in their gateway tags)
                 "task.logs.metadata.forwarded_to": False,
                 "task.logs.metadata.remote_task_id": False,
                 "task.logs.metadata.tes_uri": False,
