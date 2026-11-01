@@ -661,8 +661,10 @@ def _derive_version() -> dict[str, Any]:
         The step.
     """
     jobs = _load(WORKFLOWS / "ci.yml")["jobs"]
-    steps = {step["name"]: step for step in jobs["push"]["steps"]}
-    names = list(steps)
+    names = [step["name"] for step in jobs["push"]["steps"]]
+    # Unique, so that the order checked is that of the step returned
+    assert len(names) == len(set(names))
+    steps = dict(zip(names, jobs["push"]["steps"], strict=True))
     # Before the job logs in to Docker Hub
     assert names.index("Derive version") < names.index("Log in to Docker Hub")
     return steps["Derive version"]
