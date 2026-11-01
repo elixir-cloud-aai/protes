@@ -398,10 +398,11 @@ def _commands(step: dict[str, Any]) -> list[str]:
 # their values) commands that install or build packages; the latter runs
 # their build backends
 PIP = re.compile(r"\bpip[0-9.]*[\"']?(\s+\S+)*?\s+(install|wheel|download)\b")
-# Other installers, and builds that install build requirements
+# Other installers (uv also with global options before the subcommand),
+# and builds that install build requirements
 INSTALLERS = re.compile(
     r"\b(pipx|pipenv|easy_install|uvx|pip-sync|poetry|pdm|hatch|conda|mamba"
-    r"|micromamba|uv\s+(pip|tool|sync|run|add|build|venv)"
+    r"|micromamba|uv(\s+\S+)*?\s+(pip|tool|sync|run|add|build|venv)"
     r"|python[0-9.]*\s+-m\s+build)\b"
 )
 # `uv sync`, also with options before the subcommand
@@ -456,6 +457,8 @@ def test_pip_pattern(command: str, found: bool) -> None:
         "poetry install",
         "conda install foo",
         "micromamba install foo",
+        "uv --offline run pytest",
+        "uv --directory x pip install foo",
     ],
 )
 def test_installers_pattern(command: str) -> None:
