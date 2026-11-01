@@ -1,5 +1,6 @@
 """Tests of the security configuration and its checks on startup."""
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -338,6 +339,35 @@ def test_backends_logged(
     assert "basic-secret" not in err
     assert "No TES backends are configured" not in err
     assert "scheme 'http' are allowed" not in err
+
+
+def test_registry_tokens_logged(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Registries whose backends get tokens of proTES are logged with them.
+
+    Their backends are verified by the registry's admins, not configured by
+    the operator, but get the same token as the configured backends.
+    """
+    monkeypatch.setenv(CLIENT_ID_ENV, "protes")
+    monkeypatch.setenv(CLIENT_SECRET_ENV, "client-secret")
+    other = {**REGISTRY, "url": "https://registry.example.com/api", "auth": "none"}
+    conf = Tes(
+        backends=[TOKEN_BACKEND, REGISTRY, other],  # type: ignore[arg-type]
+        client_credentials={"issuer": "https://login.example.org/"},  # type: ignore[arg-type]
+    )
+    with caplog.at_level(logging.INFO, logger="pro_tes.security"):
+        check_backends(conf, public_url=PUBLIC_URL)
+    (line,) = [
+        record.getMessage()
+        for record in caplog.records
+        if "access tokens of proTES" in record.getMessage()
+    ]
+    assert line == (
+        "TES backends with access tokens of proTES: https://tes1.example.org,"
+        " those verified by registry https://registry.example.org/api"
+    )
+    assert "client-secret" not in caplog.text
 
 
 def test_no_backends(

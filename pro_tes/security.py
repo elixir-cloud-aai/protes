@@ -213,16 +213,20 @@ def check_backends(conf: Tes | None = None, public_url: str | None = None) -> No
             " host or path prefix of its own (and set `server.public_url` to"
             " it), or move the backends to other hosts"
         )
-    token_backends = [
+    # registries too: the backends that their admins verify get the token
+    token_recipients = [
         entry.url
+        if isinstance(entry, ServiceEntry)
+        else f"those verified by registry {entry.url}"
         for entry in entries
-        if isinstance(entry, ServiceEntry) and entry.auth == "client_credentials"
+        if entry.auth == "client_credentials"
     ]
-    if token_backends:
+    if token_recipients:
         # logs the URLs of the backends, not tokens
         # nosemgrep  # logger-credential-disclosure: see above
         logger.info(
-            "TES backends with access tokens of proTES: %s", ", ".join(token_backends)
+            "TES backends with access tokens of proTES: %s",
+            ", ".join(token_recipients),
         )
     if conf.uses_tokens:
         missing.extend(_missing_env(CLIENT_ID_ENV, CLIENT_SECRET_ENV))

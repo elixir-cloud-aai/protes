@@ -69,7 +69,9 @@ Plugins can't set the headers `Host`, `Connection`,
 where or how they are sent.
 Plugins run with time limits (`plugins.defaults`): a plugin that doesn't
 return in time counts as failed, and if no TES instance accepted the task
-after `forward_timeout` seconds (default 60), the request fails with
+after `forward_timeout` seconds (20 in the base config, FOCA's default is
+60; see [TES instances](configuration.md#tes-instances) for the whole
+duration of a request), the request fails with
 `503 Service Unavailable` (the timeout of connecting to a configured TES
 instance is shortened to the time left; that of discovered ones not yet, as
 the deadline of FOCA's guarded HTTP client would cut reads short, too;
