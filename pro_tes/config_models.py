@@ -370,41 +370,25 @@ class Tes(ConfigModel):
         return self
 
 
-class StoreLogs(ConfigModel):
-    """Logging configuration.
-
-    Args:
-        execution_trace: Whether to store execution trace logs.
-
-    Attributes:
-        execution_trace: Whether to store execution trace logs.
-    """
-
-    execution_trace: bool = True
-
-
 class CustomConfig(ConfigModel):
     """Custom app configuration.
 
     Args:
         controllers: All controller-related config.
         tes: TES backends and how proTES calls them.
-        storeLogs: Logging preferences (camelCase, unlike other keys).
 
     Attributes:
         controllers: All controller-related config.
         tes: TES backends and how proTES calls them.
-        storeLogs: Logging preferences (camelCase, unlike other keys).
     """
 
     controllers: Controllers = Controllers()
     tes: Tes = Tes()
-    storeLogs: StoreLogs = StoreLogs()
 
     @model_validator(mode="before")
     @classmethod
     def check_removed_keys(cls, data: object) -> object:
-        """Refuse keys that moved to FOCA's config, naming their new place.
+        """Refuse removed keys, naming what replaces them.
 
         Args:
             data: Custom config, as given.
@@ -415,7 +399,10 @@ class CustomConfig(ConfigModel):
         Raises:
             ValueError: The config has `access_control`, whose only setting
                 (`require_admin`) moved to FOCA's
-                `security.access_control.require_admin`.
+                `security.access_control.require_admin`, or `storeLogs`,
+                whose only setting (`execution_trace`) set whether forwards
+                were recorded in `logs[].metadata.forwarded_to`, which is
+                no longer served (cf. the gateway tags of tasks).
         """
         if isinstance(data, dict) and "access_control" in data:
             raise ValueError(
@@ -423,5 +410,12 @@ class CustomConfig(ConfigModel):
                 "`security.access_control.require_admin` instead of "
                 "`custom.access_control.require_admin` (see Upgrading in the "
                 "docs)"
+            )
+        if isinstance(data, dict) and "storeLogs" in data:
+            raise ValueError(
+                "`custom.storeLogs` was removed: forwards are no longer "
+                "recorded in `logs[].metadata.forwarded_to`; tasks have the "
+                "gateway tags `gateway.backend` and `gateway.backend_task_id` "
+                "instead (see Upgrading in the docs)"
             )
         return data

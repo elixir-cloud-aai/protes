@@ -272,6 +272,36 @@ def test_output_credentials_removed(
     assert urls == ["s3://bucket/out", "https://[bad/out"]
 
 
+@pytest.mark.parametrize(
+    "forwards",
+    [
+        [{"id": "remote-1", "url": "x", "forward_time": "t"}],
+        {"id": "remote-1", "url": "x", "forwarded_to": {"id": "r", "url": "y"}},
+    ],
+)
+def test_stored_forwards_tracked(
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+    scheduled: list[dict[str, Any]],
+    forwards: Any,
+) -> None:
+    """Tasks stored with forwards (before 0.4.0) are tracked (#324).
+
+    Their final logs are stored without the forwards, which are no longer
+    served.
+    """
+    tasks.update_one(
+        {"worker_id": ARGS["worker_id"]},
+        {"$set": {"task.logs.0.metadata": {"forwarded_to": forwards, "a": "b"}}},
+    )
+    run()
+    document = tasks.find_one({"worker_id": ARGS["worker_id"]})
+    assert document is not None
+    assert document["task"]["state"] == "COMPLETE"
+    assert document["task"]["logs"][0]["metadata"] == {"a": "b"}
+    assert not scheduled
+
+
 def test_backend_client(
     tasks: Collection[dict[str, Any]],
     client_class: type[FakeClient],

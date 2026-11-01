@@ -359,77 +359,14 @@ class TesState(Enum):
     CANCELING = "CANCELING"
 
 
-class TesForward(CustomBaseModel):
-    """TES server to which a task was forwarded."""
-
-    id: str = Field(
-        ...,
-        description=(
-            "Task identifier assigned by the "
-            "TES server to which the task was forwarded."
-        ),
-        examples=["job-0012345"],
-    )
-    url: str = Field(
-        ...,
-        description="TES server to which the task was forwarded.",
-        examples=["https://my.tes.instance/"],
-    )
-    forward_time: str | None = Field(
-        default=None,
-        description=(
-            "When the task was forwarded, in RFC 3339 format; not set for"
-            " forwards logged by earlier versions."
-        ),
-        examples=["2020-10-02T10:00:00-05:00"],
-    )
-
-
-class Metadata(CustomBaseModel):
-    """Create model instance for metadata."""
-
-    forwarded_to: list[TesForward] | None = Field(
-        default=None,
-        description=(
-            "TES servers to which the task was forwarded, in the order of forwarding."
-        ),
-    )
-
-    @field_validator("forwarded_to", mode="before")
-    @classmethod
-    def flatten_forwards(cls, value: Any) -> Any:
-        """Flatten forwards nested by earlier versions into a list.
-
-        Earlier versions logged forwards as a nested object (`tesNextTes`,
-        with the next forward in `forwarded_to`); such forwards are stored
-        in tasks, and returned by other instances running these versions.
-
-        Args:
-            value: Forwards, as a list or as a nested object.
-
-        Returns:
-            Forwards as a list, in the order of forwarding.
-        """
-        if not isinstance(value, dict):
-            return value
-        forwards = []
-        forward: Any = value
-        while isinstance(forward, dict):
-            forwards.append(
-                {key: val for key, val in forward.items() if key != "forwarded_to"}
-            )
-            forward = forward.get("forwarded_to")
-        return forwards
-
-
 class TesTaskLog(CustomBaseModel):
     """Logs of a task attempt."""
 
     logs: list[TesExecutorLog] = Field(..., description="Logs for each executor")
-    metadata: Metadata | None = Field(
+    metadata: dict[str, str] | None = Field(
         default=None,
         description=("Arbitrary logging metadata included by the implementation."),
-        examples=[{"host": "worker-001", "slurmm_id": 123456}],
+        examples=[{"host": "worker-001", "slurmm_id": "123456"}],
     )
     start_time: str | None = Field(
         default=None,
@@ -462,6 +399,26 @@ class TesTaskLog(CustomBaseModel):
             " are             only included in the FULL task view."
         ),
     )
+
+    @field_validator("metadata", mode="before")
+    @classmethod
+    def drop_non_string_metadata(cls, value: Any) -> Any:
+        """Drop metadata values that are not strings.
+
+        The TES specification allows only strings; tasks stored by proTES
+        before 0.4.0 have their forwards in `forwarded_to` (a list, or a
+        nested object), which is no longer served, and backends may log
+        other values.
+
+        Args:
+            value: Metadata, as stored or reported by a backend.
+
+        Returns:
+            The metadata with string values only.
+        """
+        if not isinstance(value, dict):
+            return value
+        return {key: val for key, val in value.items() if isinstance(val, str)}
 
 
 class TesTask(CustomBaseModel):

@@ -3,7 +3,7 @@
 `GET /tasks/{id}/provenance` serves the provenance stored with a task, with
 the plugin builds and pipelines that it refers to expanded, to the task's
 owner and to admins; tasks have the gateway tags of FOCA (`gateway.*`) that
-summarize it, and `forwarded_to` is deprecated.
+summarize it (and replace `forwarded_to`, removed in 0.4.0, cf. #324).
 """
 
 import json
@@ -214,15 +214,9 @@ def test_gateway_tags_outcome_unknown(
     assert json.loads(tags["gateway.route"])[0]["outcome"] == "unknown"
 
 
-def test_forwarded_to_deprecated() -> None:
-    """`forwarded_to` of the task logs is deprecated, in favour of the tags."""
+def test_provenance_operation() -> None:
+    """The provenance endpoint is a proTES addition to the spec."""
     spec = yaml.safe_load(ADDITIONS.read_text(encoding="utf-8"))
-    schemas = spec["components"]["schemas"]
-    assert schemas["tesForward"]["deprecated"] is True
-    forwarded_to = schemas["tesTaskLog"]["properties"]["metadata"]["properties"][
-        "forwarded_to"
-    ]
-    assert forwarded_to["deprecated"] is True
     operation = spec["paths"]["/tasks/{id}/provenance"]["get"]
     assert operation["operationId"] == "GetTaskProvenance"
 

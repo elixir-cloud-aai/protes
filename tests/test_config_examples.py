@@ -188,13 +188,20 @@ def test_base_config_valid() -> None:
             }
         },
         {"controllers": {"post_task": {"task_id": {"lenght": 8}}}},
-        {"storeLogs": {"execution_traces": False}},
+        {"controllers": {"list_tasks": {"max_page_sizes": 8}}},
     ],
 )
 def test_unknown_keys_rejected(overlay: dict[str, Any]) -> None:
     """Unknown (e.g., misspelled or removed) keys are rejected, at any level."""
     with pytest.raises(pydantic.ValidationError, match="Extra inputs"):
         CustomConfig.model_validate(deep_merge(base_custom(), overlay))
+
+
+@pytest.mark.parametrize("store_logs", [{}, {"execution_trace": False}])
+def test_store_logs_removed(store_logs: dict[str, Any]) -> None:
+    """`storeLogs` is refused, naming the gateway tags that replace it (#324)."""
+    with pytest.raises(pydantic.ValidationError, match="storeLogs` was removed"):
+        CustomConfig.model_validate({**base_custom(), "storeLogs": store_logs})
 
 
 def test_access_control_removed() -> None:

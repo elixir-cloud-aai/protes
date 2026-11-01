@@ -1,22 +1,18 @@
-"""Tests of the TES models, their conversion and the forwarding log."""
+"""Tests of the TES models and their conversion."""
 
 from datetime import UTC, datetime
 from pathlib import Path
 
-from connexion import FlaskApp
 import pytest
 import tes
 import yaml
 
 from pro_tes.ga4gh.tes.models import (
     DbDocument,
-    Metadata,
     TesExecutor,
-    TesForward,
     TesTask,
     TesTaskLog,
 )
-from pro_tes.ga4gh.tes.task_runs import TaskRuns
 from pro_tes.gateway import relayed_task
 from pro_tes.utils.models import TaskModelConverter
 
@@ -46,71 +42,46 @@ def test_ignore_error_converted() -> None:
     assert converted.executors[0].ignore_error is True
 
 
-def test_forwarded_to_not_recursive() -> None:
-    """Forwards are a list of `tesForward` without references (cf. #173)."""
+def test_forwarded_to_removed() -> None:
+    """`forwarded_to` is no longer in the spec additions (cf. #324)."""
     schemas = yaml.safe_load(ADDITIONS.read_text(encoding="utf-8"))["components"][
         "schemas"
     ]
-    forwarded_to = schemas["tesTaskLog"]["properties"]["metadata"]["properties"][
-        "forwarded_to"
-    ]
-    assert forwarded_to["type"] == "array"
-    assert forwarded_to["items"] == {"$ref": "#/components/schemas/tesForward"}
-    assert "tesNextTes" not in schemas
-    assert "$ref" not in str(schemas["tesForward"])
-    assert schemas["tesForward"]["required"] == ["id", "url"]
+    assert "tesForward" not in schemas
+    assert "tesTaskLog" not in schemas
+    assert "forwarded_to" not in ADDITIONS.read_text(encoding="utf-8")
 
 
-def test_nested_forwards_flattened() -> None:
-    """Nested forwards of earlier versions are read as a list."""
-    metadata = Metadata.model_validate(
+@pytest.mark.parametrize(
+    "forwards",
+    [
+        [{"id": "task-1", "url": "https://first.example.org", "forward_time": "t"}],
         {
-            "forwarded_to": {
-                "id": "task-1",
-                "url": "https://first.example.org",
-                "forwarded_to": {"id": "task-2", "url": "https://second.example.org"},
-            }
+            "id": "task-1",
+            "url": "https://first.example.org",
+            "forwarded_to": {"id": "task-2", "url": "https://second.example.org"},
+        },
+    ],
+)
+def test_stored_forwards_dropped(forwards: object) -> None:
+    """Forwards stored before 0.4.0 are dropped, string metadata is kept."""
+    log = TesTaskLog.model_validate(
+        {
+            "logs": [],
+            "outputs": [],
+            "metadata": {
+                "forwarded_to": forwards,
+                "remote_task_id": "task-1",
+                "host": "worker-001",
+            },
         }
     )
-    assert metadata.forwarded_to == [
-        TesForward(id="task-1", url="https://first.example.org"),
-        TesForward(id="task-2", url="https://second.example.org"),
-    ]
+    assert log.metadata == {"remote_task_id": "task-1", "host": "worker-001"}
 
 
-def test_forward_logged(app: FlaskApp) -> None:
-    """Forwards of a task are appended to its logs, with an RFC 3339 time."""
-    earlier = TesForward(
-        id="upstream", url="https://upstream.example.org", forward_time="t"
-    )
-    document = DbDocument(
-        task=TesTask(
-            logs=[
-                TesTaskLog(
-                    logs=[],
-                    outputs=[],
-                    metadata=Metadata(forwarded_to=[earlier]),
-                ),
-                TesTaskLog(logs=[], outputs=[], metadata=Metadata()),
-            ]
-        )
-    )
-    with app.app.app_context():
-        document = TaskRuns()._update_task_metadata(
-            db_document=document,
-            tes_url="https://tes.example.org",
-            remote_task_id="task-1",
-        )
-    assert document.task.logs is not None
-    assert len(document.task.logs) == 2
-    for log, previous in zip(document.task.logs, [[earlier], []], strict=True):
-        assert log.metadata is not None
-        assert log.metadata.forwarded_to is not None
-        *before, forward = log.metadata.forwarded_to
-        assert before == previous
-        assert (forward.id, forward.url) == ("task-1", "https://tes.example.org")
-        assert forward.forward_time is not None
-        assert datetime.fromisoformat(forward.forward_time).tzinfo is not None
+def test_metadata_optional() -> None:
+    """Logs without metadata have none."""
+    assert TesTaskLog(logs=[], outputs=[]).metadata is None
 
 
 def test_task_converted() -> None:
@@ -152,26 +123,3 @@ def test_task_converted() -> None:
     (executor_log,) = log.logs
     assert (executor_log.start_time, executor_log.stdout) == (time.isoformat(), "out")
     assert (empty.logs, empty.outputs, empty.start_time) == ([], [], None)
-
-
-def test_forward_logged_without_metadata(app: FlaskApp) -> None:
-    """Forwards are logged in logs without metadata."""
-    document = DbDocument(task=TesTask(logs=[TesTaskLog(logs=[], outputs=[])]))
-    with app.app.app_context():
-        document = TaskRuns()._update_task_metadata(
-            db_document=document, tes_url="https://tes.example.org", remote_task_id="1"
-        )
-    assert document.task.logs is not None
-    assert document.task.logs[0].metadata is not None
-    assert document.task.logs[0].metadata.forwarded_to is not None
-    assert document.task.logs[0].metadata.forwarded_to[0].id == "1"
-
-
-def test_forward_logged_no_logs(app: FlaskApp) -> None:
-    """Forwards of tasks without logs can't be logged."""
-    with app.app.app_context(), pytest.raises(ValueError, match="has no logs"):
-        TaskRuns()._update_task_metadata(
-            db_document=DbDocument(),
-            tes_url="https://tes.example.org",
-            remote_task_id="1",
-        )

@@ -106,8 +106,7 @@ def test_create_task_next_backend(
     assert [url for url, _ in relayed(backend)] == [BACKENDS[1]]
     document = stored(mongo_client, response.get_json()["id"])
     assert document["tes_endpoint"]["host"] == BACKENDS[1]
-    (forward,) = document["task"]["logs"][0]["metadata"]["forwarded_to"]
-    assert forward["url"] == BACKENDS[1]
+    assert document["task"]["tags"]["gateway.backend"] == BACKENDS[1]
 
 
 def test_create_task_no_backend(
@@ -352,15 +351,17 @@ def test_list_tasks_views(client: FlaskClient, task_id: str, view: str) -> None:
 
 
 def test_get_task(client: FlaskClient, task_id: str) -> None:
-    """Tasks are served with their executors and forwards."""
+    """Tasks are served with their executors and backend, without forwards.
+
+    The backend is in the gateway tags; `forwarded_to` was removed (#324).
+    """
     response = client.get(f"{BASE_PATH}/tasks/{task_id}", query_string={"view": "FULL"})
     assert response.status_code == 200
     task = response.get_json()
     assert task["name"] == "hello"
     assert task["executors"][0]["ignore_error"] is True
-    (forward,) = task["logs"][0]["metadata"]["forwarded_to"]
-    assert forward["id"] == "remote-1"
-    assert forward["forward_time"]
+    assert task["tags"]["gateway.backend_task_id"] == "remote-1"
+    assert task["logs"][0]["metadata"] == {}
 
 
 def test_get_task_views(client: FlaskClient, backend: type[FakeBackend]) -> None:
@@ -383,16 +384,7 @@ def test_cancel_task(
     backend: type[FakeBackend],
     mongo_client: MongoClient[dict[str, Any]],
 ) -> None:
-    """Tasks are canceled at the last forward, i.e., proTES's own."""
-    collection = mongo_client[DB]["tasks"]
-    forwards = stored(mongo_client, task_id)["task"]["logs"][0]["metadata"][
-        "forwarded_to"
-    ]
-    upstream = {"id": "upstream-1", "url": "https://upstream.example.org"}
-    collection.update_one(
-        {"task.id": task_id},
-        {"$set": {"task.logs.0.metadata.forwarded_to": [upstream, *forwards]}},
-    )
+    """Tasks are canceled at their backend."""
     set_state(mongo_client, task_id, "QUEUED")
     response = client.post(f"{BASE_PATH}/tasks/{task_id}:cancel")
     assert response.status_code == 200
@@ -450,40 +442,75 @@ def test_cancel_task_finished(
     assert stored(mongo_client, task_id)["task"]["state"] == state
 
 
-def test_cancel_task_nested_forwards(
+@pytest.mark.parametrize(
+    "forwards",
+    [
+        [
+            {"id": "upstream-1", "url": "https://upstream.example.org"},
+            {"id": "remote-1", "url": "https://tes.example.org", "forward_time": "t"},
+        ],
+        {
+            "id": "upstream-1",
+            "url": "https://upstream.example.org",
+            "forwarded_to": {"id": "remote-1", "url": "https://tes.example.org"},
+        },
+    ],
+    ids=["list", "nested"],
+)
+@pytest.mark.parametrize("view", ["BASIC", "FULL"])
+def test_stored_forwards(
     client: FlaskClient,
     task_id: str,
     backend: type[FakeBackend],
     mongo_client: MongoClient[dict[str, Any]],
+    forwards: Any,
+    view: str,
 ) -> None:
-    """Tasks stored with nested forwards are served as lists, and canceled.
+    """Tasks stored with forwards are served without them, and canceled.
 
-    Earlier versions stored the forwards nested.
+    Versions before 0.4.0 stored the forwards in `forwarded_to` (before
+    0.3.0 nested, and without `tes_endpoint.task_id`); tasks are canceled at
+    the last one (#324).
     """
     mongo_client[DB]["tasks"].update_one(
         {"task.id": task_id},
         {
-            "$set": {
-                "task.logs.0.metadata.forwarded_to": {
-                    "id": "remote-1",
-                    "url": "https://tes.example.org",
-                }
-            }
+            "$set": {"task.logs.0.metadata": {"forwarded_to": forwards, "host": "h"}},
+            "$unset": {"tes_endpoint.task_id": ""},
         },
     )
-    for path, query in (
-        (f"/tasks/{task_id}", {"view": "FULL"}),
-        ("/tasks", {"view": "FULL"}),
-    ):
-        response = client.get(f"{BASE_PATH}{path}", query_string=query)
+    for path in (f"/tasks/{task_id}", "/tasks"):
+        response = client.get(f"{BASE_PATH}{path}", query_string={"view": view})
         tasks = response.get_json().get("tasks") or [response.get_json()]
-        assert tasks[0]["logs"][0]["metadata"]["forwarded_to"] == [
-            {"id": "remote-1", "url": "https://tes.example.org"}
-        ]
+        assert tasks[0]["logs"][0]["metadata"] == {"host": "h"}
     set_state(mongo_client, task_id, "RUNNING")
     response = client.post(f"{BASE_PATH}/tasks/{task_id}:cancel")
     assert response.status_code == 200
     assert backend.canceled == ["remote-1"]
+
+
+@pytest.mark.parametrize(
+    "forwards",
+    [[], [{"url": "x"}], [{"id": 1, "url": "x"}], "remote-1", {"url": "x"}],
+)
+def test_stored_forwards_invalid(
+    client: FlaskClient,
+    task_id: str,
+    backend: type[FakeBackend],
+    mongo_client: MongoClient[dict[str, Any]],
+    forwards: Any,
+) -> None:
+    """Stored forwards without identifier are no remote identifier (`409`)."""
+    mongo_client[DB]["tasks"].update_one(
+        {"task.id": task_id},
+        {
+            "$set": {"task.logs.0.metadata": {"forwarded_to": forwards}},
+            "$unset": {"tes_endpoint.task_id": ""},
+        },
+    )
+    set_state(mongo_client, task_id, "RUNNING")
+    assert client.post(f"{BASE_PATH}/tasks/{task_id}:cancel").status_code == 409
+    assert not backend.canceled
 
 
 # Listing (#165), name prefixes, relay to backends, timestamps (#208)
@@ -938,7 +965,6 @@ def test_timestamps(
     task = stored(mongo_client, response.get_json()["id"])["task"]
     (log,) = task["logs"]
     times = [task["creation_time"], log["start_time"], log["end_time"]]
-    times.append(log["metadata"]["forwarded_to"][0]["forward_time"])
     for value in times:
         parsed = datetime.fromisoformat(value)
         assert parsed.utcoffset() == timedelta(0)
@@ -948,15 +974,12 @@ def test_timestamps(
     assert relayed_task.creation_time is None
 
 
-def test_cancel_task_without_trace(
-    app: FlaskApp,
+def test_cancel_task_without_forwards(
     client: FlaskClient,
     backend: type[FakeBackend],
     mongo_client: MongoClient[dict[str, Any]],
 ) -> None:
-    """Tasks are canceled without forwards in their logs (`execution_trace`)."""
-    with app.app.app_context():
-        get_custom_config(CustomConfig).storeLogs.execution_trace = False
+    """New tasks have no forwards in their logs, and are canceled (#324)."""
     response = client.post(f"{BASE_PATH}/tasks", json=TASK)
     task_id = response.get_json()["id"]
     assert stored(mongo_client, task_id)["task"]["logs"][0]["metadata"] == {}
@@ -973,7 +996,15 @@ def test_cancel_task_legacy(
 ) -> None:
     """Tasks stored by earlier versions are canceled at their last forward."""
     mongo_client[DB]["tasks"].update_one(
-        {"task.id": task_id}, {"$unset": {"tes_endpoint.task_id": ""}}
+        {"task.id": task_id},
+        {
+            "$set": {
+                "task.logs.0.metadata.forwarded_to": [
+                    {"id": "remote-1", "url": "https://tes.example.org"}
+                ]
+            },
+            "$unset": {"tes_endpoint.task_id": ""},
+        },
     )
     set_state(mongo_client, task_id, "RUNNING")
     assert client.post(f"{BASE_PATH}/tasks/{task_id}:cancel").status_code == 200

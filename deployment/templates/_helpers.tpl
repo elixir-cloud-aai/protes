@@ -207,10 +207,23 @@ consequences (e.g., a missing `hostName` for `applicationDomain`).
 {{- define "protes.validate" -}}
 {{- include "protes.checkLegacyValues" . -}}
 {{- include "protes.checkBackends" . -}}
+{{- include "protes.checkStoreLogs" . -}}
 {{- include "protes.checkPlugins" . -}}
 {{- include "protes.checkSecurity" . -}}
 {{- include "protes.checkExtraEnv" . -}}
 {{- include "protes.checkFlower" . -}}
+{{- end -}}
+
+{{/*
+As the app on startup, fails on `config.custom.storeLogs` (removed in 0.4.0
+with `logs[].metadata.forwarded_to`, which its only setting switched);
+renders nothing.
+*/}}
+{{- define "protes.checkStoreLogs" -}}
+{{- $custom := get (.Values.config | default dict) "custom" -}}
+{{- if and (kindIs "map" $custom) (hasKey $custom "storeLogs") -}}
+{{- fail "config.custom.storeLogs was removed: forwards are no longer recorded in logs[].metadata.forwarded_to; tasks have the gateway tags gateway.backend and gateway.backend_task_id instead (see Upgrading in the docs)" -}}
+{{- end -}}
 {{- end -}}
 
 {{/*
