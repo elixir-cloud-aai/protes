@@ -97,7 +97,7 @@ of the config:
   plugin's identifier, or `plugin` and `params`).
 - Empty values are left out, so that the app's defaults apply: random
   routing (`generic.routing.random` of foca-plugins, which the image
-  contains), which sends no data to third parties. Routing by the distance
+  contains), which makes no third-party location lookups. Routing by the distance
   to the input data (`tes.routing.distance`, also in the image) is an opt-in:
   see the example below. With `provider: dbip`, the public addresses of the
   hosts of task inputs (and of TES instances without a `location`) go to

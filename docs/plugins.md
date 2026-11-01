@@ -92,7 +92,7 @@ that fail or are rejected before they are forwarded are not kept.
 
 The default pipeline routes each task to the TES instances in random order
 (`generic.routing.random`), the next one if a TES instance didn't accept the
-task, and sends no data to third parties. The plugin is published by
+task, and makes no third-party location lookups (tasks still go to your configured TES instances). The plugin is published by
 [foca-plugins](https://foca-plugins.readthedocs.io/en/latest/) and installed
 in the image of proTES (the release train `foca-plugins`, pinned by its exact
 versions and hashes in `uv.lock`). The base config sets the pipeline

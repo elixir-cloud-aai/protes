@@ -335,8 +335,8 @@ custom:
 # installed plugins listed in `available` (by entry point name) are loaded;
 # FOCA's built-in ones (`foca.*`) are always available. The default pipeline
 # routes tasks to the backends in random order (`generic.routing.random`,
-# installed in the image from foca-plugins), without sending data to third
-# parties. Routing to the backends closest to the input data
+# installed in the image from foca-plugins), without third-party location
+# lookups (tasks still go to the configured backends). Routing to the backends closest to the input data
 # (`tes.routing.distance`, also installed) is an opt-in: it locates the hosts
 # of inputs with DB-IP and Nominatim, which receive their public addresses
 # (see `docs/plugins.md`, Pipelines). Steps have alternatives, tried in

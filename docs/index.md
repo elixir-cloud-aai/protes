@@ -46,7 +46,7 @@ processing or validation, or the selection of suitable TES instances
 considering data use restrictions and client preferences. By default,
 tasks go to a random TES instance, for load balancing, with the routing
 plugin of [foca-plugins](https://github.com/elixir-cloud-aai/foca-plugins)
-that the image contains, without sending data to third parties. Routing to
+that the image contains, without third-party location lookups. Routing to
 the TES instances closest to the input data of a task, to bring compute to
 the data, is an opt-in (see [Plugins](plugins.md#pipelines)): it locates
 inputs with lookup services, or with a GeoIP database that you provide.

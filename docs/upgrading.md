@@ -15,8 +15,11 @@ by default, and so looked up the public IP addresses of the hosts of inputs
 (and of TES instances without a configured `location`) at DB-IP and
 Nominatim, third-party services, without the admin choosing it. Since 0.4.1,
 those lookups are an opt-in: the default pipeline is random routing
-(`generic.routing.random`), and no data leaves the deployment. The plugin
+(`generic.routing.random`), and no addresses are sent to third parties. The plugin
 `tes.routing.distance` is still installed in the image, but not enabled.
+During a rolling upgrade, pods of 0.4.0 that still serve requests keep
+looking up addresses until they stop; if that matters, scale the old
+Deployment to 0 first (at the cost of a short downtime).
 
 Deployments that relied on the default of 0.4.0 (or 0.3.0) now route in
 random order. To get the behavior of 0.4.0 back, enable the plugin and put

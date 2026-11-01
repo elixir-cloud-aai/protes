@@ -107,8 +107,8 @@ tes:
 # `config` of plugins, the `params` of pipeline steps, the identifiers of
 # plugins and the names of presets are kept as they are). Empty values are
 # left out, so the app's defaults apply: random routing (`generic.routing.random`,
-# installed in the image) as the pipeline, which sends no data to third
-# parties. Distance routing (`tes.routing.distance`, also installed in the
+# installed in the image) as the pipeline, which makes no third-party
+# location lookups (tasks still go to your TES instances). Distance routing (`tes.routing.distance`, also installed in the
 # image) is an opt-in, see `available` below. Plugins other than FOCA's
 # built-in ones and the two routing plugins must be installed in the image
 # (`protes.image`), derived from that of proTES (see
