@@ -131,7 +131,9 @@ almost none). Not included are: reads of service registries that are due
 forwarding (up to twice the registry entry's `timeout` per registry);
 getting an access token of proTES (up to `client_credentials.timeout` per
 request to the identity provider); connecting to each address of a host
-in turn (e.g., IPv6, then IPv4); and writes to the database. Raise the
+in turn (e.g., IPv6, then IPv4); TES instances that send their answers
+slowly (the timeout counts time without data); and writes to the
+database. Raise the
 proxy's timeout, or lower these settings together.
 
 The shorter `forward_timeout`, the fewer TES instances are tried when some
@@ -140,9 +142,10 @@ don't answer while connecting (up to 5 seconds each), or 2 discovered ones
 (up to 10 seconds each), use up the 20 seconds, and the task fails with
 `503` without trying the next ones. Order `custom.tes.backends` so that
 reliable TES instances come first, or raise `forward_timeout` (and the
-proxy's timeout) for long lists of unreliable TES instances. Requests in flight when an instance of
-proTES stops are cut off after Gunicorn's graceful timeout (20 seconds in
-the chart).
+proxy's timeout) for long lists of unreliable TES instances.
+
+Requests in flight when an instance of proTES stops are cut off after
+Gunicorn's graceful timeout (20 seconds in the chart).
 
 ### Discovery in a service registry
 
