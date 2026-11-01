@@ -351,9 +351,10 @@ plugins:
         - plugin: foca.routing.ordered
   # Limits of plugin calls and forwarding (FOCA's defaults otherwise).
   # Forwarding attempts start within `forward_timeout` seconds (FOCA's
-  # default: 60): 20, so that requests to create tasks end within the read
-  # timeout of common reverse proxies (60 seconds, e.g., ingress-nginx), with
-  # `custom.tes.timeout`; change them together (see "TES instances" in
-  # `docs/configuration.md`)
+  # default: 60): 20, so that forwarding a task and getting its state take at
+  # most 55 seconds with `custom.tes.timeout`, within the read timeout of
+  # common reverse proxies (60 seconds, e.g., ingress-nginx); other work
+  # (e.g., registry reads, token requests) can add to it. Change them
+  # together (see "TES instances" in `docs/configuration.md`)
   defaults:
     forward_timeout: 20
