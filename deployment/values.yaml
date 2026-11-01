@@ -106,10 +106,13 @@ tes:
 # `clientPipelines` as `client_pipelines`, `onFailure` as `on_failure`; the
 # `config` of plugins, the `params` of pipeline steps, the identifiers of
 # plugins and the names of presets are kept as they are). Empty values are
-# left out, so the app's defaults apply: FOCA's ordered failover
-# (`foca.routing.ordered`) as the pipeline. Plugins other than FOCA's built-in
-# ones must be installed in the image (`protes.image`), derived from that of
-# proTES (see https://protes.readthedocs.io/en/latest/plugin-images/).
+# left out, so the app's defaults apply: distance routing with random order
+# as the fallback (`tes.routing.distance`, `generic.routing.random`, installed
+# in the image) as the pipeline; with the default `provider: dbip`, the public
+# addresses of the hosts of task inputs go to DB-IP and Nominatim. Plugins
+# other than FOCA's built-in ones and those of the default pipeline must be
+# installed in the image (`protes.image`), derived from that of proTES (see
+# https://protes.readthedocs.io/en/latest/plugin-images/).
 plugins:
   # Installed plugins that may be used, by identifier (FOCA's built-in
   # plugins, `foca.*`, always are), with their admin settings
@@ -119,13 +122,13 @@ plugins:
   # distribution share their entries, so give them the same `enabled`, else
   # the app warns at startup) and more
   # Plugins other than FOCA's must be installed in the image (`protes.image`,
-  # see docs/plugin-images.md), e.g., the routing plugins of foca-plugins
-  # (`foca-plugin-tes-routing-distance` on PyPI)
+  # see docs/plugin-images.md); the two routing plugins of foca-plugins of
+  # the default pipeline are (merged with what you list here), e.g., to
+  # locate offline, with a GeoIP database that a derived image adds:
   available: {}
   #   tes.routing.distance:
-  #     distribution: foca-plugin-tes-routing-distance
-  #     version: ">0.1.0"
   #     config:
+  #       provider: offline
   #       database: /opt/geoip/dbip-city-lite.mmdb
   #     store:
   #       maxTtl: 86400
@@ -134,7 +137,6 @@ plugins:
   pipeline: []
   #   - id: route
   #     alternatives:
-  #       - plugin: tes.routing.distance
   #       - plugin: foca.routing.ordered
   # Pipelines that clients may choose by name (tag `gateway.pipeline`)
   presets: {}

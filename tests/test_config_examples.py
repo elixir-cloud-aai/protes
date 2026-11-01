@@ -219,7 +219,8 @@ def _plugin_examples() -> list[Any]:
     Returns:
         Parameters of the examples (the section), with the source as ID: of
         the docs (blocks with `plugins` at the top, not those of the
-        chart's values) and of the config overlays of Docker Compose.
+        chart's values), of the base config and of the config overlays of
+        the smoke tests.
     """
     examples: list[Any] = []
     for path in MARKDOWN:
@@ -233,7 +234,7 @@ def _plugin_examples() -> list[Any]:
             param_id = f"{path.relative_to(ROOT)}[{index}]"
             examples.append(pytest.param(example["plugins"], id=param_id))
     for name in (
-        "config.dev.yaml",
+        "pro_tes/config.yaml",
         "tests/smoke/config.yaml",
         "tests/smoke/plugins.config.yaml",
     ):
@@ -251,7 +252,7 @@ def test_plugin_examples_collected() -> None:
     assert sources >= {
         "docs/plugins.md",
         "docs/plugin-images.md",
-        "config.dev.yaml",
+        "pro_tes/config.yaml",
         "tests/smoke/plugins.config.yaml",
         "tests/smoke/config.yaml",
     }

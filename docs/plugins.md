@@ -90,14 +90,70 @@ fail, the task fails with `500 Internal Server Error` (unless the step has
 own (e.g., `403 Forbidden`), and then no other alternative is tried. Tasks
 that fail or are rejected before they are forwarded are not kept.
 
-The default pipeline is FOCA's ordered failover (`foca.routing.ordered`):
-the TES instances in the order of `custom.tes.backends`, those of each
-registry shuffled, the next one if a TES instance didn't accept the task.
-No third-party services are called. The base config sets it explicitly:
+The default pipeline routes each task to the TES instance closest to its
+input data (`tes.routing.distance`), and, if that doesn't apply (e.g., the
+task has no input URLs, or none of its inputs or TES instances could be
+located), to the TES instances in random order (`generic.routing.random`),
+the next one if a TES instance didn't accept the task. Both plugins are
+published by [foca-plugins](https://foca-plugins.readthedocs.io/en/latest/)
+and installed in the image of proTES (the release train `foca-plugins`,
+pinned by its exact versions and hashes in `uv.lock`). The base config sets
+the pipeline explicitly:
 
 ```yaml
 plugins:
-  available: {}
+  available:
+    tes.routing.distance:
+      distribution: foca-plugin-tes-routing-distance
+      config:
+        provider: dbip
+    generic.routing.random:
+      distribution: foca-plugin-generic-routing-random
+  pipeline:
+    - id: route
+      alternatives:
+        - plugin: tes.routing.distance
+        - plugin: generic.routing.random
+```
+
+!!! warning "The default pipeline calls third-party services"
+
+    As the former middlewares of proTES did, the default settings
+    locate the hosts of task inputs and the TES instances with DB-IP and
+    Nominatim (`provider: dbip`): **the public IP addresses of the hosts of
+    inputs** (which may show where users keep their data) go to
+    `api.db-ip.com`, and the city, region and country of those addresses to
+    `nominatim.openstreetmap.org`. Private addresses are never sent. Both
+    services are rate limited (DB-IP's free API: 500 requests per day,
+    Nominatim: one per second); the plugin caches lookups, and when they
+    can't be made, the next alternative routes the task at random. Tell your
+    users, e.g., in your privacy notice. Two ways to keep data in the gateway:
+    locate offline, with a GeoIP database that you add to a derived image
+    (see below), or route by order instead.
+
+Without third-party lookups, locate addresses offline, with a GeoIP database
+in MaxMind DB format (e.g., DB-IP's free IP to City Lite; see the [plugin's
+README](https://github.com/elixir-cloud-aai/foca-plugins/tree/dev/plugins/tes/routing/distance)),
+which the image doesn't contain: add it in an image derived from that of
+proTES (see [Plugin images](plugin-images.md)), and set it in the overlay:
+
+```yaml
+plugins:
+  available:
+    tes.routing.distance:
+      config:
+        provider: offline
+        database: /opt/geoip/dbip-city-lite.mmdb
+```
+
+To route by the order of `custom.tes.backends` only, with FOCA's ordered
+failover (`foca.routing.ordered`: the TES instances of each registry
+shuffled, the next one if a TES instance didn't accept the task), replace
+the pipeline (overlays replace lists), and no third-party services are
+called:
+
+```yaml
+plugins:
   pipeline:
     - id: route
       alternatives:
@@ -116,24 +172,9 @@ limit it to roles (`roles`). The app refuses to start if a plugin of the
 list or of the pipeline can't be loaded, e.g., because it isn't installed
 or doesn't support the TES API.
 
-For example, with the routing plugins of
-[foca-plugins](https://foca-plugins.readthedocs.io/en/latest/), tasks go to
-the TES instances closest to their input data, with random order as the
-fallback, as with the former middlewares of proTES (the releases of these
-plugins for FOCA 0.19 are not published yet, see
-[Routing](upgrading.md#routing)):
-
-```yaml
-plugins:
-  available:
-    tes.routing.distance: {}
-    generic.routing.random: {}
-  pipeline:
-    - id: route
-      alternatives:
-        - plugin: tes.routing.distance
-        - plugin: generic.routing.random
-```
+The routing plugins of the default pipeline are examples of plugins from
+foca-plugins; further ones need a derived image. To enable a plugin that the
+image contains, list it in `plugins.available` (installed is not enabled).
 
 ## Choices of clients
 
@@ -239,6 +280,7 @@ settings in `config.plugins` (e.g., `defaults.store`; see the chart's
 README, Configuration),
 and the image with the plugins in `protes.image` (see [Plugin
 images](plugin-images.md#deploying)).
-The config overlays of Docker Compose (`config.dev.yaml`) and of its smoke
-test (`tests/smoke/config.yaml`) set the pipeline explicitly, to FOCA's
-ordered failover.
+The config overlay of the smoke test of Docker Compose
+(`tests/smoke/config.yaml`) sets the pipeline explicitly, to FOCA's ordered
+failover, so that it needs no network access; `config.dev.yaml` uses the
+default pipeline.

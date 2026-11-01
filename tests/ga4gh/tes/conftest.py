@@ -1,6 +1,7 @@
 """Fixtures and helpers of the tests of the TES API, with fake TES backends."""
 
 from collections.abc import Callable
+from importlib.metadata import entry_points
 from pathlib import Path
 import socket
 from typing import Any, ClassVar
@@ -15,6 +16,7 @@ from foca.plugins import (
     InboundRequest,
     OutboundRequest,
     Plugin,
+    loader,
 )
 from foca.plugins.backends import BackendListConfig
 from foca.plugins.pytest_plugin import RegisterPlugins
@@ -31,6 +33,9 @@ from tests.conftest import DB, make_headers, reset_gateway, set_overlays
 
 # Connecting of sockets, as before the tests block network access
 _CONNECT = socket.socket.connect
+
+# Plugins that the base config makes available (default pipeline)
+ROUTING_PLUGINS = {"tes.routing.distance", "generic.routing.random"}
 
 BASE_PATH = "/ga4gh/tes/v1"
 TASK: dict[str, Any] = {
@@ -252,7 +257,23 @@ def with_plugins(
         **settings: Any,
     ) -> FlaskClient:
         """Create the app, and get a client of it."""
-        fake_plugin_entry_points(plugins)
+        fakes = fake_plugin_entry_points(plugins)
+        # The fakes replace all installed plugins, but the base config makes
+        # the routing plugins of its default pipeline available: keep them
+        installed = [
+            ep
+            for ep in entry_points(group=loader.ENTRY_POINT_GROUP)
+            if ep.name in ROUTING_PLUGINS
+        ]
+        monkeypatch.setattr(
+            loader,
+            "entry_points",
+            lambda **kwargs: (
+                [*fakes, *installed]
+                if kwargs.get("group") in (None, loader.ENTRY_POINT_GROUP)
+                else []
+            ),
+        )
         conf: dict[str, Any] = {
             "plugins": {"available": {name: {} for name in plugins}, **settings},
             "custom": {
