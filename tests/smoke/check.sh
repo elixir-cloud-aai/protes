@@ -62,7 +62,7 @@ if [ "${state}" != "COMPLETE" ]; then
   exit 1
 fi
 check GET "/tasks/${id}?view=FULL" 200 \
-  '.name == "smoke" and .logs[0].metadata.forwarded_to[0].url == "http://fake-tes:8080"'
+  '.name == "smoke" and .tags["gateway.backend"] == "http://fake-tes:8080" and .logs[0].metadata.forwarded_to == null'
 check GET '/tasks?view=MINIMAL' 200 "any(.tasks[]; .id == \"${id}\")"
 check POST "/tasks/${id}:cancel" 200 '. == {}'
 # Unknown tasks are forbidden, as tasks of others are

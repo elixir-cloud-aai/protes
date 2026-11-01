@@ -50,11 +50,19 @@ Check each item; the sections below have the details.
    `400`, which affects clients that submit fetched tasks again (see
    [Plugins](#plugins) and [Task provenance](#task-provenance)). The plugin
    listing has new required fields (see [Plugin store](#plugin-store)).
-   `logs[].metadata.forwarded_to` is deprecated.
-8. **Code that uses proTES as a library** (e.g., custom controllers):
+8. **Forwards in task logs:** `logs[].metadata.forwarded_to` is removed,
+   without a deprecation period: tasks are served without it, also those
+   stored by earlier versions. Clients read the TES instance and the remote
+   identifier of a task from its gateway tags `gateway.backend` and
+   `gateway.backend_task_id` instead. `custom.storeLogs` is refused at
+   startup, also by the Helm chart: remove it (see [Forwards in task
+   logs](#forwards-in-task-logs)).
+9. **Code that uses proTES as a library** (e.g., custom controllers):
    `TaskRuns.create_task()`, `TesClient` and the exceptions changed (see
-   [Plugins](#plugins)), and the TES instances are read with
-   `get_backends()` (see [TES instance list](#tes-instance-list)).
+   [Plugins](#plugins)), the TES instances are read with `get_backends()`
+   (see [TES instance list](#tes-instance-list)), and the models
+   `TesForward` and `Metadata` are removed (see [Forwards in task
+   logs](#forwards-in-task-logs)).
 
 ### FOCA 0.18 and 0.19
 
@@ -298,8 +306,8 @@ New tasks have the gateway tags of FOCA (`gateway.pipeline_source`,
 `gateway.backend`, ...; see [Gateway tags](api.md#gateway-tags)), served
 with the task: clients that submit a fetched task again must drop the tags
 under `gateway.` other than `gateway.backends` and `gateway.pipeline`, or
-it is rejected (`400`). `logs[].metadata.forwarded_to` is deprecated in
-favour of these tags, and will be removed in a later release.
+it is rejected (`400`). These tags replace `logs[].metadata.forwarded_to`
+(see [Forwards in task logs](#forwards-in-task-logs)).
 
 Users list what they may choose per task with `GET /plugins`, and the
 service info has a field `gateway` (see [Choices of
@@ -314,6 +322,44 @@ security:
       users-list-plugins: [p, user, /ga4gh/tes/v1/plugins, (GET)|(HEAD)]
       users-get-plugins: [p, user, "/ga4gh/tes/v1/plugins/:id", (GET)|(HEAD)]
 ```
+
+### Forwards in task logs
+
+proTES no longer records the TES instance and the remote identifier of a
+task in its logs (`logs[].metadata.forwarded_to`, a list of `tesForward`
+objects with `id`, `url` and `forward_time`), and the API specification no
+longer has `tesForward`. This field was not TES-compliant: `metadata` is a
+map of strings, so strict clients could fail on tasks. It is removed in
+0.4.0 without a deprecation period. Clients that read it use the gateway
+tags of the task instead (see [Gateway tags](api.md#gateway-tags)), served
+in the views `BASIC` and `FULL`:
+
+- `forwarded_to[-1].url`: `gateway.backend`;
+- `forwarded_to[-1].id`: `gateway.backend_task_id`;
+- `forwarded_to[-1].forward_time`: `gateway.forwarded_at`.
+
+Tasks stored by earlier versions have no gateway tags; they are served
+without `forwarded_to` and the other backend references of earlier versions
+in their log metadata (`remote_task_id`, `tes_uri`), and without other
+metadata that isn't strings; string metadata is served as stored. They are
+still canceled at the TES instance they were forwarded to (by
+`tes_endpoint.task_id`, or by the forwards or `remote_task_id` that stay in
+the database, for tasks stored before 0.3.0; tasks with malformed forwards
+can't be canceled, `409`), and tracked if they have `tes_endpoint.task_id`:
+unfinished tasks stored before 0.3.0 keep their last state (see [Task
+tracking](#task-tracking)). Their final logs are stored without the forwards
+once they have finished.
+
+The setting `custom.storeLogs` (`execution_trace`), which only switched
+these forwards, is removed: the app refuses to start with it, and the Helm
+chart refuses to render with `config.custom.storeLogs`; remove it from
+custom configs and overlays.
+
+In code that uses proTES as a library, the models `TesForward` and
+`Metadata` (of `pro_tes.ga4gh.tes.models`) and the function
+`flatten_forwards()` (of `pro_tes.ga4gh.tes.task_runs`) are removed;
+`TesTaskLog.metadata` is a map of strings (`dict[str, str]`), and drops
+values that aren't strings.
 
 ### Plugin store
 
@@ -581,8 +627,9 @@ instead of objects with `message` and `code`.
 `logs[].metadata.forwarded_to` of tasks is a list of forwards (`id`, `url`,
 `forward_time`), in the order of forwarding, instead of a nested
 `tesNextTes` object. Tasks stored by earlier versions are still read, and
-served with their forwards as lists; they can be tracked and canceled as
-before.
+can be canceled as before (unfinished ones keep their last state, see
+[Task tracking](#task-tracking)). Since 0.4.0, forwards are no longer
+recorded or served (see [Forwards in task logs](#forwards-in-task-logs)).
 
 Earlier versions kept polling tasks that their backend reported as
 `PREEMPTED`, which is a final state. These tasks are stored as `PREEMPTED`
@@ -631,8 +678,7 @@ as stored. proTES sets `creation_time`, and rejects tasks that set it
 
 The identifier of a
 task at its TES instance is also stored in `tes_endpoint.task_id` (not
-served), so that tasks can be canceled with
-`custom.storeLogs.execution_trace: False` too.
+served), so that tasks can be canceled without forwards in their logs.
 
 New tasks are stored with the state that their TES instance reports when
 they are forwarded (e.g., `QUEUED`), instead of `UNKNOWN` until the Celery

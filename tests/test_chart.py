@@ -362,10 +362,12 @@ def test_values_of_library() -> None:
 def test_config_overlay() -> None:
     """The overlay connects to the release's MongoDB, and has the config."""
     overlay = _overlay(
-        _render("--set", "config.custom.storeLogs.execution_trace=false")
+        _render("--set", "config.custom.controllers.list_tasks.default_page_size=8")
     )
     assert overlay["db"] == {"host": MONGODB}
-    assert overlay["custom"] == {"storeLogs": {"execution_trace": False}}
+    assert overlay["custom"] == {
+        "controllers": {"list_tasks": {"default_page_size": 8}}
+    }
     assert overlay["security"]["auth"]["issuers"] == ["https://login.example.org/oidc/"]
 
 
@@ -1006,6 +1008,20 @@ def test_admins_not_required(value: str) -> None:
         group_claim=None,
     )
     assert ("Deployment", APP) in docs
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("--set", "config.custom.storeLogs.execution_trace=false"),
+        ("--set-json", "config.custom.storeLogs={}"),
+    ],
+)
+def test_store_logs_removed(args: tuple[str, ...]) -> None:
+    """Rendering fails with `custom.storeLogs`, as the app refuses it (#324)."""
+    error = _render_error(*args)
+    assert "config.custom.storeLogs was removed" in error
+    assert "gateway.backend" in error
 
 
 @pytest.mark.parametrize(

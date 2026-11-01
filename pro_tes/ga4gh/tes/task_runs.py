@@ -50,9 +50,7 @@ from pro_tes.ga4gh.tes.backends import (
 )
 from pro_tes.ga4gh.tes.models import (
     DbDocument,
-    Metadata,
     TesEndpoint,
-    TesForward,
     TesState,
     TesTask,
     TesTaskLog,
@@ -88,25 +86,6 @@ logger = logging.getLogger(__name__)
 
 # view of `GET /tasks` and `GET /tasks/{id}` if none is given, as in the spec
 DEFAULT_VIEW = "MINIMAL"
-
-
-def flatten_forwards(task: dict[str, Any]) -> dict[str, Any]:
-    """Serve forwards nested by earlier versions as lists.
-
-    Args:
-        task: Stored task (`DbDocument.task`), possibly projected.
-
-    Returns:
-        The task, with the forwards of its logs as lists (cf.
-        :py:meth:`pro_tes.ga4gh.tes.models.Metadata.flatten_forwards`).
-    """
-    for log in task.get("logs") or []:
-        metadata = log.get("metadata") if isinstance(log, dict) else None
-        if isinstance(metadata, dict) and "forwarded_to" in metadata:
-            metadata["forwarded_to"] = Metadata.flatten_forwards(
-                metadata["forwarded_to"]
-            )
-    return task
 
 
 def _creation_tags(run: PipelineRun, provenance_path: str) -> dict[str, str]:
@@ -151,7 +130,6 @@ class TaskRuns:
     Attributes:
         custom_config: Custom configuration of the app.
         db_client: Database collection storing task objects.
-        store_logs: Whether forwards are recorded in the logs of tasks.
     """
 
     def __init__(self) -> None:
@@ -160,7 +138,6 @@ class TaskRuns:
         self.db_client: Collection[dict[str, Any]] = get_collection(
             TASK_DB, TASK_COLLECTION
         )
-        self.store_logs = self.custom_config.storeLogs.execution_trace
 
     @cached_property
     def provenance(self) -> ProvenanceStore:
@@ -718,7 +695,7 @@ class TaskRuns:
                     {"id": document["task"]["id"], "state": document["task"]["state"]}
                 )
             else:
-                tasks.append(flatten_forwards(document["task"]))
+                tasks.append(self._string_metadata(document["task"]))
         cursor.close()
         logger.debug("Listed %s tasks", len(tasks))
         return {"next_page_token": next_page_token, "tasks": tasks}
@@ -747,7 +724,31 @@ class TaskRuns:
         if document is None:
             logger.error("Task '%s' not found.", id)
             raise TaskNotFound
-        return flatten_forwards(document["task"])
+        return self._string_metadata(document["task"])
+
+    @staticmethod
+    def _string_metadata(task: dict[str, Any]) -> dict[str, Any]:
+        """Drop the log metadata of a stored task that is not strings.
+
+        The TES specification allows only strings, but tasks stored by
+        earlier versions may have other values (e.g., their forwards).
+
+        Args:
+            task: Stored task, as served (changed in place).
+
+        Returns:
+            The task, with string log metadata only.
+        """
+        logs = task.get("logs")
+        for log in logs if isinstance(logs, list) else []:
+            metadata = log.get("metadata") if isinstance(log, dict) else None
+            if isinstance(metadata, dict):
+                log["metadata"] = {
+                    key: value
+                    for key, value in metadata.items()
+                    if isinstance(value, str)
+                }
+        return task
 
     def cancel_task(self, id: str, **kwargs: Any) -> dict[str, Any]:
         """Cancel task.
@@ -991,6 +992,11 @@ class TaskRuns:
                 "task_original": False,
                 "tes_endpoint": False,
                 "provenance": False,
+                # backend references in the logs of tasks stored before
+                # 0.4.0 (newer tasks have them in their gateway tags)
+                "task.logs.metadata.forwarded_to": False,
+                "task.logs.metadata.remote_task_id": False,
+                "task.logs.metadata.tes_uri": False,
             }
         elif view == "FULL":
             projection = {
@@ -998,6 +1004,11 @@ class TaskRuns:
                 "worker_id": False,
                 "tes_endpoint": False,
                 "provenance": False,
+                # backend references in the logs of tasks stored before
+                # 0.4.0 (newer tasks have them in their gateway tags)
+                "task.logs.metadata.forwarded_to": False,
+                "task.logs.metadata.remote_task_id": False,
+                "task.logs.metadata.tes_uri": False,
             }
         else:
             raise BadRequest
@@ -1068,11 +1079,11 @@ class TaskRuns:
         tes_url: str,
         remote_task_id: str,
     ) -> DbDocument:
-        """Set end time, task metadata in `TesTask.logs`, and update document.
+        """Store the TES instance of a task, and the end time of its logs.
 
         Args:
             db_connector: The database connector.
-            tes_url: The TES URL where the task if forwarded.
+            tes_url: The TES URL where the task is forwarded.
             remote_task_id: Task identifier at the remote TES instance.
 
         Returns:
@@ -1098,55 +1109,12 @@ class TaskRuns:
         for logs in task_logs:
             logs.end_time = time_now
 
-        # updating the metadata in TesTask logs
-        if self.store_logs:
-            db_document = self._update_task_metadata(
-                db_document=db_document,
-                tes_url=tes_url,
-                remote_task_id=remote_task_id,
-            )
-
         # without the state, which a request to cancel the task may have
         # changed in the meantime
         task = db_document.model_dump(mode="json", exclude_none=True)["task"]
         task.pop("state", None)
         db_document = db_connector.upsert_fields_in_root_object(root="task", **task)
         logger.debug("Task '%s' inserted to database", db_document.task)
-        return db_document
-
-    def _update_task_metadata(
-        self, db_document: DbDocument, tes_url: str, remote_task_id: str
-    ) -> DbDocument:
-        """Update the task metadata.
-
-        Append the TES endpoint, the remote task identifier and the time of
-        forwarding to the forwards in `TesTask.logs.metadata.forwarded_to`.
-
-        Args:
-            db_document: The document in the database to be updated.
-            tes_url: The TES URL where the task if forwarded.
-            remote_task_id: Task identifier at the remote TES instance.
-
-        Returns:
-            The updated database document.
-
-        Raises:
-            ValueError: The task has no logs.
-        """
-        if db_document.task.logs is None:
-            raise ValueError(f"Task '{db_document.task.id}' has no logs")
-        logs: list[TesTaskLog] = db_document.task.logs
-        forward = TesForward(
-            id=remote_task_id,
-            url=tes_url,
-            forward_time=utc_now(),
-        )
-        for log in logs:
-            if log.metadata is None:
-                log.metadata = Metadata()
-            if log.metadata.forwarded_to is None:
-                log.metadata.forwarded_to = []
-            log.metadata.forwarded_to.append(forward)
         return db_document
 
     def _page_size(self, page_size: int | None, view: str = DEFAULT_VIEW) -> int:
@@ -1181,7 +1149,10 @@ class TaskRuns:
         """Get the identifier of a task at the TES backend it was relayed to.
 
         Tasks stored by earlier versions have it only in their logs: in the
-        last forward with an execution trace, else as `remote_task_id`.
+        last of their forwards (`forwarded_to`, a list, or a nested object
+        before 0.3.0), else as `remote_task_id`. They are read as stored, as
+        the model drops the forwards. Keep this in sync with the query of
+        stored forwards in `track_task_progress`.
 
         Args:
             document: Stored task, as stored.
@@ -1193,13 +1164,22 @@ class TaskRuns:
         """
         if db_document.tes_endpoint.task_id is not None:
             return db_document.tes_endpoint.task_id
-        logs = db_document.task.logs or []
-        metadata = logs[0].metadata if logs else None
-        if metadata is not None and metadata.forwarded_to:
-            # the TES server that proTES forwarded the task to
-            return metadata.forwarded_to[-1].id
-        # the metadata model drops `remote_task_id`, so it is read as stored
         stored_logs = document.get("task", {}).get("logs") or [{}]
         stored_metadata = stored_logs[0].get("metadata") or {}
-        remote_task_id = stored_metadata.get("remote_task_id")
-        return remote_task_id if isinstance(remote_task_id, str) else None
+        forwards: Any = stored_metadata.get("forwarded_to")
+        if forwards is None:
+            remote_task_id = stored_metadata.get("remote_task_id")
+            return remote_task_id if isinstance(remote_task_id, str) else None
+        # nested forwards have the next one in `forwarded_to`; malformed
+        # forwards (at any level) are no remote identifier, rather than a
+        # stale or upstream one
+        while isinstance(forwards, dict) and forwards.get("forwarded_to") is not None:
+            forwards = forwards["forwarded_to"]
+        if isinstance(forwards, dict):
+            forwards = [forwards]
+        if not isinstance(forwards, list) or not forwards:
+            return None
+        forward = forwards[-1]
+        if isinstance(forward, dict) and isinstance(forward.get("id"), str):
+            return str(forward["id"])
+        return None
