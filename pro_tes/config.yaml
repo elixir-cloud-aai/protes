@@ -345,7 +345,7 @@ plugins:
   available:
     # Locates inputs and backends with DB-IP and Nominatim, as the former
     # middleware did: the public addresses of the hosts of inputs are sent to these
-    # services (see `docs/plugins.md`, Data transfers). To keep data in the
+    # services (see `docs/plugins.md`, Pipelines). To keep data in the
     # gateway, set `provider: offline` and a GeoIP database of your own
     # (`database`), or use FOCA's `foca.routing.ordered` (see
     # `docs/upgrading.md`)

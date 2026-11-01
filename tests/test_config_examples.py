@@ -235,6 +235,7 @@ def _plugin_examples() -> list[Any]:
             examples.append(pytest.param(example["plugins"], id=param_id))
     for name in (
         "pro_tes/config.yaml",
+        "config.dev.yaml",
         "tests/smoke/config.yaml",
         "tests/smoke/plugins.config.yaml",
     ):
@@ -253,6 +254,7 @@ def test_plugin_examples_collected() -> None:
         "docs/plugins.md",
         "docs/plugin-images.md",
         "pro_tes/config.yaml",
+        "config.dev.yaml",
         "tests/smoke/plugins.config.yaml",
         "tests/smoke/config.yaml",
     }

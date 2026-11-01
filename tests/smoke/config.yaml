@@ -35,7 +35,7 @@ custom:
       polling:
         wait: 1
 plugins:
-  # Explicit pipeline, FOCA's ordered failover (the default)
+  # Explicit pipeline, FOCA's ordered failover (needs no network access)
   pipeline:
     - id: route
       alternatives:

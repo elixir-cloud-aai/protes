@@ -31,12 +31,12 @@ security:
 #       - type: ga4gh-tes
 #         url: https://tes.example.org
 #         auth: none
-# Plugins that process new tasks (see `docs/plugins.md`); the default
-# pipeline routes tasks by distance to their inputs, or in random order, with
-# lookups at DB-IP and Nominatim. For routing without third parties, use
-# FOCA's ordered failover (TES instances in the order listed above):
-# plugins:
-#   pipeline:
-#     - id: route
-#       alternatives:
-#         - plugin: foca.routing.ordered
+# Plugins that process new tasks (see `docs/plugins.md`). The default
+# pipeline (distance routing with lookups at DB-IP and Nominatim) would send
+# the addresses of the hosts of task inputs to third parties, so this overlay
+# uses FOCA's ordered failover (the TES instances in the order listed above)
+plugins:
+  pipeline:
+    - id: route
+      alternatives:
+        - plugin: foca.routing.ordered

@@ -24,9 +24,9 @@ the config (see [Plugins](plugins.md)): installed is not enabled.
     its
     [documentation](https://foca-plugins.readthedocs.io/en/latest/installing/).
     The images of proTES contain the two routing plugins already (the
-    release train `foca-plugins` 0.1.0, with exact versions and hashes in
-    the repository's `uv.lock`), so `resolve.sh` finds nothing to add for
-    them. The recipe works the same for plugins of any repository, and CI
+    release train `foca-plugins`, pinned in `pyproject.toml`, with exact
+    versions and hashes in the repository's `uv.lock`); don't list them in
+    `plugins.in`. The recipe works the same for plugins of any repository, and CI
     tests it with a test plugin (see [Testing the
     recipe](#testing-the-recipe)).
 

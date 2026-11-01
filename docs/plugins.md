@@ -127,7 +127,9 @@ plugins:
     services are rate limited (DB-IP's free API: 500 requests per day,
     Nominatim: one per second); the plugin caches lookups, and when they
     can't be made, the next alternative routes the task at random. Tell your
-    users, e.g., in your privacy notice. Two ways to keep data in the gateway:
+    users, e.g., in your privacy notice. Settings of overlays and of the chart's `plugins.available` are merged
+    with these, so a `database` alone doesn't switch to offline lookups:
+    set `provider: offline`, too. Two ways to keep data in the gateway:
     locate offline, with a GeoIP database that you add to a derived image
     (see below), or route by order instead.
 
@@ -280,7 +282,7 @@ settings in `config.plugins` (e.g., `defaults.store`; see the chart's
 README, Configuration),
 and the image with the plugins in `protes.image` (see [Plugin
 images](plugin-images.md#deploying)).
-The config overlay of the smoke test of Docker Compose
-(`tests/smoke/config.yaml`) sets the pipeline explicitly, to FOCA's ordered
-failover, so that it needs no network access; `config.dev.yaml` uses the
-default pipeline.
+The config overlays of Docker Compose (`config.dev.yaml`) and of its smoke
+test (`tests/smoke/config.yaml`) set the pipeline explicitly, to FOCA's
+ordered failover, so that local setups need no network access and send
+nothing to third parties.
