@@ -286,12 +286,12 @@ later, which reads the signatures in the Sigstore bundle format):
 
 ```bash
 gh attestation verify oci://docker.io/elixircloud/protes:{{ version }} \
-    --repo elixir-cloud-aai/proTES \
-    --signer-workflow elixir-cloud-aai/proTES/.github/workflows/release.yaml \
+    --repo elixir-cloud-aai/protes \
+    --signer-workflow elixir-cloud-aai/protes/.github/workflows/release.yml \
     --source-ref refs/tags/v{{ version }}
 cosign verify docker.io/elixircloud/protes:{{ version }} \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-    --certificate-identity https://github.com/elixir-cloud-aai/proTES/.github/workflows/release.yaml@refs/tags/v{{ version }}
+    --certificate-identity https://github.com/elixir-cloud-aai/protes/.github/workflows/release.yml@refs/tags/v{{ version }}
 ```
 
 These are the commands for release `{{ version }}`: replace it with the
@@ -340,16 +340,16 @@ artifact attestation of its provenance and a Sigstore bundle with its
 signature (`protes-{{ chart_version }}.tgz.sigstore.json`, attached too):
 
 ```bash
-gh release download v{{ version }} --repo elixir-cloud-aai/proTES \
+gh release download v{{ version }} --repo elixir-cloud-aai/protes \
     --pattern 'protes-{{ chart_version }}.tgz*'
 gh attestation verify protes-{{ chart_version }}.tgz \
-    --repo elixir-cloud-aai/proTES \
-    --signer-workflow elixir-cloud-aai/proTES/.github/workflows/release.yaml \
+    --repo elixir-cloud-aai/protes \
+    --signer-workflow elixir-cloud-aai/protes/.github/workflows/release.yml \
     --source-ref refs/tags/v{{ version }}
 cosign verify-blob protes-{{ chart_version }}.tgz \
     --bundle protes-{{ chart_version }}.tgz.sigstore.json \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-    --certificate-identity https://github.com/elixir-cloud-aai/proTES/.github/workflows/release.yaml@refs/tags/v{{ version }}
+    --certificate-identity https://github.com/elixir-cloud-aai/protes/.github/workflows/release.yml@refs/tags/v{{ version }}
 ```
 
 Images are scanned for known vulnerabilities with [Trivy](https://trivy.dev/)

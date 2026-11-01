@@ -63,12 +63,13 @@ MENTIONS = (
 )
 # Parts of lines that may name it (the rest of the line is still checked):
 # links to the release notes (also in `mkdocs.yml`
-# and the changelog) and to its assets, and migration headings, which are
-# about that release itself
+# and the changelog) and to its assets, and migration headings and links to
+# them, which are about that release itself
 ALLOWED_LINES = (
     r"releases/{version}(?:\.md|/)",
     r"releases/download/v{version}/\S*",
     r"^#{{1,6}} (?:From versions before|To (?:app )?version) {version}$",
+    r"\[(?:From versions before|To (?:app )?version) {version}\]\(#[a-z0-9-]+\)",
 )
 
 

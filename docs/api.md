@@ -80,7 +80,7 @@ For `POST /tasks`, proTES:
 proTES keeps the task as received (`task_original`) as well as the task as
 forwarded; the TES instance and the remote identifier of the task are in its
 gateway tags (`gateway.backend` and `gateway.backend_task_id`, see below).
-Since 0.4.0, proTES no longer records them in the logs of tasks
+Since the move to plugins, proTES no longer records them in the logs of tasks
 (`logs[].metadata.forwarded_to`, an array of objects in the string map
 `metadata`, which the TES specification doesn't allow), and serves tasks
 stored by earlier versions without them (see
