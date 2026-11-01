@@ -130,8 +130,8 @@ def test_upstream_owner() -> None:
 def test_gate_uses_shared_action() -> None:
     """The gate of `ci.yml` uses the shared `gate` action.
 
-    It passes the results of all needed jobs and allows `push` and
-    `publish` to be skipped only where `PUBLISH` is "false", and needs no
+    It passes the results of all needed jobs, allows `title` to be skipped
+    and `push` and `publish` only where `PUBLISH` is "false", and needs no
     permissions.
     """
     gate = _load(WORKFLOWS / "ci.yml")["jobs"][GATE]
@@ -140,8 +140,26 @@ def test_gate_uses_shared_action() -> None:
     assert step["uses"].startswith("elixir-cloud-aai/.github/actions/gate@")
     assert step["with"]["needs"] == "${{ toJSON(needs) }}"
     assert step["with"]["allow-skipped"] == (
-        "${{ env.PUBLISH == 'false' && 'push publish' || '' }}"
+        "${{ env.PUBLISH == 'false' && 'title push publish' || 'title' }}"
     )
+
+
+def test_title_job() -> None:
+    """The `title` job checks pull request titles with the shared action.
+
+    It runs only on pull requests, needs no permissions, and `ci.yml` also
+    runs when a pull request is edited.
+    """
+    workflow = _load(WORKFLOWS / "ci.yml")
+    # PyYAML parses the key `on` as `True`
+    events = workflow.get("on", workflow.get(True))
+    assert "edited" in events["pull_request"]["types"]
+    job = workflow["jobs"]["title"]
+    assert job["name"] == "PR title"
+    assert job["permissions"] == {}
+    assert "github.event_name == 'pull_request'" in job["if"]
+    (step,) = job["steps"]
+    assert step["uses"].startswith("elixir-cloud-aai/.github/actions/pr-title@")
 
 
 def test_shared_actions_pinned() -> None:

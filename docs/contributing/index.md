@@ -9,6 +9,9 @@ This page covers what is specific to this repository, an app built with
 
 ## Commit messages and pull request titles
 
+CI checks the title of a pull request (job `PR title`) and rechecks it when
+you edit it.
+
 Use `feat`, `fix`, `perf`, `refactor` and `style` only for changes of what is
 deployed: the app (`pro_tes/`) and its Helm chart (`deployment/`).
 
