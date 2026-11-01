@@ -62,6 +62,9 @@ Check each item; the sections below have the details.
    (see [TES instance list](#tes-instance-list)), and the models
    `TesForward` and `Metadata` are removed (see [Forwards in task
    logs](#forwards-in-task-logs)).
+10. **Tasks stored before 0.3.0:** unfinished ones are not resumed for
+    tracking: they keep their last state (see [Task
+    tracking](#task-tracking)).
 
 ### FOCA 0.18 and 0.19
 
@@ -606,7 +609,7 @@ instead of objects with `message` and `code`.
 `forward_time`), in the order of forwarding, instead of a nested
 `tesNextTes` object. Tasks stored by earlier versions are still read, and
 can be canceled as before (unfinished ones keep their last state, see
-[Task tracking](#task-tracking)). Since 0.4.0, forwards are no longer
+[Task tracking](#task-tracking)). Since the move to plugins, forwards are no longer
 recorded or served (see [Forwards in task logs](#forwards-in-task-logs)).
 
 Earlier versions kept polling tasks that their backend reported as
