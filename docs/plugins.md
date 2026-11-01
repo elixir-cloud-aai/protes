@@ -121,7 +121,8 @@ plugins:
     As the former middlewares of proTES did, the default settings
     locate the hosts of task inputs and the TES instances with DB-IP and
     Nominatim (`provider: dbip`): **the public IP addresses of the hosts of
-    inputs** (which may show where users keep their data) go to
+    inputs** (which may show where users keep their data) and of TES
+    instances without a configured `location` go to
     `api.db-ip.com`, and the city, region and country of those addresses to
     `nominatim.openstreetmap.org`. Private addresses are never sent. Both
     services are rate limited (DB-IP's free API: 500 requests per day,
