@@ -10,6 +10,7 @@ import subprocess
 import tomllib
 from typing import Any
 
+from packaging.requirements import Requirement
 from packaging.version import Version
 import pytest
 import yaml
@@ -725,4 +726,4 @@ def test_build_system_group() -> None:
         package for package in lock["package"] if package["name"] == "pro-tes"
     ]
     locked = [entry["name"] for entry in project["dev-dependencies"]["build-system"]]
-    assert sorted(locked) == ["setuptools", "setuptools-scm"]
+    assert sorted(locked) == sorted(Requirement(spec).name for spec in group)

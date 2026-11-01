@@ -133,7 +133,9 @@ publishing credentials. The build requirements of the app
 `build-system`: CI's `push` job derives the version of dev images with
 them, exported by the uv image of the `Dockerfile` (pinned by digest) and
 installed with hash checks, so that no job that holds publishing
-credentials installs a package without hash checks (the tests check this).
+credentials installs a package without hash checks (the tests check this;
+the pip that installs them is that of the runner's Python, `ensurepip`,
+nothing downloaded).
 Keep the group and `build-system.requires` the same (the tests fail if they
 differ). The image still installs the runtime dependencies from the ranges
 of `pyproject.toml` (`scripts/image_requirements.py`).
