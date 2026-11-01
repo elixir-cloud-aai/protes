@@ -539,7 +539,12 @@ def _allowed_install(command: str) -> bool:
     """
     tokens = shlex.split(command)
     if UV_SYNC.search(command):
-        return tokens[:3] == ["uv", "sync", "--locked"]
+        # Locked, from the lock's sources and indexes only
+        overrides = {"--frozen", "--no-sources", "--index", "--default-index"}
+        overrides |= {"--index-url", "--extra-index-url", "--find-links"}
+        return tokens[:3] == ["uv", "sync", "--locked"] and not any(
+            token.split("=")[0] in overrides for token in tokens
+        )
     if command.startswith("pipx run --spec "):
         return "==" in tokens[3]
     return command == "python -m build"
@@ -550,6 +555,9 @@ def _allowed_install(command: str) -> bool:
     [
         pytest.param("uv sync --locked --extra dev", True, id="sync-locked"),
         pytest.param("uv sync --extra dev", False, id="sync"),
+        pytest.param("uv sync --locked --frozen", False, id="sync-frozen"),
+        pytest.param("uv sync --locked --index-url=x", False, id="sync-index"),
+        pytest.param("uv sync --locked --no-sources", False, id="sync-sources"),
         pytest.param("env X=1 uv sync --locked", False, id="sync-env"),
         pytest.param("uv --quiet sync --locked", False, id="sync-option"),
         pytest.param("pipx run --spec foo==1.0 foo", True, id="pipx-pinned"),

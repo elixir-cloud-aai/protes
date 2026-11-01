@@ -5,7 +5,9 @@ describes the development setup, the checks, the documentation and the
 versions.
 
 Development needs Python 3.13 or later and
-[uv](https://docs.astral.sh/uv/). To set up a development environment with
+[uv](https://docs.astral.sh/uv/) (e.g., `pipx install uv`; see its
+[installation guide](https://docs.astral.sh/uv/getting-started/installation/)).
+To set up a development environment with
 the versions of the lock (`uv.lock`, see [Dependencies](#dependencies)), as
 CI does, and run the checks that CI runs:
 
