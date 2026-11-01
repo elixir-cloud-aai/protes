@@ -469,13 +469,21 @@ def test_stored_forwards(
     """Tasks stored with forwards are served without them, and canceled.
 
     Versions before 0.4.0 stored the forwards in `forwarded_to` (before
-    0.3.0 nested, and without `tes_endpoint.task_id`); tasks are canceled at
-    the last one (#324).
+    0.3.0 nested, and without `tes_endpoint.task_id`; 0.2 also the remote
+    identifier and the backend as strings); tasks are served without these
+    backend references and canceled at the last forward (#324).
     """
     mongo_client[DB]["tasks"].update_one(
         {"task.id": task_id},
         {
-            "$set": {"task.logs.0.metadata": {"forwarded_to": forwards, "host": "h"}},
+            "$set": {
+                "task.logs.0.metadata": {
+                    "forwarded_to": forwards,
+                    "remote_task_id": "remote-0",
+                    "tes_uri": "https://tes.example.org",
+                    "host": "h",
+                }
+            },
             "$unset": {"tes_endpoint.task_id": ""},
         },
     )
@@ -1009,7 +1017,7 @@ def test_cancel_task_legacy(
     set_state(mongo_client, task_id, "RUNNING")
     assert client.post(f"{BASE_PATH}/tasks/{task_id}:cancel").status_code == 200
     assert backend.canceled == ["remote-1"]
-    # without an execution trace
+    # stored by 0.2: the remote identifier in `remote_task_id`
     mongo_client[DB]["tasks"].update_one(
         {"task.id": task_id},
         {

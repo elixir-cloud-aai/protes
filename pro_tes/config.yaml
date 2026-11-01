@@ -329,7 +329,6 @@ custom:
     # (see `docs/configuration.md`)
     timeout: 15
 
-
 # Plugins (FOCA's gateway plugins, `foca.plugins`) process each new task
 # (`POST /tasks`): they may change the task, choose and order the TES backends
 # of `custom.tes.backends`, and change the request to each backend. Only

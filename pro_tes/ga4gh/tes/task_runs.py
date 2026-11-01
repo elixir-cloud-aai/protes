@@ -968,8 +968,11 @@ class TaskRuns:
                 "task_original": False,
                 "tes_endpoint": False,
                 "provenance": False,
-                # forwards of tasks stored before 0.4.0
+                # backend references in the logs of tasks stored before
+                # 0.4.0 (the gateway tags serve them now)
                 "task.logs.metadata.forwarded_to": False,
+                "task.logs.metadata.remote_task_id": False,
+                "task.logs.metadata.tes_uri": False,
             }
         elif view == "FULL":
             projection = {
@@ -977,8 +980,11 @@ class TaskRuns:
                 "worker_id": False,
                 "tes_endpoint": False,
                 "provenance": False,
-                # forwards of tasks stored before 0.4.0
+                # backend references in the logs of tasks stored before
+                # 0.4.0 (the gateway tags serve them now)
                 "task.logs.metadata.forwarded_to": False,
+                "task.logs.metadata.remote_task_id": False,
+                "task.logs.metadata.tes_uri": False,
             }
         else:
             raise BadRequest
@@ -1121,7 +1127,8 @@ class TaskRuns:
         Tasks stored by earlier versions have it only in their logs: in the
         last of their forwards (`forwarded_to`, a list, or a nested object
         before 0.3.0), else as `remote_task_id`. They are read as stored, as
-        the model drops them.
+        the model drops the forwards. Keep this in sync with the query of
+        stored forwards in `track_task_progress`.
 
         Args:
             document: Stored task, as stored.

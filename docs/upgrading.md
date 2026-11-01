@@ -339,11 +339,14 @@ in the views `BASIC` and `FULL`:
 - `forwarded_to[-1].forward_time`: `gateway.forwarded_at`.
 
 Tasks stored by earlier versions have no gateway tags; they are served
-without `forwarded_to` (other metadata, i.e., strings, is served as
-stored), and are still tracked and canceled at the TES instance they were
-forwarded to (by `tes_endpoint.task_id`, or by the forwards that stay in
-the database, for tasks stored before 0.3.0). Their final logs are stored
-without the forwards once they have finished.
+without `forwarded_to` and the other backend references of earlier
+versions in their log metadata (`remote_task_id`, `tes_uri`); other string
+metadata is served as stored. They are still canceled at the TES instance
+they were forwarded to (by `tes_endpoint.task_id`, or by the forwards that
+stay in the database, for tasks stored before 0.3.0), and tracked if they
+have `tes_endpoint.task_id`: unfinished tasks stored before 0.3.0 keep
+their last state (see [Task tracking](#task-tracking)).
+Their final logs are stored without the forwards once they have finished.
 
 The setting `custom.storeLogs` (`execution_trace`), which only switched
 these forwards, is removed: the app refuses to start with it, and the Helm
@@ -672,9 +675,7 @@ as stored. proTES sets `creation_time`, and rejects tasks that set it
 
 The identifier of a
 task at its TES instance is also stored in `tes_endpoint.task_id` (not
-served), so that tasks can be canceled without forwards in their logs
-(with `custom.storeLogs.execution_trace: False`, which 0.4.0 removes with
-the forwards).
+served), so that tasks can be canceled without forwards in their logs.
 
 New tasks are stored with the state that their TES instance reports when
 they are forwarded (e.g., `QUEUED`), instead of `UNKNOWN` until the Celery

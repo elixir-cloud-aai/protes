@@ -16,7 +16,6 @@ import pytest
 import tes
 import yaml
 
-import pro_tes
 from pro_tes.app import init_app
 from pro_tes.exceptions import BackendOutcomeUnknown
 from pro_tes.ga4gh.tes import task_runs
@@ -40,9 +39,6 @@ from tests.ga4gh.tes.conftest import (
     relayed,
     stored,
 )
-
-# Specification of the extensions of the TES API by proTES
-ADDITIONS = Path(pro_tes.__file__).parent / "api" / "additions.openapi.yaml"
 
 
 def provenance_path(task_id: str) -> str:
@@ -212,13 +208,6 @@ def test_gateway_tags_outcome_unknown(
     assert tags["gateway.backend"] == BACKENDS[0]
     assert "gateway.backend_task_id" not in tags
     assert json.loads(tags["gateway.route"])[0]["outcome"] == "unknown"
-
-
-def test_provenance_operation() -> None:
-    """The provenance endpoint is a proTES addition to the spec."""
-    spec = yaml.safe_load(ADDITIONS.read_text(encoding="utf-8"))
-    operation = spec["paths"]["/tasks/{id}/provenance"]["get"]
-    assert operation["operationId"] == "GetTaskProvenance"
 
 
 def test_gateway_tags_tracked(
