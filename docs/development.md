@@ -128,8 +128,18 @@ the lock, are tested on the versions they lock; the lint job also checks
 that the lock matches `pyproject.toml` (`uv lock --check`). The app itself
 is installed editable there, built with build requirements from the package
 index (not the lock), as `pip install -e` does; those jobs hold no
-publishing credentials. The image still installs the runtime dependencies
-from the ranges of `pyproject.toml` (`scripts/image_requirements.py`).
+publishing credentials. The build requirements of the app
+(`build-system.requires`) are locked the same way, as the dependency group
+`build-system`: CI's `push` job derives the version of dev images with
+them, exported by the uv image of the `Dockerfile` (pinned by digest) and
+installed with hash checks (by the pip of the runner's Python,
+`ensurepip`, nothing downloaded), so that no workflow step of a job that
+holds publishing credentials installs a package without hash checks (the
+tests check this). Keep the group and `build-system.requires` the same
+(the tests fail if they differ). The image build, which these jobs run too,
+still installs the runtime dependencies from the ranges of `pyproject.toml`
+(`scripts/image_requirements.py`, to be locked by
+[#365](https://github.com/elixir-cloud-aai/protes/issues/365)).
 After adding, removing or changing a dependency in `pyproject.toml`, update
 the lock and commit both:
 
@@ -139,8 +149,9 @@ uv lock --upgrade-package <name>  # upgrade one locked package
 uv lock --check  # what CI checks: the lock matches `pyproject.toml`
 ```
 
-Dependabot updates `pyproject.toml` and `uv.lock` together (`uv` entry of
-`.github/dependabot.yml`).
+Dependabot updates `pyproject.toml` and `uv.lock` together, including the
+`build-system` group (`uv` entry of `.github/dependabot.yml`), and the uv
+image of the `Dockerfile` (`docker` entry).
 
 ## Helm chart
 
