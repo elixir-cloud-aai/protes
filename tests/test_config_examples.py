@@ -262,5 +262,11 @@ def test_plugin_examples_collected() -> None:
 
 @pytest.mark.parametrize("plugins", PLUGIN_EXAMPLES)
 def test_plugin_examples_valid(plugins: dict[str, Any]) -> None:
-    """The examples of plugins validate with FOCA's model."""
-    PluginsConfig.model_validate(plugins)
+    """The examples of plugins validate with FOCA's model, merged into the base.
+
+    Examples are overlays of the base config, so that its plugins are
+    available (e.g., `generic.routing.random`, as the app merges them);
+    lists such as the pipeline are replaced.
+    """
+    base = yaml.safe_load((ROOT / "pro_tes/config.yaml").read_text("utf-8"))
+    PluginsConfig.model_validate(deep_merge(base["plugins"], plugins))

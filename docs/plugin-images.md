@@ -3,8 +3,9 @@
 Plugins are Python distributions that must be installed in the image of
 proTES: nothing is installed at runtime, and the Helm chart keeps the root
 file system of the containers read-only. The published images of proTES
-have FOCA's built-in plugins and the routing plugins of the default pipeline
-(`tes.routing.distance` and `generic.routing.random`, from foca-plugins);
+have FOCA's built-in plugins and two routing plugins from foca-plugins
+(`generic.routing.random`, enabled by default, and `tes.routing.distance`,
+which admins enable explicitly, see [Plugins](plugins.md#pipelines));
 there is no image with all plugins, as plugins come from several
 repositories, in many combinations. To deploy other plugins, or to add data
 that plugins need (e.g., the GeoIP database of the offline provider of
@@ -147,10 +148,12 @@ plugins:
   available:
     org.example.plugin:
       distribution: foca-plugin-<group>-<subgroup>-<name>
-    # The routing plugins of the image: locate addresses offline with a
-    # GeoIP database that your image adds, e.g., by a `COPY` of your own
-    # (see the plugin's README), instead of with DB-IP and Nominatim
+    # The distance routing plugin of the image (not enabled by default):
+    # locate addresses offline with a GeoIP database that your image adds,
+    # e.g., by a `COPY` of your own (see the plugin's README), and put it
+    # into the pipeline, e.g., before `generic.routing.random`
     tes.routing.distance:
+      distribution: foca-plugin-tes-routing-distance
       config:
         provider: offline
         database: /opt/geoip/dbip-city-lite.mmdb

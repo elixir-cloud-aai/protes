@@ -24,10 +24,11 @@ instances, brought to you by [ELIXIR On-Cloud](https://elixir-on.cloud/).
 Clients send their tasks to proTES as to any TES instance; proTES passes each
 task through a configurable pipeline of plugins (FOCA's gateway plugins),
 which pick the TES instance to run it on (or change the request), forwards it
-there and tracks its state. By default, tasks go to the TES instance
-closest to their input data, or to a random one if that doesn't apply (the
-routing plugins of foca-plugins, which the image contains); other plugins
-serve access control, request processing or validation, or the selection of
+there and tracks its state. By default, tasks go to a random TES instance,
+for load balancing, without sending data to third parties; plugins (e.g.,
+the routing plugins of foca-plugins, which the image contains) route tasks to
+the TES instance closest to their input data (an opt-in, as it uses lookup
+services), or serve access control, request processing or validation, or the selection of
 instances by data use restrictions and client preferences.
 Run it with Docker Compose or deploy it to Kubernetes with its Helm chart.
 <!-- --8<-- [end:synopsis] -->

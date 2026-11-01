@@ -95,11 +95,16 @@ of the config:
   of plugins and the names of presets are kept as they are. Steps of
   pipelines take the long form (`alternatives`), not FOCA's short forms (a
   plugin's identifier, or `plugin` and `params`).
-- Empty values are left out, so that the app's defaults apply: the routing
-  plugins of foca-plugins that the image contains, `tes.routing.distance`
-  with `generic.routing.random` as the fallback (as before the plugins; with
-  `provider: dbip`, which sends the public addresses of the hosts of task
-  inputs to DB-IP and Nominatim).
+- Empty values are left out, so that the app's defaults apply: random
+  routing (`generic.routing.random` of foca-plugins, which the image
+  contains), which sends no data to third parties. Routing by the distance
+  to the input data (`tes.routing.distance`, also in the image) is an opt-in:
+  see the example below. With `provider: dbip`, the public addresses of the
+  hosts of task inputs (and of TES instances without a `location`) go to
+  DB-IP and Nominatim, third-party services (see [Plugins](https://protes.readthedocs.io/en/latest/plugins/#pipelines)
+  for what is sent); `provider: offline` uses a GeoIP database that your
+  image adds, and sends nothing. 0.4.0 enabled the lookups by default; see
+  the upgrade notes.
 - Other settings of the app's `plugins` (e.g., `defaults`, with the
   defaults of the plugin store, `defaults.store`, and `gateway_id`) are
   set in `config.plugins`. The app's base config sets
@@ -112,8 +117,8 @@ of the config:
   `config.plugins`, and on `config.custom.middlewares`, which the plugins
   replaced.
 
-Plugins other than FOCA's built-in ones and the two routing plugins of the
-default pipeline must be installed in the image: build an image derived from that of proTES, with the plugins pinned by hash
+Plugins other than FOCA's built-in ones and the two routing plugins must be
+installed in the image: build an image derived from that of proTES, with the plugins pinned by hash
 (see [Plugin
 images](https://protes.readthedocs.io/en/latest/plugin-images/)), and set
 it in `protes.image` (see [Image](#image)). For example:
@@ -127,9 +132,12 @@ plugins:
   available:
     org.example.plugin:
       distribution: foca-plugin-<group>-<subgroup>-<name>
-    # Locate offline, with a GeoIP database that the image adds, instead of
-    # with DB-IP and Nominatim (the default)
+    # Opt-in to routing by distance: `provider: dbip` locates with DB-IP
+    # and Nominatim (third parties, which receive the addresses of the hosts
+    # of inputs); `provider: offline` uses a GeoIP database that the image
+    # adds, and sends nothing
     tes.routing.distance:
+      distribution: foca-plugin-tes-routing-distance
       config:
         provider: offline
         database: /opt/geoip/dbip-city-lite.mmdb
