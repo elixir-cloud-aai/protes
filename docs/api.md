@@ -45,9 +45,10 @@ For `POST /tasks`, proTES:
    inputs over `max_inline_content`, with `413 Content Too Large`: see
    [Tasks](configuration.md#tasks));
 2. runs the pipeline of [plugins](plugins.md), which may change the task
-   and select the TES instances to try and their order (by default, those
-   closest to the task's input data, else in random order; FOCA's ordered
-   failover needs an explicit pipeline, see [Plugins](plugins.md#pipelines)); a plugin may reject the task (with
+   and select the TES instances to try and their order (by default, in random
+   order; routing by the distance to the input data and FOCA's ordered
+   failover need an explicit pipeline, see [Plugins](plugins.md#pipelines));
+   a plugin may reject the task (with
    its status, e.g., `403 Forbidden`), a step whose plugins all fail fails
    the request (`500 Internal Server Error`), tasks without TES instances
    fail with `503 Service Unavailable`, and tasks whose inline contents

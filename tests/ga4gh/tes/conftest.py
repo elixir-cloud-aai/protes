@@ -34,8 +34,8 @@ from tests.conftest import DB, make_headers, reset_gateway, set_overlays
 # Connecting of sockets, as before the tests block network access
 _CONNECT = socket.socket.connect
 
-# Plugins that the base config makes available (default pipeline)
-ROUTING_PLUGINS = {"tes.routing.distance", "generic.routing.random"}
+# Plugin that the base config makes available (default pipeline)
+ROUTING_PLUGINS = {"generic.routing.random"}
 
 BASE_PATH = "/ga4gh/tes/v1"
 TASK: dict[str, Any] = {
@@ -259,7 +259,7 @@ def with_plugins(
         """Create the app, and get a client of it."""
         fakes = fake_plugin_entry_points(plugins)
         # The fakes replace all installed plugins, but the base config makes
-        # the routing plugins of its default pipeline available: keep them
+        # the routing plugin of its default pipeline available: keep it
         installed = [
             ep
             for ep in entry_points(group=loader.ENTRY_POINT_GROUP)

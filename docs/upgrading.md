@@ -238,7 +238,8 @@ task distribution and the dependency `geopy`.
   with camelCase keys, see the chart's [README](deployment.md)) and refuses
   `config.custom.middlewares`.
 - Tasks go to the TES instance closest to their input data by default,
-  with random order as the fallback, as before, but with plugins instead of
+  with random order as the fallback, as before (0.4.1 changed this default,
+  see [To version 0.4.1](#to-version-041)), but with plugins instead of
   middlewares (see [Routing](#routing)).
 - Tasks that no TES instance accepts fail with `503 Service Unavailable`
   (was `500 Internal Server Error`), also if no TES instance is configured,
