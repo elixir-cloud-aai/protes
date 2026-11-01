@@ -300,6 +300,8 @@ def test_stored_forwards_tracked(
     assert document["task"]["state"] == "COMPLETE"
     assert document["task"]["logs"][0]["metadata"] == {"a": "b"}
     assert not scheduled
+    # tracked by `tes_endpoint.task_id`, not by the forwards
+    assert set(client_class.requested) == {"remote-1"}
 
 
 def test_backend_client(

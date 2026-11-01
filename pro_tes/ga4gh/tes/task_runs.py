@@ -695,7 +695,7 @@ class TaskRuns:
                     {"id": document["task"]["id"], "state": document["task"]["state"]}
                 )
             else:
-                tasks.append(document["task"])
+                tasks.append(self._string_metadata(document["task"]))
         cursor.close()
         logger.debug("Listed %s tasks", len(tasks))
         return {"next_page_token": next_page_token, "tasks": tasks}
@@ -724,7 +724,31 @@ class TaskRuns:
         if document is None:
             logger.error("Task '%s' not found.", id)
             raise TaskNotFound
-        return document["task"]
+        return self._string_metadata(document["task"])
+
+    @staticmethod
+    def _string_metadata(task: dict[str, Any]) -> dict[str, Any]:
+        """Drop the log metadata of a stored task that is not strings.
+
+        The TES specification allows only strings, but tasks stored by
+        earlier versions may have other values (e.g., their forwards).
+
+        Args:
+            task: Stored task, as served (changed in place).
+
+        Returns:
+            The task, with string log metadata only.
+        """
+        logs = task.get("logs")
+        for log in logs if isinstance(logs, list) else []:
+            metadata = log.get("metadata") if isinstance(log, dict) else None
+            if isinstance(metadata, dict):
+                log["metadata"] = {
+                    key: value
+                    for key, value in metadata.items()
+                    if isinstance(value, str)
+                }
+        return task
 
     def cancel_task(self, id: str, **kwargs: Any) -> dict[str, Any]:
         """Cancel task.
@@ -1143,16 +1167,19 @@ class TaskRuns:
         stored_logs = document.get("task", {}).get("logs") or [{}]
         stored_metadata = stored_logs[0].get("metadata") or {}
         forwards: Any = stored_metadata.get("forwarded_to")
-        # nested forwards have the next one in `forwarded_to`
-        while isinstance(forwards, dict) and isinstance(
-            forwards.get("forwarded_to"), dict
-        ):
+        if forwards is None:
+            remote_task_id = stored_metadata.get("remote_task_id")
+            return remote_task_id if isinstance(remote_task_id, str) else None
+        # nested forwards have the next one in `forwarded_to`; malformed
+        # forwards (at any level) are no remote identifier, rather than a
+        # stale or upstream one
+        while isinstance(forwards, dict) and forwards.get("forwarded_to") is not None:
             forwards = forwards["forwarded_to"]
         if isinstance(forwards, dict):
             forwards = [forwards]
-        if isinstance(forwards, list) and forwards:
-            forward = forwards[-1]
-            if isinstance(forward, dict) and isinstance(forward.get("id"), str):
-                return forward["id"]
-        remote_task_id = stored_metadata.get("remote_task_id")
-        return remote_task_id if isinstance(remote_task_id, str) else None
+        if not isinstance(forwards, list) or not forwards:
+            return None
+        forward = forwards[-1]
+        if isinstance(forward, dict) and isinstance(forward.get("id"), str):
+            return str(forward["id"])
+        return None

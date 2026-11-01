@@ -481,6 +481,7 @@ def test_stored_forwards(
                     "forwarded_to": forwards,
                     "remote_task_id": "remote-0",
                     "tes_uri": "https://tes.example.org",
+                    "attempts": 2,
                     "host": "h",
                 }
             },
@@ -499,7 +500,15 @@ def test_stored_forwards(
 
 @pytest.mark.parametrize(
     "forwards",
-    [[], [{"url": "x"}], [{"id": 1, "url": "x"}], "remote-1", {"url": "x"}],
+    [
+        [],
+        [{"url": "x"}],
+        [{"id": 1, "url": "x"}],
+        "remote-1",
+        {"url": "x"},
+        {"id": "remote-1", "url": "x", "forwarded_to": "remote-2"},
+        {"id": "remote-1", "url": "x", "forwarded_to": {"url": "y"}},
+    ],
 )
 def test_stored_forwards_invalid(
     client: FlaskClient,
@@ -508,11 +517,20 @@ def test_stored_forwards_invalid(
     mongo_client: MongoClient[dict[str, Any]],
     forwards: Any,
 ) -> None:
-    """Stored forwards without identifier are no remote identifier (`409`)."""
+    """Stored forwards without identifier are no remote identifier (`409`).
+
+    Neither a `remote_task_id` that they may have replaced, nor the
+    identifier of an outer forward, is used instead.
+    """
     mongo_client[DB]["tasks"].update_one(
         {"task.id": task_id},
         {
-            "$set": {"task.logs.0.metadata": {"forwarded_to": forwards}},
+            "$set": {
+                "task.logs.0.metadata": {
+                    "forwarded_to": forwards,
+                    "remote_task_id": "remote-0",
+                }
+            },
             "$unset": {"tes_endpoint.task_id": ""},
         },
     )

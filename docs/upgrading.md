@@ -339,14 +339,16 @@ in the views `BASIC` and `FULL`:
 - `forwarded_to[-1].forward_time`: `gateway.forwarded_at`.
 
 Tasks stored by earlier versions have no gateway tags; they are served
-without `forwarded_to` and the other backend references of earlier
-versions in their log metadata (`remote_task_id`, `tes_uri`); other string
-metadata is served as stored. They are still canceled at the TES instance
-they were forwarded to (by `tes_endpoint.task_id`, or by the forwards or
-`remote_task_id` that stay in the database, for tasks stored before 0.3.0), and tracked if they
-have `tes_endpoint.task_id`: unfinished tasks stored before 0.3.0 keep
-their last state (see [Task tracking](#task-tracking)).
-Their final logs are stored without the forwards once they have finished.
+without `forwarded_to` and the other backend references of earlier versions
+in their log metadata (`remote_task_id`, `tes_uri`), and without other
+metadata that isn't strings; string metadata is served as stored. They are
+still canceled at the TES instance they were forwarded to (by
+`tes_endpoint.task_id`, or by the forwards or `remote_task_id` that stay in
+the database, for tasks stored before 0.3.0; tasks with malformed forwards
+can't be canceled, `409`), and tracked if they have `tes_endpoint.task_id`:
+unfinished tasks stored before 0.3.0 keep their last state (see [Task
+tracking](#task-tracking)). Their final logs are stored without the forwards
+once they have finished.
 
 The setting `custom.storeLogs` (`execution_trace`), which only switched
 these forwards, is removed: the app refuses to start with it, and the Helm
