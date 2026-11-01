@@ -152,7 +152,8 @@ def test_title_job() -> None:
     """
     workflow = _load(WORKFLOWS / "ci.yml")
     # PyYAML parses the key `on` as `True`
-    events = workflow.get("on", workflow.get(True))
+    events = {str(key): value for key, value in workflow.items()}.get("True")
+    events = events or workflow["on"]
     assert "edited" in events["pull_request"]["types"]
     job = workflow["jobs"]["title"]
     assert job["name"] == "PR title"
