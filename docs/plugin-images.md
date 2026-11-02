@@ -184,8 +184,8 @@ PLUGINS="foca-plugin-<group>-<subgroup>-<name>==<version>" docker compose up --b
 
 Enable them in the config overlay (e.g., `config.dev.yaml`). Unlike the
 dependencies of proTES, which the image build installs from the lock, these
-plugins are **not** pinned by hash nor reviewed: use the recipe above for images
-that you deploy. `PLUGINS` is split at spaces (write specifiers without
+plugins are **not** pinned by hash nor reviewed: use the recipe above for
+images that you deploy. `PLUGINS` is split at spaces (write specifiers without
 spaces, e.g., `name>=1.0`) and recorded in the image's history: pass
 requirement specifiers only, never credentials (e.g., of a private package
 index).

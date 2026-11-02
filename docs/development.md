@@ -154,7 +154,15 @@ through a reviewed change of the lock:
   `build-system` group installed the same way into a virtual environment,
   without build isolation and without network (`uv build --wheel --offline
   --no-build-isolation`), then installed offline without its dependencies;
-  the image doesn't contain the build requirements.
+  the image doesn't contain the build requirements. As nothing is resolved,
+  `uv pip check` then checks that all installed packages meet each other's
+  requirements.
+
+Packages that the base image already has at the locked version (e.g., FOCA)
+are kept as they are, trusted through the base image's digest, not checked
+against the hashes of the lock again. The build needs BuildKit (the default
+builder of Docker since version 23, or `docker buildx`), for `RUN --mount`
+and `RUN --network=none`.
 
 `scripts/image_requirements.py` leaves a temporary FOCA commit pin (see
 [Versioning and releases](#versioning-and-releases)) out of the export and
@@ -181,8 +189,8 @@ Dependabot updates `pyproject.toml` and `uv.lock` together, including the
 image of the `Dockerfile` (`docker` entry). The lock also pins FOCA, and the
 image build fails unless the base image has exactly the locked FOCA, so FOCA
 is updated by hand, in the base image and the lock together
-(`uv lock --upgrade-package foca`); Dependabot ignores FOCA in both
-entries.
+(`uv lock --upgrade-package foca`); Dependabot ignores new FOCA versions in
+both entries, but still proposes digest updates of the base image's tag.
 
 ## Helm chart
 
@@ -408,25 +416,25 @@ development image of that commit as the base image (tagged by date, e.g.,
 `elixircloud/foca:20261023-py3.13`, pinned by digest, as the tag moves with
 later commits of that day). The `Dockerfile` records the commit as
 `## FOCA commit: <sha>`, which the tests check (`tests/test_build.py`); the
-image build doesn't reinstall FOCA, but fails unless the base image has FOCA of
-that commit (`scripts/image_requirements.py`; the lock has no hash for such a
-pin, so the image build leaves it out, while FOCA's dependencies stay
-locked). Dependabot already ignores `elixircloud/foca` (all updates, see
-[Dependencies](#dependencies)), so it doesn't update the dated tag's digest
-either, which would change FOCA. Such pins are temporary: the release
-workflow fails while a requirement (also an optional one, a dependency group
-or a build requirement) is a direct reference or names a pre-release or a
-local version (e.g., `+g<commit>`), a FOCA image (in any stage) has no
-release tag, or a chart dependency has no version, another version than a
-release or no chart repository (`oci://`, `https://`; e.g., a `file://` path
-to a checkout of the library chart) (`scripts/check_release_pins.py`, tested
-in `tests/test_check_release_pins.py`, whose tests also fail for checkouts of
-release tags with such pins), so replace them by the released versions before
-tagging. It also fails unless `deployment/Chart.yaml` and `Chart.lock` pin
-the version of the library chart that the `$comment` of
-`deployment/values.schema.json` names (`foca-common X.Y.Z`): the version that
-the release requires, whose values schema the chart copies. When moving to a
-new FOCA minor version, update the comment with the library chart. This
+image build doesn't reinstall FOCA, but fails unless the base image has FOCA
+of that commit (`scripts/image_requirements.py`; the lock has no hash for
+such a pin, so the image build leaves it out, while FOCA's dependencies stay
+locked). Meanwhile, have Dependabot ignore the base image
+(`.github/dependabot.yml`), as updates of its digest would change FOCA.
+Such pins are temporary: the release workflow fails while a requirement
+(also an optional one, a dependency group or a build requirement) is a
+direct reference or names a pre-release or a local version
+(e.g., `+g<commit>`), a FOCA image (in any stage) has no release tag, or a
+chart dependency has no version, another version than a release or no chart
+repository (`oci://`, `https://`; e.g., a `file://` path to a checkout of
+the library chart) (`scripts/check_release_pins.py`,
+tested in `tests/test_check_release_pins.py`, whose tests also fail for
+checkouts of release tags with such pins), so replace them by the released
+versions before tagging. It also fails unless `deployment/Chart.yaml` and
+`Chart.lock` pin the version of the library chart that the `$comment` of
+`deployment/values.schema.json` names (`foca-common X.Y.Z`): the version
+that the release requires, whose values schema the chart copies. When moving
+to a new FOCA minor version, update the comment with the library chart. This
 applies to pre-releases of the app, too: they are built on FOCA releases.
 
 Release notes follow the format agreed for all repositories of ELIXIR

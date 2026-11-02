@@ -53,8 +53,13 @@ updates:
     ignore:
       # FOCA is bumped by hand, in the base image and the `foca` requirement
       # in `pyproject.toml` and `uv.lock` together (the image build fails
-      # unless the base image has the locked FOCA; see the `uv` entry)
+      # unless the base image has the locked FOCA; see the `uv` entry).
+      # Digest updates of the same tag (e.g., OS package fixes) still come
       - dependency-name: elixircloud/foca
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
+          - version-update:semver-patch
     groups:
       docker:
         patterns: ["*"]

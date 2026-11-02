@@ -14,6 +14,7 @@ import shlex
 import subprocess
 import tomllib
 
+from packaging.requirements import Requirement
 from uv import find_uv_bin
 
 ROOT = Path(__file__).parents[1]
@@ -67,6 +68,20 @@ def _pinned(requirements: str) -> dict[str, list[str]]:
         name, _, rest = line.partition("==")
         packages[name.strip()] = re.findall(r"--hash=sha256:([0-9a-f]{64})", rest)
     return packages
+
+
+def _locked_versions(requirements: str) -> dict[str, str]:
+    """Get the locked versions of a requirements file.
+
+    Args:
+        requirements: Requirements file, as `uv export` writes it.
+
+    Returns:
+        Versions by package name, of the requirements pinned with `==`.
+    """
+    return dict(
+        re.findall(r"^([A-Za-z0-9._-]+)==([^\s;\\]+)", requirements, flags=re.MULTILINE)
+    )
 
 
 def _runs() -> list[tuple[list[str], list[str]]]:
@@ -160,6 +175,36 @@ def test_build_requirements_hashed() -> None:
         assert hashes, name
 
 
+def test_build_requirements_satisfied() -> None:
+    """The locked build requirements satisfy `build-system.requires`.
+
+    The image builds the app without build isolation, with the locked build
+    requirements, which `uv build` doesn't check against
+    `build-system.requires`.
+    """
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    locked = _locked_versions(_export("--only-group", GROUP))
+    for requirement in map(Requirement, pyproject["build-system"]["requires"]):
+        assert requirement.specifier.contains(locked[requirement.name]), requirement
+
+
+def test_locked_foca_is_base_image_foca() -> None:
+    """The lock has the FOCA release of the base image.
+
+    The image build fails otherwise (`scripts/image_requirements.py`); this
+    test fails earlier, without building the image. A FOCA commit pin
+    (temporary) has no locked release, and is checked by `tests/test_build.py`.
+    """
+    locked = _locked_versions(_export("--no-dev"))
+    match = re.search(
+        r"^FROM elixircloud/foca:(?P<version>[^-@\s]+)-py",
+        DOCKERFILE.read_text(),
+        flags=re.MULTILINE,
+    )
+    assert match, "No FOCA base image in the Dockerfile"
+    assert locked.get("foca", match["version"]) == match["version"]
+
+
 def test_runtime_requirements_without_build_requirements() -> None:
     """The runtime requirements of the image leave out the build group."""
     packages = _pinned(_export("--no-dev"))
@@ -190,7 +235,12 @@ def test_downloads_hash_checked() -> None:
     # The app is built as a wheel (checked below), not by an install of its
     # sources
     assert subcommands.count("build") == 1, subcommands
+    # As nothing is resolved (`--no-deps`), the installed packages are checked
+    assert ["pip", "check", "--system"] in commands, commands
     for args in commands:
+        if args[:2] == ["pip", "check"]:
+            # Checks the installed packages, downloads nothing
+            continue
         if args[0] == "pip":
             assert args[1] == "install", args
             if "--no-index" in args:
@@ -201,7 +251,6 @@ def test_downloads_hash_checked() -> None:
             else:
                 assert "--require-hashes" in args, args
                 assert args[args.index("--only-binary") + 1] == ":all:", args
-                assert "--no-deps" in args, args
                 assert "-r" in args, args
             assert "--no-deps" in args, args
         elif args[0] == "build":
@@ -210,6 +259,9 @@ def test_downloads_hash_checked() -> None:
             assert "--wheel" in args, args
         elif args[0] == "export":
             assert "--frozen" in args, args
+        elif args[0] == "venv":
+            # `--seed` would download pip without hash checks
+            assert "--seed" not in args, args
 
 
 def test_builds_offline() -> None:
@@ -253,7 +305,8 @@ def test_plugins_only_on_request() -> None:
     """The unpinned install of `PLUGINS` runs only if the argument is set.
 
     It is the only step left out of the checks above (see `_runs()`), so it
-    must stay a single, conditional step with an empty default.
+    must stay a single, conditional step with an empty default, with nothing
+    else in it.
     """
     text = DOCKERFILE.read_text().replace("\\\n", " ")
     assert re.search(r'^ARG PLUGINS=""$', text, flags=re.MULTILINE)
@@ -264,3 +317,5 @@ def test_plugins_only_on_request() -> None:
     ]
     assert len(runs) == 1, runs
     assert re.match(r'if \[ -n "\$\{PLUGINS\}" \]; then\s', runs[0]), runs[0]
+    # Nothing runs after the conditional
+    assert runs[0].rstrip().endswith("fi"), runs[0]

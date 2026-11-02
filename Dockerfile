@@ -78,7 +78,9 @@ LABEL org.opencontainers.image.vendor="ELIXIR On-Cloud"
 ## Git: the build fails unless the base image has FOCA of that commit. It also
 ## fails unless the base image has the locked FOCA release, if one is locked
 ## (`scripts/image_requirements.py`). uv installs them into the Python of the
-## base image (`--system`), and its lock file in `/tmp` is removed
+## base image (`--system`), and its lock file in `/tmp` is removed. Packages
+## that the base image already has at the locked version are kept as they
+## are (trusted through its digest), not checked against the hashes again
 USER root
 COPY pyproject.toml uv.lock scripts/image_requirements.py /tmp/src/
 RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
@@ -93,11 +95,14 @@ RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
 ## Install app from the wheel of the build stage (non-editable; the base
 ## config is installed with the package, and deployments override it via
 ## `FOCA_CONFIG_OVERLAY`), without its dependencies, installed above, and
-## without an index and without network, so that nothing is downloaded
+## without an index and without network, so that nothing is downloaded; then
+## uv checks that the installed packages (with those of the base image) meet
+## each other's requirements, as nothing was resolved
 RUN --network=none --mount=from=build,source=/tmp/dist,target=/tmp/dist \
   --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
   export UV_NO_CACHE=1 UV_PYTHON_DOWNLOADS=never \
   && uv pip install --system --offline --no-index --no-deps /tmp/dist/*.whl \
+  && uv pip check --system \
   && rm -rf /tmp/src /tmp/uv-*.lock
 
 ## Plugins for local builds (e.g., `--build-arg PLUGINS="<distribution>==<version>"`,
