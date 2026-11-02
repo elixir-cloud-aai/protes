@@ -2,19 +2,19 @@
 
 The [release notes](changelog.md) list the breaking changes of each release.
 This page describes how existing setups and data are affected, and what to
-change: first for upgrades from 0.4.0 ([To version 0.4.1](#to-version-041)),
-then for upgrades from 0.3.0 ([To version 0.4.0](#to-version-040)),
-then for deployments from before 0.3.0, i.e., images tagged by date, on FOCA
-0.12 ([From versions before 0.3.0](#from-versions-before-030)), which apply
-the steps of both parts.
+change: first for upgrades from 0.4.0 ([To version
+1.0.0rc1](#to-version-100rc1)), then for upgrades from 0.3.0 ([To version
+0.4.0](#to-version-040)), then for deployments from before 0.3.0, i.e.,
+images tagged by date, on FOCA 0.12 ([From versions before
+0.3.0](#from-versions-before-030)), which apply the steps of both parts.
 
-## To version 0.4.1
+## To version 1.0.0rc1
 
 **Routing default:** 0.4.0 routed tasks by the distance to their input data
 by default, and so looked up the public IP addresses of the hosts of inputs
 (and of TES instances without a configured `location`) at DB-IP and
-Nominatim, third-party services, without the admin choosing it. Since 0.4.1,
-those lookups are an opt-in: the default pipeline is random routing
+Nominatim, third-party services, without the admin choosing it. In 1.0.0rc1,
+those lookups become an opt-in: the default pipeline is random routing
 (`generic.routing.random`), and no addresses are sent to third parties. The plugin
 `tes.routing.distance` is still installed in the image, but not enabled.
 During a rolling upgrade, pods of 0.4.0 that still serve requests keep
@@ -64,9 +64,9 @@ Check each item; the sections below have the details.
    `tes.routing.distance` and `generic.routing.random` of foca-plugins, which
    the image contains. With the default settings, the hosts of inputs are
    still looked up at DB-IP and Nominatim; see [Routing](#routing) for the
-   offline alternative and for FOCA's ordered failover. **Version 0.4.1
-   changed this default:** lookups are an opt-in (see [To version
-   0.4.1](#to-version-041)).
+   offline alternative and for FOCA's ordered failover. **1.0.0rc1
+   changes this default:** lookups are an opt-in (see [To version
+   1.0.0rc1](#to-version-100rc1)).
 4. **TES instances:** `custom.tes.service_list` and `custom.tes.discovery`
    are replaced by `custom.tes.backends` (in the Helm chart, by
    `tes.backends`); with a service registry, set the public URL of proTES
@@ -241,9 +241,9 @@ task distribution and the dependency `geopy`.
   with camelCase keys, see the chart's [README](deployment.md)) and refuses
   `config.custom.middlewares`.
 - Tasks go to the TES instance closest to their input data by default,
-  with random order as the fallback, as before (0.4.1 changed this default,
-  see [To version 0.4.1](#to-version-041)), but with plugins instead of
-  middlewares (see [Routing](#routing)).
+  with random order as the fallback, as before (1.0.0rc1 changes this
+  default, see [To version 1.0.0rc1](#to-version-100rc1)), but with plugins
+  instead of middlewares (see [Routing](#routing)).
 - Tasks that no TES instance accepts fail with `503 Service Unavailable`
   (was `500 Internal Server Error`), also if no TES instance is configured,
   and if none accepted within `plugins.defaults.forward_timeout` (20 seconds
@@ -278,12 +278,12 @@ Code that calls `TaskRuns` directly passes the request path of the tasks:
 
 ### Routing
 
-!!! note "Changed in 0.4.1"
+!!! note "Changed in 1.0.0rc1"
 
-    The default described here is that of 0.4.0 only. Since 0.4.1, the
-    default pipeline is random routing, and distance routing with lookups at
-    DB-IP and Nominatim is an opt-in (see [To version
-    0.4.1](#to-version-041)).
+    The default described here is that of 0.4.0 only. In 1.0.0rc1, the
+    default pipeline becomes random routing, and distance routing with
+    lookups at DB-IP and Nominatim becomes an opt-in (see [To version
+    1.0.0rc1](#to-version-100rc1)).
 
 0.3.0 sent each task to the TES instance closest to its input data
 (middleware `TaskDistributionDistance`, which located TES instances and
