@@ -205,6 +205,27 @@ def test_locked_foca_is_base_image_foca() -> None:
     assert locked.get("foca", match["version"]) == match["version"]
 
 
+def test_dockerfile_exports() -> None:
+    """The image build exports the runtime and the build requirements only.
+
+    So the other tests of the exports check what the `Dockerfile` selects
+    (e.g., not `--all-groups`, which would add the dev dependencies).
+    """
+    selections = []
+    for command in _run_commands():
+        args = _uv_args(command)
+        if args is None or args[0] != "export":
+            continue
+        options = args[1:]
+        for option in ("--project", "--output-file"):
+            del options[options.index(option) : options.index(option) + 2]
+        assert {"--frozen", "--no-emit-project"} <= set(options), args
+        selections.append(
+            [arg for arg in options if arg not in {"--frozen", "--no-emit-project"}]
+        )
+    assert sorted(selections) == [["--no-dev"], ["--only-group", GROUP]]
+
+
 def test_runtime_requirements_without_build_requirements() -> None:
     """The runtime requirements of the image leave out the build group."""
     packages = _pinned(_export("--no-dev"))
@@ -317,5 +338,7 @@ def test_plugins_only_on_request() -> None:
     ]
     assert len(runs) == 1, runs
     assert re.match(r'if \[ -n "\$\{PLUGINS\}" \]; then\s', runs[0]), runs[0]
+    # It installs the plugins and checks the result
+    assert "pip install --no-cache-dir ${PLUGINS} && pip check;" in runs[0]
     # Nothing runs after the conditional
     assert runs[0].rstrip().endswith("fi"), runs[0]
