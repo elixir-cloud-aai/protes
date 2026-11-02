@@ -26,7 +26,9 @@ the config (see [Plugins](plugins.md)): installed is not enabled.
     [documentation](https://foca-plugins.readthedocs.io/en/latest/installing/).
     The images of proTES contain the two routing plugins already (the
     release train `foca-plugins`, pinned in `pyproject.toml`, with exact
-    versions and hashes in the repository's `uv.lock`); don't list them in
+    versions and hashes in the repository's `uv.lock`, from which the image
+    build installs them hash-checked, as all dependencies of proTES, see
+    [Dependencies](development.md#dependencies)); don't list them in
     `plugins.in`. The recipe works the same for plugins of any repository, and CI
     tests it with a test plugin (see [Testing the
     recipe](#testing-the-recipe)).
@@ -180,9 +182,10 @@ package index and with their dependencies; Docker Compose passes the host's
 PLUGINS="foca-plugin-<group>-<subgroup>-<name>==<version>" docker compose up --build --wait
 ```
 
-Enable them in the config overlay (e.g., `config.dev.yaml`). These builds
-are **not** pinned by hash nor reviewed: use the recipe above for images
-that you deploy. `PLUGINS` is split at spaces (write specifiers without
+Enable them in the config overlay (e.g., `config.dev.yaml`). Unlike the
+dependencies of proTES, which the image build installs from the lock, these
+plugins are **not** pinned by hash nor reviewed: use the recipe above for
+images that you deploy. `PLUGINS` is split at spaces (write specifiers without
 spaces, e.g., `name>=1.0`) and recorded in the image's history: pass
 requirement specifiers only, never credentials (e.g., of a private package
 index).

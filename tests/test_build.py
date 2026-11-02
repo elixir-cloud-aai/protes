@@ -160,6 +160,7 @@ def test_dockerignore_secrets() -> None:
         "pro_tes/config.yaml",
         "pro_tes/.env.example",
         "pyproject.toml",
+        "uv.lock",
         "scripts/image_requirements.py",
     ):
         assert not _ignored(path, patterns), f"{path} is not sent to the build"
