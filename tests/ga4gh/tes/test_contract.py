@@ -102,6 +102,6 @@ def test_new_states(
 ) -> None:
     """The states of TES 1.1 are served."""
     set_state(mongo_client, task_id, state)
-    _validate(
-        client.get(f"{BASE_PATH}/tasks/{task_id}?view=BASIC").get_json(), "tesTask"
-    )
+    task = client.get(f"{BASE_PATH}/tasks/{task_id}?view=BASIC").get_json()
+    _validate(task, "tesTask")
+    assert task["state"] == state
