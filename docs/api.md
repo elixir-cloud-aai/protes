@@ -51,7 +51,9 @@ For `POST /tasks`, proTES:
    a plugin may reject the task (with
    its status, e.g., `403 Forbidden`), a step whose plugins all fail fails
    the request (`500 Internal Server Error`), tasks without TES instances
-   fail with `503 Service Unavailable`, and tasks whose inline contents
+   fail with `503 Service Unavailable`, tasks that no selected TES instance can
+   run unchanged (see [TES versions](tes-versions.md)) with `400 Bad Request`,
+   and tasks whose inline contents
    plugins make too large with `413 Content Too Large`; none of these is
    kept;
 3. forwards the task to the first of these TES instances that accepts it,
@@ -60,7 +62,8 @@ For `POST /tasks`, proTES:
    accepts it (within `plugins.defaults.forward_timeout`), the request fails
    with `503 Service Unavailable`, and the task is not kept (it is deleted,
    with its owner's roles on it). Each TES instance gets its own copy of
-   the task, without tags under `gateway.`, with the credentials
+   the task, in its TES version (see [TES versions](tes-versions.md)), without
+   tags under `gateway.`, with the credentials
    of proTES for it (see [Credentials of TES
    instances](access-control.md#credentials-of-tes-instances)), in a single
    request; the next TES instance is tried only if a TES instance

@@ -564,6 +564,8 @@ class TesEndpoint(CustomBaseModel):
             specification, i.e., `/ga4gh/tes/v1`.
         task_id: Identifier of the task at the external TES endpoint; not
             set for tasks stored by earlier versions.
+        tes_version: TES version that the task was relayed in; not set for
+            tasks stored by earlier versions.
 
     Attributes:
         host: Host at which the TES API is served that is processing this
@@ -575,11 +577,14 @@ class TesEndpoint(CustomBaseModel):
             specification, i.e., `/ga4gh/tes/v1`.
         task_id: Identifier of the task at the external TES endpoint; not
             set for tasks stored by earlier versions.
+        tes_version: TES version that the task was relayed in; not set for
+            tasks stored by earlier versions.
     """
 
     host: str = ""
     base_path: str = ""
     task_id: str | None = None
+    tes_version: str | None = None
 
 
 class DbDocument(CustomBaseModel):

@@ -140,7 +140,11 @@ The shorter `forward_timeout`, the fewer TES instances are tried when some
 are unreachable: with the defaults, about 4 configured TES instances that
 don't answer while connecting (up to 5 seconds each), or 2 discovered ones
 (up to 10 seconds each), use up the 20 seconds, and the task fails with
-`503` without trying the next ones. Order `custom.tes.backends` so that
+`503` without trying the next ones. Reading the service info of a TES
+instance for its version (see [TES versions](#tes-versions)) takes up to 5 more
+seconds if the instance doesn't answer, at most once a minute per process, so
+the first requests after that get to about half as many instances. Order
+`custom.tes.backends` so that
 reliable TES instances come first, or raise `forward_timeout` (and the
 proxy's timeout) for long lists of unreliable TES instances.
 
@@ -149,8 +153,9 @@ Gunicorn's graceful timeout (20 seconds in the chart).
 
 ### TES versions
 
-proTES serves TES 1.1, and relays tasks to TES instances of TES 1.0 and 1.1.
-It needs to know which one each TES instance implements: the label `tes.version` of its entry (`"1.0"` or `"1.1"`;
+proTES serves TES 1.1, and relays tasks to TES instances of TES 1.0 and 1.1
+(see [TES versions](tes-versions.md)). It needs to know which one each TES
+instance implements: the label `tes.version` of its entry (`"1.0"` or `"1.1"`;
 other versions make the app refuse to start) wins; otherwise, proTES reads
 `GET <url>/ga4gh/tes/v1/service-info`, with its credentials for the TES
 instance and a timeout of 5 seconds, and caches the result per process for

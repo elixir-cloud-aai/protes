@@ -38,14 +38,18 @@ from pro_tes.exceptions import (
     BackendAuthError,
     BackendOutcomeUnknown,
     BadRequest,
+    NoEligibleBackend,
     ProvenanceNotFound,
     TaskNotCancelable,
     TaskNotFound,
 )
 from pro_tes.ga4gh.tes.backends import (
     TesClient,
+    backend_version,
+    backend_versions,
     client_for,
     create_client,
+    eligible_backends,
     forward_reason,
     get_backends,
 )
@@ -64,6 +68,7 @@ from pro_tes.ga4gh.tes.ownership import (
     task_has_roles,
 )
 from pro_tes.ga4gh.tes.states import States
+from pro_tes.ga4gh.tes.versions import incompatibilities
 from pro_tes.gateway import (
     check_inline_content,
     handle_url_credentials,
@@ -151,12 +156,14 @@ class _Accepted(NamedTuple):
         cli: Client of the backend.
         response: Response of the backend.
         remote_task_id: Identifier of the task at the backend.
+        tes_version: TES version that the task was relayed in.
     """
 
     attempt: Attempt
     cli: TesClient
     response: BackendResponse
     remote_task_id: str
+    tes_version: str
 
 
 class TaskRuns:
@@ -205,9 +212,11 @@ class TaskRuns:
         :py:mod:`pro_tes.ga4gh.tes.ownership`). The task is checked, then
         the plugin pipeline of the request runs (cf.
         :py:mod:`pro_tes.gateway`): its `request` phase may change the task,
-        and its `route` phase chooses the TES backends, in order, from
-        `custom.tes.backends`. Tasks that fail validation, are rejected by a
-        plugin, or have no backend are not stored.
+        and its `route` phase chooses the TES backends, in order, from those
+        of `custom.tes.backends` that can run the task unchanged (cf.
+        :py:func:`pro_tes.ga4gh.tes.backends.eligible_backends`). Tasks that
+        fail validation, are rejected by a plugin, or have no backend are not
+        stored.
 
         The task is then stored, and relayed to the backends in turn, after
         the `forward` phase of each attempt, until one accepts the task. It
@@ -346,8 +355,24 @@ class TaskRuns:
                 have accepted the task (cf. :py:meth:`create_task`).
         """
         payload: dict[str, Any] = run.request().payload
-        candidates = run.route(get_backends())
+        # plugins rank only the backends that can run the task, and get it
+        # in the canonical version
+        backends = get_backends()
+        eligible = eligible_backends(payload, backends)
+        candidates = run.route(eligible) if eligible or not backends else []
         # before the task is stored: no task is left
+        # (a backend without an answer may be fine again soon: `503` below)
+        if (
+            not candidates
+            and len(eligible) < len(backends)
+            and all(backend_versions.confirmed(backend) for backend in backends)
+        ):
+            run.final_reason = "no_eligible_backend"
+            found = ", ".join(map(str, incompatibilities(payload)))
+            raise NoEligibleBackend(
+                f"No selected TES instance can run this task unchanged: {found}",
+                run=run,
+            )
         if not candidates:
             run.final_reason = "no_backend"
             raise NoBackendAvailable("No TES backend available", run=run)
@@ -444,9 +469,14 @@ class TaskRuns:
         for attempt in run.attempts(candidates):
             tes_url = attempt.backend.url
             db_document.tes_endpoint = TesEndpoint(host=tes_url)
-            # checked by `check_outbound` before the attempt
-            task = relayed_task(attempt.outbound.payload, prefix=prefix)
+            version = backend_version(attempt.backend)
             try:
+                # checked by `check_outbound` before the attempt, but not
+                # against the version, if a plugin of the `forward` phase
+                # changed the task
+                task = relayed_task(
+                    attempt.outbound.payload, prefix=prefix, version=version
+                )
                 cli = client_for(attempt.backend)
                 remote_task_id, response = cli.forward(
                     attempt.outbound,
@@ -469,7 +499,10 @@ class TaskRuns:
                 run.final_reason = "outcome_unknown"
                 try:
                     db_connector.upsert_fields_in_root_object(
-                        root="tes_endpoint", host=tes_url, base_path=""
+                        root="tes_endpoint",
+                        host=tes_url,
+                        base_path="",
+                        tes_version=str(version),
                     )
                     db_connector.update_task_state(state=TesState.SYSTEM_ERROR.value)
                 finally:
@@ -494,6 +527,7 @@ class TaskRuns:
                 cli=cli,
                 response=response,
                 remote_task_id=remote_task_id,
+                tes_version=str(version),
             )
         # the attempts end with a success, or raise
         raise RuntimeError("Forwarding ended without outcome")
@@ -523,7 +557,7 @@ class TaskRuns:
                 rejected the response, or a step of it failed; the task is
                 kept (and tracked).
         """
-        attempt, cli, response, remote_task_id = accepted
+        attempt, cli, response, remote_task_id, tes_version = accepted
         tes_url = attempt.backend.url
         logger.info(
             "Task '%s' successfully forwarded to TES endpoint hosted at:"
@@ -538,6 +572,7 @@ class TaskRuns:
             db_connector=db_connector,
             tes_url=tes_url,
             remote_task_id=remote_task_id,
+            tes_version=tes_version,
         )
         response.client_payload = {"id": db_document.task.id}
         failed: Exception | None = None
@@ -1123,6 +1158,7 @@ class TaskRuns:
         db_connector: DbDocumentConnector,
         tes_url: str,
         remote_task_id: str,
+        tes_version: str,
     ) -> DbDocument:
         """Store the TES instance of a task, and the end time of its logs.
 
@@ -1130,6 +1166,7 @@ class TaskRuns:
             db_connector: The database connector.
             tes_url: The TES URL where the task is forwarded.
             remote_task_id: Task identifier at the remote TES instance.
+            tes_version: TES version that the task was relayed in.
 
         Returns:
             The updated database document.
@@ -1142,6 +1179,7 @@ class TaskRuns:
             "host": tes_url,
             "base_path": "",
             "task_id": remote_task_id,
+            "tes_version": tes_version,
         }
         db_document = db_connector.upsert_fields_in_root_object(
             root="tes_endpoint",
