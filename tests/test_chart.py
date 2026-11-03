@@ -1802,9 +1802,9 @@ def test_replicas_budget() -> None:
     assert docs[("Deployment", APP)]["spec"]["replicas"] == 2
     budget = docs[("PodDisruptionBudget", APP)]
     assert budget["spec"]["maxUnavailable"] == 1
-    pod_labels = docs[("Deployment", APP)]["spec"]["template"]["metadata"]["labels"]
     selector = budget["spec"]["selector"]["matchLabels"]
-    assert selector.items() <= pod_labels.items()
+    assert selector
+    assert selector == docs[("Deployment", APP)]["spec"]["selector"]["matchLabels"]
 
 
 @pytest.mark.parametrize(
