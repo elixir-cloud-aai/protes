@@ -77,6 +77,7 @@ def fields_of_tes_11(task: dict[str, Any]) -> list[str]:
     Returns:
         The names of the fields, as TESK rejects them.
     """
+    items: list[tuple[dict[str, Any], tuple[str, ...]]]
     items = [(item, ("ignore_error",)) for item in task.get("executors") or []]
     items += [(item, ("streamable",)) for item in task.get("inputs") or []]
     items += [(item, ("path_prefix",)) for item in task.get("outputs") or []]

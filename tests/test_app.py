@@ -208,8 +208,9 @@ def test_smoke_test_config(
 ) -> None:
     """The config overlay of the Compose smoke test is valid.
 
-    It relays tasks to the fake TES backend only, with access tokens of
-    proTES (client ID and secret as in the Compose override).
+    It relays tasks to the fake TES backends only: the one of TES 1.0, which
+    needs no access tokens, first, then the one of TES 1.1, with access tokens
+    of proTES (client ID and secret as in the Compose override).
     """
     monkeypatch.setenv("FOCA_CONFIG_OVERLAY", str(SMOKE_CONFIG))
     smoke = yaml.safe_load(SMOKE_COMPOSE.read_text())
@@ -218,7 +219,9 @@ def test_smoke_test_config(
     app = init_app()
     with app.app.app_context():
         custom = get_custom_config(CustomConfig)
-    (entry,) = custom.tes.backends.root
+    (entry_10, entry) = custom.tes.backends.root
+    assert entry_10.url == "http://fake-tes-10:8080"
+    assert entry_10.auth == "none"
     assert entry.url == "http://fake-tes:8080"
     assert entry.auth == "client_credentials"
     assert custom.tes.client_credentials.issuer == "http://fake-tes:8080/oidc/"
