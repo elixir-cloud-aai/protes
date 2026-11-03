@@ -142,7 +142,8 @@ don't answer while connecting (up to 5 seconds each), or 2 discovered ones
 (up to 10 seconds each), use up the 20 seconds, and the task fails with
 `503` without trying the next ones. Reading the service info of a TES
 instance for its version (see [TES versions](#tes-versions)) takes up to 5 more
-seconds if the instance doesn't answer, at most once a minute per process, so
+seconds if the instance can't be reached (and as long again if it accepts the
+connection, but doesn't answer), at most once a minute per process, so
 the first requests after that get to about half as many instances. Order
 `custom.tes.backends` so that
 reliable TES instances come first, or raise `forward_timeout` (and the
@@ -158,7 +159,7 @@ proTES serves TES 1.1, and relays tasks to TES instances of TES 1.0 and 1.1
 instance implements: the label `tes.version` of its entry (`"1.0"` or `"1.1"`;
 other versions make the app refuse to start) wins; otherwise, proTES reads
 `GET <url>/ga4gh/tes/v1/service-info`, with its credentials for the TES
-instance and a timeout of 5 seconds, and caches the result per process for
+instance and timeouts of 5 seconds (to connect and to answer), and caches the result per process for
 `custom.tes.version_cache_ttl` seconds (default: 3600; failures for 60
 seconds). It reads `type.version` leniently (e.g., `TES`, `1.0`, `v1.1.0`), if
 `type.group` is `org.ga4gh` and `type.artifact` is `tes`. A TES instance that

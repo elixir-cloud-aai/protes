@@ -47,7 +47,7 @@ version was read once keeps that version if it fails to answer later.
 | `inputs[].streamable` | Dropped: only a hint. |
 | `resources.backend_parameters` | Dropped, unless strict. |
 | `resources.backend_parameters_strict: true`, with parameters | Not eligible: they would not be honored. |
-| `outputs[].path` with wildcards (`*`, `?`, `[`) | Not eligible: TES 1.0 takes them literally. |
+| `outputs[].path` with wildcards (`*`, `?`, `[...]`) | Not eligible: TES 1.0 takes them literally. |
 | `outputs[].path_prefix` | Dropped: ignored without wildcards. |
 | `inputs[].type`, `outputs[].type` | Set to `FILE` if missing, as TES 1.0 requires them. |
 
@@ -59,8 +59,8 @@ so responses of TES 1.0 instances stay as they are.
 ## Service info
 
 `tesResources_backend_parameters` of the service info of proTES lists the keys
-that TES instances listed in the service infos that this process of proTES has
-read so far (it is not read for this purpose, as the endpoint is public; TES
+that TES instances listed when this process of proTES last read their service
+infos (it is not read for this purpose, as the endpoint is public; TES
 instances with a label `tes.version` are not read at all), so it may be
 incomplete, and differ between workers. To state it, set
 `service_info.service.tesResources_backend_parameters`, which wins. Keys of a

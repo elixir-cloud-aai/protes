@@ -200,3 +200,21 @@ def test_incompatibilities_canonical() -> None:
     assert str(incompatibilities(task)[0]) == (
         "/executors/0/ignore_error: executors can't ignore errors"
     )
+
+
+@pytest.mark.parametrize(
+    ("path", "wildcard"),
+    [
+        ("/data/a*", True),
+        ("/data/a?", True),
+        ("/data/a[bc]", True),
+        ("/data/a[b", False),
+        ("/data/a]", False),
+        ("/data/a[]", False),
+        ("/data/a", False),
+    ],
+)
+def test_output_wildcards(path: str, wildcard: bool) -> None:
+    """Only valid wildcards in output paths need TES 1.1."""
+    task = {"outputs": [{"url": "s3://a/b", "path": path}]}
+    assert bool(incompatibilities(task)) is wildcard
