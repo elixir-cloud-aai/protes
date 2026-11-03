@@ -1042,8 +1042,9 @@ def reported_version(service_info: Any) -> TesVersion | None:
 class BackendVersions:
     """TES versions of backends, from their service info, cached.
 
-    Thread-safe (a lost update only reads a service info once more); each
-    process (e.g., each Gunicorn or Celery worker) has its own cache.
+    Thread-safe (a lost update only reads a service info once more, and
+    failures keep what other threads have read meanwhile); each process (e.g.,
+    each Gunicorn or Celery worker) has its own cache.
     """
 
     def __init__(self) -> None:
@@ -1074,29 +1075,24 @@ class BackendVersions:
             return version
         cached = self._cache.get(backend.url)
         if probe and (cached is None or time.monotonic() >= cached[1]):
-            cached = self._probe(backend, cached[0] if cached else None)
+            cached = self._probe(backend)
             self._cache[backend.url] = cached
         return (cached[0] if cached is not None else None) or OLDEST
 
-    @staticmethod
-    def _probe(
-        backend: Backend, known: TesVersion | None = None
-    ) -> tuple[TesVersion | None, float]:
+    def _probe(self, backend: Backend) -> tuple[TesVersion | None, float]:
         """Read the TES version of a backend from its service info.
 
         A failure doesn't change what is known: a version that was read before
         stays, so that one failed request doesn't make a backend count as
-        another version.
+        another version. An answer without a valid version does.
 
         Args:
             backend: Backend.
-            known: Version read before, if any.
 
         Returns:
             The version, if any, and when to read it again
             (`time.monotonic()`).
         """
-        version: TesVersion | None = None
         try:
             version = reported_version(
                 client_for(backend, timeout=PROBE_TIMEOUT).service_info()
@@ -1107,16 +1103,22 @@ class BackendVersions:
                 backend.url,
                 type(exc).__name__,
             )
+            # as it is now: other threads may have read it meanwhile
+            previous = self._cache.get(backend.url)
+            return (
+                previous[0] if previous is not None else None,
+                time.monotonic() + PROBE_RETRY,
+            )
         now = time.monotonic()
         if version is None:
             logger.warning(
                 "TES version of backend %s unknown: taken as %s; set its label"
                 " `%s` if it is another one",
                 backend.url,
-                known or OLDEST,
+                OLDEST,
                 TES_VERSION_LABEL,
             )
-            return known, now + PROBE_RETRY
+            return OLDEST, now + PROBE_RETRY
         return version, now + get_custom_config(CustomConfig).tes.version_cache_ttl
 
 

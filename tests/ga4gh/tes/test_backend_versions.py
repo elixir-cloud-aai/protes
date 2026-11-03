@@ -138,6 +138,30 @@ def test_probe_failure_keeps_known_version(client: type[FakeClient]) -> None:
 
 
 @pytest.mark.usefixtures("app_context")
+def test_probe_failure_keeps_version_read_meanwhile(
+    client: type[FakeClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Failures don't undo what another thread has read in the meantime."""
+
+    def service_info(self: FakeClient) -> Any:
+        """Fail, after another thread has read the version."""
+        backend_versions._cache[URL] = (V11, 0.0)
+        raise requests.ConnectionError("down")
+
+    monkeypatch.setattr(client, "service_info", service_info)
+    assert backend_version(BACKEND) == V11
+
+
+@pytest.mark.usefixtures("app_context")
+def test_probe_without_version_counts_as_oldest(client: type[FakeClient]) -> None:
+    """An answer without a valid version replaces the one read before."""
+    assert backend_version(BACKEND) == V11
+    backend_versions._cache[URL] = (V11, 0.0)
+    client.served = {}
+    assert backend_version(BACKEND) == V10
+
+
+@pytest.mark.usefixtures("app_context")
 def test_probe_unknown_warns(
     client: type[FakeClient], caplog: pytest.LogCaptureFixture
 ) -> None:

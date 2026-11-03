@@ -151,14 +151,15 @@ Gunicorn's graceful timeout (20 seconds in the chart).
 
 proTES serves TES 1.1, and relays tasks to TES instances of TES 1.0 and 1.1.
 It needs to know which one each TES instance implements: the label `tes.version` of its entry (`"1.0"` or `"1.1"`;
-other values make the app refuse to start) wins; otherwise, proTES reads
+other versions make the app refuse to start) wins; otherwise, proTES reads
 `GET <url>/ga4gh/tes/v1/service-info`, with its credentials for the TES
 instance and a timeout of 5 seconds, and caches the result per process for
 `custom.tes.version_cache_ttl` seconds (default: 3600; failures for 60
 seconds). It reads `type.version` leniently (e.g., `TES`, `1.0`, `v1.1.0`), if
 `type.group` is `org.ga4gh` and `type.artifact` is `tes`. A TES instance that
-reports no version that proTES supports, or doesn't answer, counts as TES 1.0
-(with a warning in the logs).
+reports no version that proTES supports, or never answered, counts as TES 1.0
+(with a warning in the logs); one that stops answering keeps the version read
+before.
 
 **Set the label for Funnel:** Funnel implements TES 1.1, but reports its own
 version as `type.version`:
