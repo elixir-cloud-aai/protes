@@ -48,6 +48,11 @@ plugins are not affected, except that `tes.routing.distance` is no longer
 available unless you list it: a pipeline that uses it makes the app refuse to
 start, naming the plugin; add the `available` entry above.
 
+**Service info:** the new setting `custom.service_info.list_backends` (default:
+`true`, as before) leaves the TES instances out of the public service info, and
+keeps its field `gateway`; see [Service info](configuration.md#service-info).
+No change is needed.
+
 **Image (all deployments):** the image installs exactly the dependencies
 locked in `uv.lock`, hash-checked, with uv instead of pip (see
 [Dependencies](development.md#dependencies)); before, pip installed the

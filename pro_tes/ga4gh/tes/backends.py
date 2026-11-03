@@ -430,15 +430,18 @@ def service_info_fields() -> dict[str, Any]:
     Returns:
         The TES backends (`backends`): identifier, URL, source, group and
         labels of each, without credentials (cf.
-        :py:meth:`foca.plugins.backends.BackendList.describe`); and what
-        clients may choose per task (`gateway`: the path of the plugin
-        listing, whether clients may choose pipelines and backends, and
-        the capabilities of the plugins, without plugin identifiers; cf.
+        :py:meth:`foca.plugins.backends.BackendList.describe`), unless
+        `custom.service_info.list_backends` is false; and what clients may
+        choose per task (`gateway`: the path of the plugin listing, whether
+        clients may choose pipelines and backends, and the capabilities of
+        the plugins, without plugin identifiers; cf.
         :py:func:`foca.plugins.api.service_info_fields`), unless the
         plugins can't be loaded (then the app doesn't start, with the
         error of the plugins).
     """
-    fields: dict[str, Any] = {"backends": get_backend_list().describe()}
+    fields: dict[str, Any] = {}
+    if get_custom_config(CustomConfig).service_info.list_backends:
+        fields["backends"] = get_backend_list().describe()
     try:
         fields.update(plugins_api.service_info_fields(plugins_url=PLUGINS_PATH))
     except ValueError:
