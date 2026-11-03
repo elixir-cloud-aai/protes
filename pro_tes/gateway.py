@@ -41,8 +41,14 @@ from foca.plugins.tags import strip_for_forwarding
 import tes
 
 from pro_tes.config_models import CustomConfig
-from pro_tes.exceptions import BadRequest, InlineContentTooLarge
+from pro_tes.exceptions import BadRequest, InlineContentTooLarge, TaskIncompatible
 from pro_tes.ga4gh.tes.models import TesTask
+from pro_tes.ga4gh.tes.versions import (
+    CANONICAL,
+    TesVersion,
+    downgrade_task,
+    incompatibilities,
+)
 from pro_tes.utils.misc import has_credentials, strip_auth
 
 TASKS_PATH = "/ga4gh/tes/v1/tasks"
@@ -270,28 +276,41 @@ def check_outbound(outbound: OutboundRequest) -> None:
     tes_task(outbound.payload)
 
 
-def relayed_task(payload: Any, prefix: str) -> tes.Task:
+def relayed_task(
+    payload: Any, prefix: str, version: TesVersion = CANONICAL
+) -> tes.Task:
     """Get the task of an outbound request as it is relayed to a backend.
 
     Args:
         payload: Task of the outbound request; not changed.
         prefix: Prefix of the tags reserved for the gateway
             (`plugins.tags.prefix`).
+        version: TES version of the backend.
 
     Returns:
-        The task, without the fields that TES servers set, without tags
-        under the prefix (cf. :py:func:`foca.plugins.tags.strip_for_forwarding`)
-        and without credentials in the URLs of inputs and outputs (also
-        those that plugins of the `forward` phase added).
+        The task in the TES version of the backend (cf.
+        :py:mod:`pro_tes.ga4gh.tes.versions`), without the fields that TES
+        servers set, without tags under the prefix (cf.
+        :py:func:`foca.plugins.tags.strip_for_forwarding`) and without
+        credentials in the URLs of inputs and outputs (also those that
+        plugins of the `forward` phase added).
 
     Raises:
         pro_tes.exceptions.BadRequest: A URL is malformed.
+        pro_tes.exceptions.TaskIncompatible: The version can't express the
+            task (e.g., a plugin of the `forward` phase changed it).
         TypeError: The task can't be relayed (cf. :py:func:`tes_task`).
         ValueError: The task can't be relayed.
     """
     payload = deepcopy(payload)
     if isinstance(payload, dict):
         handle_url_credentials(payload=payload, mode="strip")
+        found = incompatibilities(payload, version)
+        if found:
+            raise TaskIncompatible(
+                f"TES {version} can't express: {', '.join(map(str, found))}"
+            )
+        payload = downgrade_task(payload, version)
     task = tes_task(payload)
     if isinstance(task.tags, Mapping):
         task.tags = strip_for_forwarding(task.tags, prefix)

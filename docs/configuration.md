@@ -140,12 +140,50 @@ The shorter `forward_timeout`, the fewer TES instances are tried when some
 are unreachable: with the defaults, about 4 configured TES instances that
 don't answer while connecting (up to 5 seconds each), or 2 discovered ones
 (up to 10 seconds each), use up the 20 seconds, and the task fails with
-`503` without trying the next ones. Order `custom.tes.backends` so that
+`503` without trying the next ones. Reading the service info of a TES
+instance for its version (see [TES versions](#tes-versions)) takes up to 5 more
+seconds if the instance can't be reached (and as long again if it accepts the
+connection, but doesn't answer), at most once a minute per process, so
+the first requests after that get to about half as many instances. Order
+`custom.tes.backends` so that
 reliable TES instances come first, or raise `forward_timeout` (and the
 proxy's timeout) for long lists of unreliable TES instances.
 
 Requests in flight when an instance of proTES stops are cut off after
 Gunicorn's graceful timeout (20 seconds in the chart).
+
+### TES versions
+
+proTES serves TES 1.1, and relays tasks to TES instances of TES 1.0 and 1.1
+(see [TES versions](tes-versions.md)). It needs to know which one each TES
+instance implements: the label `tes.version` of its entry (`"1.0"` or `"1.1"`;
+other versions make the app refuse to start) wins; otherwise, proTES reads
+`GET <url>/ga4gh/tes/v1/service-info`, with its credentials for the TES
+instance and timeouts of 5 seconds (to connect and to answer), and caches the result per process for
+`custom.tes.version_cache_ttl` seconds (default: 3600; failures for 60
+seconds). It reads `type.version` leniently (e.g., `TES`, `1.0`, `v1.1.0`), if
+`type.group` is `org.ga4gh` and `type.artifact` is `tes`. A TES instance that
+reports no version that proTES supports, or never answered, counts as TES 1.0
+(with a warning in the logs); one that stops answering keeps the version read
+before.
+
+**Set the label for Funnel:** Funnel implements TES 1.1, but reports its own
+version as `type.version`:
+
+```yaml
+custom:
+  tes:
+    backends:
+      - type: ga4gh-tes
+        url: https://funnel.example.org
+        auth: none
+        labels:
+          tes.version: "1.1"
+```
+
+The label of a registry entry applies to all TES instances that it discovers.
+To tell the versions in a registry apart, use one entry per version, with its
+`versions` and label (`versions: ["1.1"]` and `tes.version: "1.1"`).
 
 ### Discovery in a service registry
 

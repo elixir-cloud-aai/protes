@@ -13,6 +13,7 @@ from foca.models.config import Config
 from foca.plugins import Backend
 from foca.plugins.backends import BackendListConfig, RegistryEntry, ServiceEntry
 from kombu.exceptions import OperationalError
+import mongomock
 from pydantic import ValidationError
 from pymongo import MongoClient
 from pymongo.collection import Collection
@@ -552,6 +553,7 @@ def test_canceling_tracked(
     assert document["task"]["state"] == "CANCELED"
 
 
+@pytest.mark.parametrize("stored_state", ["CANCELING", "CANCELED"])
 @pytest.mark.parametrize("final", ["CANCELED", "COMPLETE"])
 def test_cancelation_kept(
     tasks: Collection[dict[str, Any]],
@@ -560,6 +562,7 @@ def test_cancelation_kept(
     stored_states: list[str],
     polling: Polling,
     final: str,
+    stored_state: str,
 ) -> None:
     """A stored cancelation is kept until the backend has finished the task.
 
@@ -568,13 +571,49 @@ def test_cancelation_kept(
     completed anyway.
     """
     polling.attempts = 1
-    tasks.update_one({}, {"$set": {"task.state": "CANCELED"}})
+    tasks.update_one({}, {"$set": {"task.state": stored_state}})
     client_class.states = ["RUNNING", None, "CANCELING", final]
     track(scheduled)
-    assert stored_states == ([] if final == "CANCELED" else [final])
+    assert stored_states == ([] if final == stored_state else [final])
     document = tasks.find_one({"worker_id": ARGS["worker_id"]})
     assert document is not None
     assert document["task"]["state"] == final
+
+
+@pytest.mark.parametrize(
+    ("state", "status", "expected", "polls_go_on"),
+    [
+        ("CANCELING", 404, "CANCELED", False),
+        # may still run
+        ("CANCELING", 503, "CANCELING", True),
+        ("RUNNING", 404, "RUNNING", True),
+    ],
+)
+def test_canceling_backend_gone(
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+    scheduled: list[dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+    state: str,
+    status: int,
+    expected: str,
+    polls_go_on: bool,
+) -> None:
+    """Tasks being canceled are `CANCELED` once their backend deleted them."""
+
+    def get_task(self: FakeClient, task_id: str, **kwargs: Any) -> tes.Task:
+        """Answer with an error."""
+        response = requests.Response()
+        response.status_code = status
+        raise requests.HTTPError(str(status), response=response)
+
+    monkeypatch.setattr(client_class, "get_task", get_task)
+    tasks.update_one({}, {"$set": {"task.state": state}})
+    run()
+    document = tasks.find_one({})
+    assert document is not None
+    assert document["task"]["state"] == expected
+    assert bool(scheduled) is polls_go_on
 
 
 def test_cancelation_not_overwritten(tasks: Collection[dict[str, Any]]) -> None:
@@ -1194,3 +1233,13 @@ def test_document_missing(app: FlaskApp) -> None:
         )
         with pytest.raises(ValueError, match="No database document"):
             connector.upsert_fields_in_root_object(root="task", state="QUEUED")
+
+
+def test_deleted_after_cancel_set_by_other_delivery() -> None:
+    """Tracking ends if another delivery of a poll has set `CANCELED`."""
+    collection: Any = mongomock.MongoClient().db.tasks
+    collection.insert_one({"worker_id": "w", "task": {"state": "CANCELED"}})
+    response = requests.Response()
+    response.status_code = 404
+    error = requests.HTTPError(response=response)
+    assert track_task_progress._deleted_after_cancel(collection, "w", error)

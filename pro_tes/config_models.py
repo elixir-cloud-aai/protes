@@ -1,6 +1,6 @@
 """Custom app config models."""
 
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 from urllib.parse import SplitResult, urlsplit
 
 from foca.plugins.backends import BackendListConfig
@@ -11,6 +11,8 @@ from pydantic import (
     PositiveInt,
     model_validator,
 )
+
+from pro_tes.ga4gh.tes.versions import SUPPORTED, TesVersion
 
 
 class ConfigModel(BaseModel):
@@ -293,6 +295,8 @@ class Tes(ConfigModel):
             enough for slow backends, but short enough that requests to
             create tasks (which may try several backends) stay below the
             read timeout of a reverse proxy in front of proTES.
+        version_cache_ttl: Seconds that the TES version of a backend, as read
+            from its service info, is cached (per process).
 
     Attributes:
         backends: TES backends that tasks may be forwarded to, in order.
@@ -301,12 +305,34 @@ class Tes(ConfigModel):
         client_credentials: Client of proTES at its identity provider, for
             the backends with `auth: client_credentials`.
         timeout: Timeout of requests to TES backends, in seconds.
+        version_cache_ttl: Seconds that the TES version of a backend, as read
+            from its service info, is cached (per process).
     """
 
     backends: BackendListConfig = BackendListConfig([])
     url_schemes: list[Literal["https", "http"]] = Field(default=["https"], min_length=1)
     client_credentials: ClientCredentials = ClientCredentials()
     timeout: PositiveInt = 15
+    version_cache_ttl: PositiveInt = 3600
+
+    @model_validator(mode="after")
+    def check_version_labels(self) -> Self:
+        """Refuse labels `tes.version` of versions that proTES doesn't support.
+
+        Returns:
+            The configuration.
+
+        Raises:
+            ValueError: An entry has such a label.
+        """
+        for entry in self.backends.root:
+            label = entry.labels.get("tes.version")
+            if label is not None and TesVersion.parse(label) not in SUPPORTED:
+                raise ValueError(
+                    f"Label `tes.version` of {entry.url}: {label!r} is none of the"
+                    f" supported TES versions ({sorted(map(str, SUPPORTED))})"
+                )
+        return self
 
     @property
     def uses_tokens(self) -> bool:

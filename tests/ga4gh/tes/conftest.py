@@ -70,6 +70,8 @@ class FakeBackend:
 
     # Tasks by backend URL
     tasks: ClassVar[dict[str, list[tes.Task]]] = {}
+    # TES versions by backend URL, if not 1.1.0
+    versions: ClassVar[dict[str, str]] = {}
     canceled: ClassVar[list[str]] = []
     # Backends that clients were created for
     clients: ClassVar[list[Backend]] = []
@@ -91,7 +93,9 @@ class FakeBackend:
             raise ValueError(f"Invalid URL: {url}")
         self.url = url.rstrip("/")
         self.backend = backend
-        self.clients.append(backend)
+        # not the clients that read service infos (with a short timeout)
+        if kwargs.get("timeout") is None:
+            self.clients.append(backend)
 
     def forward(
         self, outbound: OutboundRequest, task: tes.Task, **kwargs: Any
@@ -104,6 +108,17 @@ class FakeBackend:
         self.outbound.append(outbound)
         task_id = self.create_task(task)
         return task_id, BackendResponse(status=200, payload={"id": task_id})
+
+    def service_info(self) -> dict[str, Any]:
+        """Get the service info, with the TES version of the backend."""
+        return {
+            "type": {
+                "group": "org.ga4gh",
+                "artifact": "tes",
+                "version": self.versions.get(self.url, "1.1.0"),
+            },
+            "tesResources_backend_parameters": ["VmSize", ""],
+        }
 
     def create_task(self, task: tes.Task) -> str:
         """Create a task.
@@ -155,6 +170,7 @@ def backend(
     for name in ("invalid", "failing", "no_tasks"):
         monkeypatch.setattr(FakeBackend, name, set())
     monkeypatch.setattr(FakeBackend, "tasks", {})
+    monkeypatch.setattr(FakeBackend, "versions", {})
     monkeypatch.setattr(FakeBackend, "canceled", [])
     monkeypatch.setattr(FakeBackend, "clients", [])
     monkeypatch.setattr(FakeBackend, "outbound", [])

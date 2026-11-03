@@ -482,7 +482,8 @@ def test_client_token_request(
     monkeypatch.setattr(backends.requests, "request", fake_request)
     task = backends.create_client(host=f"{BACKEND_URL}/token").get_task("remote-1")
     assert task.state == "QUEUED"
-    (request,) = sent
+    # before the service info, for the version of the backend
+    request = sent[0]
     assert request["method"] == "GET"
     assert request["url"] == f"{BACKEND_URL}/token/ga4gh/tes/v1/tasks/remote-1"
     assert request["headers"]["Authorization"] == "Bearer token-1"

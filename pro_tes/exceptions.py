@@ -5,6 +5,8 @@ the problem details of the gateway error, with their problem type, from the
 controller of `POST /tasks`; the mapping below is their fallback.
 """
 
+from typing import Any
+
 from connexion.exceptions import (
     BadRequestProblem,
     ExtraParameterProblem,
@@ -14,6 +16,7 @@ from connexion.exceptions import (
 )
 from foca.plugins import (
     ForwardTimeout,
+    GatewayError,
     InvalidSelection,
     InvalidVia,
     LoopDetected,
@@ -83,6 +86,34 @@ class BackendOutcomeUnknown(RuntimeError):
 
 class BackendNotConfigured(ValueError):
     """Raised when a TES backend is neither configured nor discovered."""
+
+
+class TaskIncompatible(ValueError):
+    """A task can't be expressed in the TES version of a backend."""
+
+
+class NoEligibleBackend(GatewayError):
+    """No backend can run the task unchanged (e.g., only TES 1.0 backends).
+
+    The task is not stored: the client has to change it, or wait for a TES
+    instance that supports it.
+    """
+
+    code = 400
+    title = "Bad Request"
+    slug = "no-eligible-backend"
+
+    def __init__(self, detail: str, run: Any = None) -> None:
+        """Create the error.
+
+        Args:
+            detail: Description of the problem, for the client.
+            run: Run of the request.
+        """
+        super().__init__(detail, run=run)
+        self.problem_type = (
+            "https://protes.readthedocs.io/en/latest/tes-versions/#routing"
+        )
 
 
 class IdsUnavailableProblem(PyMongoError):

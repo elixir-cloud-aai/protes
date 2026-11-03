@@ -142,7 +142,7 @@ api:
   specs:
     tes:
       path:
-        - api/9e9c5aa.task_execution_service.openapi.yaml
+        - api/20221114.117cd92.task_execution_service.openapi.yaml
         - api/additions.openapi.yaml
         - api/security_schemes.yaml
       add_operation_fields:
@@ -208,7 +208,7 @@ service_info:
     type:
       group: org.ga4gh
       artifact: tes
-      version: 1.0.0
+      version: 1.1.0
     description: >-
       Proxy for GA4GH Task Execution Service (TES) instances, distributing
       tasks across them.
@@ -300,6 +300,9 @@ custom:
   #     basic:
   #       username_env: TES_EXAMPLE_COM_USERNAME
   #       password_env: TES_EXAMPLE_COM_PASSWORD
+  # Entries may state the TES version of their TES instances, with the label
+  # `tes.version` (otherwise it is read from their service info; Funnel needs
+  # it), e.g., `labels: {tes.version: "1.1"}`
   # client_credentials:
   #   issuer: https://login.example.org/oidc/
   # See `docs/configuration.md` and `docs/access-control.md`
@@ -329,6 +332,10 @@ custom:
     # backends) below the read timeout of a reverse proxy in front of proTES
     # (see `docs/configuration.md`)
     timeout: 15
+    # Seconds that the TES version of a backend, as read from its service
+    # info, is cached per process; backends can state it instead, with the
+    # label `tes.version` (see `docs/configuration.md`)
+    version_cache_ttl: 3600
   # Whether the service info, which anyone can read, lists the TES backends
   # (`backends`); its field `gateway` stays either way
   service_info:

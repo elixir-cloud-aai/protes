@@ -100,6 +100,7 @@ nav:
   - Getting started: getting-started.md
   - Configuration: configuration.md
   - API: api.md
+  - TES versions: tes-versions.md
   - Plugins: plugins.md
   - Plugin images: plugin-images.md
   - Access control: access-control.md

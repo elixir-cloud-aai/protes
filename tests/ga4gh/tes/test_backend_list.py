@@ -267,7 +267,8 @@ def test_service_info_fields(discovering: FakeRegistry) -> None:
                 "group": "registry",
                 "labels": {},
             },
-        ]
+        ],
+        "tesResources_backend_parameters": [],
     }
 
 
@@ -280,7 +281,7 @@ def test_service_info_fields_hidden(
         get_custom_config(CustomConfig).service_info, "list_backends", False
     )
     fields = backends.service_info_fields()
-    assert set(fields) == {"gateway"}
+    assert set(fields) == {"gateway", "tesResources_backend_parameters"}
     assert not discovering.reads
 
 

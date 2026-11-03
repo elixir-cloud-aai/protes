@@ -21,6 +21,7 @@ lost.
 """
 
 from datetime import UTC, datetime
+from http import HTTPStatus
 import logging
 from threading import Event, Thread
 import time
@@ -34,6 +35,7 @@ from foca import get_collection, get_custom_config
 from kombu.exceptions import OperationalError
 from pymongo.collection import Collection
 from pymongo.errors import PyMongoError
+import requests
 
 from pro_tes.celery_worker import celery
 from pro_tes.config_models import CustomConfig
@@ -167,14 +169,17 @@ def _store_state(
         collection: Database collection of the tasks.
         worker_id: Worker identifier of the task.
         state: State of the task.
-        keep_canceled: Whether a stored `CANCELED` is kept: backends cancel
-            tasks asynchronously, and may report them as running (or be
-            unreachable) for a while; also if the task is canceled while it
-            is polled.
+        keep_canceled: Whether a stored cancelation (`CANCELING`, or
+            `CANCELED` of tasks stored by earlier versions) is kept: backends
+            cancel tasks asynchronously, and may report them as running (or
+            be unreachable) for a while; also if the task is canceled while
+            it is polled.
     """
     query: dict[str, Any] = {"worker_id": worker_id}
     if keep_canceled:
-        query["task.state"] = {"$ne": TesState.CANCELED.value}
+        query["task.state"] = {
+            "$nin": [TesState.CANCELED.value, TesState.CANCELING.value]
+        }
     result = collection.update_one(query, {"$set": {"task.state": state}})
     if result.modified_count:
         logger.info("[%s] %s", worker_id, state)
@@ -218,6 +223,39 @@ def _store_final(db_client: DbDocumentConnector, worker_id: str, response: Any) 
     )
 
 
+def _deleted_after_cancel(
+    collection: Collection[dict[str, Any]], worker_id: str, exc: Exception
+) -> bool:
+    """Set a task being canceled to `CANCELED` if its backend deleted it.
+
+    Without other answers (e.g., while the backend is unavailable) tasks stay
+    `CANCELING`, as they may still run.
+
+    Args:
+        collection: Database collection of the tasks.
+        worker_id: Worker identifier of the task.
+        exc: Error of the poll.
+
+    Returns:
+        Whether the task is `CANCELED` now (also if another delivery of the poll
+        has set it), which ends its tracking.
+    """
+    response = exc.response if isinstance(exc, requests.HTTPError) else None
+    if response is None or response.status_code != HTTPStatus.NOT_FOUND:
+        return False
+    result = collection.update_one(
+        {
+            "worker_id": worker_id,
+            "task.state": {"$in": [TesState.CANCELING.value, TesState.CANCELED.value]},
+        },
+        {"$set": {"task.state": TesState.CANCELED.value}},
+    )
+    if not result.matched_count:
+        return False
+    logger.info("[%s] %s: deleted by its backend", worker_id, TesState.CANCELED.value)
+    return True
+
+
 def _poll(kwargs: dict[str, Any]) -> None:
     """Poll a task at its backend once, and schedule the next poll.
 
@@ -249,6 +287,8 @@ def _poll(kwargs: dict[str, Any]) -> None:
         # retried by the Celery task; not a failed poll
         raise
     except Exception as exc:
+        if _deleted_after_cancel(collection=collection, worker_id=worker_id, exc=exc):
+            return
         # also if the backend is no longer configured or discovered (for the
         # time being), as the task may still run there
         failures = kwargs["failures"] + 1
@@ -314,13 +354,15 @@ def task__track_task_progress(
 ) -> None:
     """Poll a task at its TES backend once, and schedule the next poll.
 
-    The state is stored if it changed (a stored `CANCELED` only once the
+    The state is stored if it changed (a stored cancelation only once the
     backend has finished the task); once the task is finished, its logs and
     outputs are stored, and tracking ends. Failed polls are retried, also if
     the backend is not (or no longer) configured or discovered; after
     `polling.attempts` consecutive failures, the state is set to `UNKNOWN`
     (the task may still run at its backend), and polls back off (see
-    :py:func:`backoff`) until the backend answers again. Polls that fail
+    :py:func:`backoff`) until the backend answers again. A task being canceled
+    stays `CANCELING` meanwhile, unless its backend answers that it no longer
+    has the task (`404`): then it is `CANCELED`, and tracking ends. Polls that fail
     because MongoDB is unavailable are retried, with the same arguments,
     after up to `polling.max_wait` seconds, until it is available again;
     polls that fail because the broker is unavailable go back to it.

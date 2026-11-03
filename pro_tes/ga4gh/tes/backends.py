@@ -41,6 +41,11 @@ doesn't follow redirects), to the API path of the backend's URL
 got from the same path. If it is unknown whether the backend processed such
 a request (e.g., because the response timed out), the request is not sent
 again (cf. :py:class:`pro_tes.exceptions.BackendOutcomeUnknown`).
+
+The TES version of a backend (:py:func:`backend_version`) is the label
+`tes.version` of its entry; otherwise, what its service info reports, read
+leniently and cached per process. Backends of unknown versions count as the
+oldest supported version.
 """
 
 from collections.abc import Iterator
@@ -52,7 +57,7 @@ import os
 import ssl
 import threading
 import time
-from typing import Any
+from typing import Any, NamedTuple
 from urllib.parse import quote, quote_plus
 
 from foca import get_config, get_custom_config
@@ -87,6 +92,14 @@ from pro_tes.exceptions import (
     BackendNotConfigured,
     BackendOutcomeUnknown,
     BackendRequestNotSent,
+    TaskIncompatible,
+)
+from pro_tes.ga4gh.tes.versions import (
+    OLDEST,
+    SUPPORTED,
+    TesVersion,
+    incompatibilities,
+    upgrade_task,
 )
 from pro_tes.gateway import PLUGINS_PATH
 
@@ -109,6 +122,13 @@ CONNECT_TIMEOUT = 5
 # Maximum size of responses of discovered backends, in bytes (e.g., tasks
 # with their logs)
 MAX_RESPONSE_SIZE = 64 * 1024 * 1024
+# Label of a backend with its TES version, which wins over its service info
+TES_VERSION_LABEL = "tes.version"
+# Timeout of reading the service info of a backend, in seconds; short, as
+# requests to create tasks wait for it
+PROBE_TIMEOUT = 5
+# Seconds until the service info of a backend is read again after a failure
+PROBE_RETRY = 60
 
 
 class BackendConnectTimeout(BackendRequestNotSent, requests.ConnectTimeout):
@@ -431,15 +451,19 @@ def service_info_fields() -> dict[str, Any]:
         The TES backends (`backends`): identifier, URL, source, group and
         labels of each, without credentials (cf.
         :py:meth:`foca.plugins.backends.BackendList.describe`), unless
-        `custom.service_info.list_backends` is false; and what clients may
-        choose per task (`gateway`: the path of the plugin listing, whether
-        clients may choose pipelines and backends, and the capabilities of
-        the plugins, without plugin identifiers; cf.
+        `custom.service_info.list_backends` is false; the backend parameters
+        they support, as far as known (cf.
+        :py:meth:`BackendVersions.parameters`; the config of the service info
+        wins); and what clients may choose per task (`gateway`: the path of
+        the plugin listing, whether clients may choose pipelines and backends,
+        and the capabilities of the plugins, without plugin identifiers; cf.
         :py:func:`foca.plugins.api.service_info_fields`), unless the
         plugins can't be loaded (then the app doesn't start, with the
         error of the plugins).
     """
-    fields: dict[str, Any] = {}
+    fields: dict[str, Any] = {
+        "tesResources_backend_parameters": backend_versions.parameters(),
+    }
     if get_custom_config(CustomConfig).service_info.list_backends:
         fields["backends"] = get_backend_list().describe()
     try:
@@ -656,8 +680,32 @@ class TesClient(tes.HTTPClient):
         url = f"{self.url}/{API_PATH}/tasks/{quote_id(task_id)}"
         response = self._request("GET", url, timeout=timeout, **kwargs)
         response.raise_for_status()
-        task: tes.Task = unmarshal(response.json(), tes.Task)
+        body = response.json()
+        if isinstance(body, dict):
+            # also for any other code that gets tasks from backends
+            body = upgrade_task(body, backend_version(self.backend, probe=False))
+        task: tes.Task = unmarshal(body, tes.Task)
         return task
+
+    def service_info(self) -> Any:
+        """Get the service info (`GET /service-info`), with a single request.
+
+        Returns:
+            The service info, as the backend serves it.
+
+        Raises:
+            requests.RequestException: The request failed, or the backend
+                answered with an error.
+            pro_tes.exceptions.BackendAuthError: No credentials are
+                available.
+            ValueError: The response is no JSON.
+        """
+        kwargs = self._request_params()
+        timeout = kwargs.pop("timeout")
+        url = f"{self.url}/{API_PATH}/service-info"
+        response = self._request("GET", url, timeout=timeout, **kwargs)
+        response.raise_for_status()
+        return response.json()
 
     def cancel_task(self, task_id: str) -> None:
         """Cancel a task (`POST /tasks/{id}:cancel`), with a single request.
@@ -952,12 +1000,14 @@ def create_client(host: str, base_path: str = "") -> TesClient:
     return TesClient(url=url, backend=backend, entry=entry)
 
 
-def client_for(backend: Backend) -> TesClient:
+def client_for(backend: Backend, timeout: int | None = None) -> TesClient:
     """Create a client of a candidate backend, e.g., of a pipeline run.
 
     Args:
         backend: Backend, as expanded from `custom.tes.backends` (cf.
             :py:func:`get_backends`).
+        timeout: Timeout of requests, in seconds; by default
+            `custom.tes.timeout`.
 
     Returns:
         Client of the backend, with the credentials of its entry.
@@ -973,12 +1023,239 @@ def client_for(backend: Backend) -> TesClient:
         raise BackendNotConfigured(
             f"TES backend not configured: {backend.url}"
         ) from exc
-    return TesClient(url=backend.url, backend=backend, entry=entry)
+    return TesClient(url=backend.url, backend=backend, entry=entry, timeout=timeout)
+
+
+def reported_version(service_info: Any) -> TesVersion | None:
+    """Get the TES version that a service info reports, read leniently.
+
+    Backends report it in different ways (e.g., TESK: artifact `TES`, version
+    `1.0`, also as a number; Poiesis: `v1.1.0`), or report their own version
+    (Funnel), which is no supported version, usually.
+
+    Args:
+        service_info: Service info, as served by a backend.
+
+    Returns:
+        The version; `None` if it reports none that proTES supports.
+    """
+    service_type = service_info.get("type") if isinstance(service_info, dict) else None
+    if not isinstance(service_type, dict):
+        return None
+    group, artifact = service_type.get("group"), service_type.get("artifact")
+    if (
+        not isinstance(group, str)
+        or not isinstance(artifact, str)
+        or group.lower() != "org.ga4gh"
+        or artifact.lower() != "tes"
+    ):
+        return None
+    version = TesVersion.parse(service_type.get("version"))
+    return version if version in SUPPORTED else None
+
+
+class _Probe(NamedTuple):
+    """Result of reading the service info of a backend.
+
+    Attributes:
+        version: The TES version; `None` if the backend never answered.
+        expires_at: When to read it again (`time.monotonic()`).
+        parameters: The backend parameters that the backend supports
+            (`tesResources_backend_parameters`), as far as it says.
+    """
+
+    version: TesVersion | None
+    expires_at: float
+    parameters: tuple[str, ...] = ()
+
+
+class BackendVersions:
+    """TES versions of backends, from their service info, cached.
+
+    Thread-safe (a lost update only reads a service info once more, and
+    failures keep what other threads have read meanwhile); each process (e.g.,
+    each Gunicorn or Celery worker) has its own cache.
+    """
+
+    def __init__(self) -> None:
+        """Create an empty cache."""
+        self._cache: dict[str, _Probe] = {}
+
+    def clear(self) -> None:
+        """Remove all cached versions."""
+        self._cache.clear()
+
+    def get(self, backend: Backend, probe: bool = True) -> TesVersion:
+        """Get the TES version of a backend.
+
+        Never raises: tasks can be relayed to backends of unknown versions.
+
+        Args:
+            backend: Backend.
+            probe: Whether to read the service info of the backend if no
+                version is cached, or the cached one expired.
+
+        Returns:
+            The version of the label `tes.version` of the backend, else that
+            of its service info, else (e.g., if the backend is unavailable)
+            the oldest supported version.
+        """
+        version = TesVersion.parse(backend.labels.get(TES_VERSION_LABEL))
+        if version is not None and version in SUPPORTED:
+            return version
+        cached = self._cache.get(backend.url)
+        if probe and (cached is None or time.monotonic() >= cached.expires_at):
+            cached = self._probe(backend)
+            self._cache[backend.url] = cached
+        return (cached.version if cached is not None else None) or OLDEST
+
+    def was_read(self, backend: Backend) -> bool:
+        """Tell whether reading the service info of a backend was tried.
+
+        Args:
+            backend: Backend.
+
+        Returns:
+            Whether this process has tried to read it (and still knows).
+        """
+        return backend.url in self._cache
+
+    def confirmed(self, backend: Backend) -> bool:
+        """Tell whether a backend stated its TES version or answered at all.
+
+        Doesn't read its service info.
+
+        Args:
+            backend: Backend.
+
+        Returns:
+            Whether the version comes from the label of the backend or an
+            answer of the backend, not from having no answer so far.
+        """
+        version = TesVersion.parse(backend.labels.get(TES_VERSION_LABEL))
+        if version is not None and version in SUPPORTED:
+            return True
+        cached = self._cache.get(backend.url)
+        return cached is not None and cached.version is not None
+
+    def parameters(self) -> list[str]:
+        """Get the backend parameters that backends support, as far as known.
+
+        Reads neither service infos nor registries, as clients without
+        credentials get them through the service info of proTES.
+
+        Returns:
+            The keys that the service infos read so far list, sorted.
+        """
+        return sorted(
+            {key for probe in list(self._cache.values()) for key in probe.parameters}
+        )
+
+    def _probe(self, backend: Backend) -> _Probe:
+        """Read the TES version of a backend from its service info.
+
+        A failure doesn't change what is known: a version that was read before
+        stays, so that one failed request doesn't make a backend count as
+        another version. An answer without a valid version does.
+
+        Args:
+            backend: Backend.
+
+        Returns:
+            What the service info says, and when to read it again.
+        """
+        try:
+            service_info = client_for(backend, timeout=PROBE_TIMEOUT).service_info()
+            version = reported_version(service_info)
+            listed: Any = (
+                service_info.get("tesResources_backend_parameters")
+                if isinstance(service_info, dict)
+                else None
+            )
+        except Exception as exc:
+            logger.warning(
+                "Service info of TES backend %s not available: %s",
+                backend.url,
+                type(exc).__name__,
+            )
+            # as it is now: other threads may have read it meanwhile
+            previous = self._cache.get(backend.url)
+            return _Probe(
+                previous.version if previous is not None else None,
+                time.monotonic() + PROBE_RETRY,
+                previous.parameters if previous is not None else (),
+            )
+        # Funnel lists an empty key
+        parameters = tuple(
+            key
+            for key in (listed if isinstance(listed, list) else [])
+            if isinstance(key, str) and key
+        )
+        if version is None:
+            logger.warning(
+                "TES version of backend %s unknown: taken as %s; set its label"
+                " `%s` if it is another one",
+                backend.url,
+                OLDEST,
+                TES_VERSION_LABEL,
+            )
+            return _Probe(OLDEST, time.monotonic() + PROBE_RETRY, parameters)
+        return _Probe(
+            version,
+            time.monotonic() + get_custom_config(CustomConfig).tes.version_cache_ttl,
+            parameters,
+        )
+
+
+backend_versions = BackendVersions()
+
+
+def backend_version(backend: Backend, probe: bool = True) -> TesVersion:
+    """Get the TES version of a backend (cf. :py:class:`BackendVersions`).
+
+    Args:
+        backend: Backend.
+        probe: Whether its service info may be read now.
+
+    Returns:
+        The version; the oldest supported one if it is unknown.
+    """
+    return backend_versions.get(backend, probe=probe)
+
+
+def eligible_backends(task: Any, backends: list[Backend]) -> list[Backend]:
+    """Get the backends that can run a task unchanged; plugins can use it.
+
+    Tasks that every supported version can express can run anywhere, and need
+    no service info. For other tasks, no further service info is read once
+    `PROBE_TIMEOUT` seconds have passed, so that unavailable backends don't
+    keep the request waiting; the remaining backends count with what is
+    cached (cf. :py:meth:`BackendVersions.confirmed`). Backends never read
+    come first, so that an unavailable one can't keep them from being read.
+
+    Args:
+        task: Task of the canonical TES version (JSON).
+        backends: Backends, in order.
+
+    Returns:
+        The backends that can run the task, in order.
+    """
+    if not isinstance(task, dict) or not incompatibilities(task):
+        return list(backends)
+    deadline = time.monotonic() + PROBE_TIMEOUT
+    for backend in sorted(backends, key=backend_versions.was_read):
+        backend_version(backend, probe=time.monotonic() < deadline)
+    return [
+        backend
+        for backend in backends
+        if not incompatibilities(task, backend_version(backend, probe=False))
+    ]
 
 
 # Reason codes of errors of attempts to relay tasks, by error class; the
 # first match counts
 _REASONS: tuple[tuple[type[Exception], str], ...] = (
+    (TaskIncompatible, "incompatible"),
     (BackendAuthError, "no_credentials"),
     (BackendNotConfigured, "unknown_backend"),
     (ValueError, "invalid_backend"),

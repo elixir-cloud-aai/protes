@@ -243,7 +243,17 @@ class TesOutput(CustomBaseModel):
         ...,
         description=(
             "Path of the file inside the container.\nMust be an            "
-            " absolute path."
+            " absolute path. May contain wildcards (POSIX), to select"
+            " several outputs at once."
+        ),
+    )
+    path_prefix: str | None = Field(
+        default=None,
+        description=(
+            "Prefix to be removed from matching outputs if `path` contains"
+            " wildcards; output URLs are constructed by appending pruned paths"
+            " to the directory specified in `url`. Required if `path` contains"
+            " wildcards, ignored otherwise."
         ),
     )
     type: TesFileType | None = TesFileType.FILE
@@ -554,6 +564,8 @@ class TesEndpoint(CustomBaseModel):
             specification, i.e., `/ga4gh/tes/v1`.
         task_id: Identifier of the task at the external TES endpoint; not
             set for tasks stored by earlier versions.
+        tes_version: TES version that the task was relayed in; not set for
+            tasks stored by earlier versions.
 
     Attributes:
         host: Host at which the TES API is served that is processing this
@@ -565,11 +577,14 @@ class TesEndpoint(CustomBaseModel):
             specification, i.e., `/ga4gh/tes/v1`.
         task_id: Identifier of the task at the external TES endpoint; not
             set for tasks stored by earlier versions.
+        tes_version: TES version that the task was relayed in; not set for
+            tasks stored by earlier versions.
     """
 
     host: str = ""
     base_path: str = ""
     task_id: str | None = None
+    tes_version: str | None = None
 
 
 class DbDocument(CustomBaseModel):

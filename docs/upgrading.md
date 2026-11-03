@@ -64,6 +64,31 @@ work as before: pip is still in the image. Building the image yourself
 needs BuildKit (the default builder of Docker since version 23, or
 `docker buildx`).
 
+**TES 1.1 (clients):** proTES serves [TES
+1.1.0](api.md), so its service info reports `type.version: 1.1.0`, and it
+accepts the filters `state`, `tag_key` and `tag_value` of `GET /tasks`, and
+`path_prefix` in outputs. The fields `ignore_error`, `streamable` and
+`backend_parameters` were accepted before. Clients that accept only the states
+of TES 1.0 (e.g., py-tes before 1.1) need an update, as tasks may now be
+`PREEMPTED` or `CANCELING`: after a request to cancel it, a task is `CANCELING`
+until its TES instance reports its final state, where it was `CANCELED` right
+away before. No data changes: stored tasks are valid as they are, and tasks
+stored as `CANCELED` by earlier versions stay so until their TES instance has
+finished them. The filters `tag_key` and `tag_value` need MongoDB 5.0 or later
+(the chart and Compose use 7.0); other requests are not affected.
+
+**TES 1.1 (operators):** proTES now adapts tasks to the TES version of each TES
+instance (see [TES versions](tes-versions.md)). Tasks with features that TES
+1.0 can't express (`ignore_error: true`, strict `backend_parameters`, wildcards
+in output paths) are no longer sent to TES 1.0 instances; if none of TES 1.1 is
+selected, they are rejected with `400 Bad Request`. Before, TESK rejected such
+fields and ignored strict parameters. proTES reads the version from the service
+info of each TES instance; **set the label `tes.version: "1.1"` for Funnel**,
+and for other TES instances that report no valid TES version, as they count as
+TES 1.0 otherwise (see [TES versions](configuration.md#tes-versions)). Plugins
+get tasks in TES 1.1, as before, and route only among TES instances that can run
+them.
+
 ## To version 0.4.0
 
 Check each item; the sections below have the details.

@@ -5,6 +5,7 @@ from contextlib import suppress
 from copy import deepcopy
 from dataclasses import replace
 from functools import cached_property
+from itertools import zip_longest
 import logging
 import re
 from typing import Any, NamedTuple
@@ -37,14 +38,18 @@ from pro_tes.exceptions import (
     BackendAuthError,
     BackendOutcomeUnknown,
     BadRequest,
+    NoEligibleBackend,
     ProvenanceNotFound,
     TaskNotCancelable,
     TaskNotFound,
 )
 from pro_tes.ga4gh.tes.backends import (
     TesClient,
+    backend_version,
+    backend_versions,
     client_for,
     create_client,
+    eligible_backends,
     forward_reason,
     get_backends,
 )
@@ -63,6 +68,7 @@ from pro_tes.ga4gh.tes.ownership import (
     task_has_roles,
 )
 from pro_tes.ga4gh.tes.states import States
+from pro_tes.ga4gh.tes.versions import incompatibilities
 from pro_tes.gateway import (
     check_inline_content,
     handle_url_credentials,
@@ -86,6 +92,40 @@ logger = logging.getLogger(__name__)
 
 # view of `GET /tasks` and `GET /tasks/{id}` if none is given, as in the spec
 DEFAULT_VIEW = "MINIMAL"
+
+
+def tags_filter(keys: list[str], values: list[str]) -> dict[str, Any]:
+    """Get the database filter of the tag filters of `GET /tasks` (TES 1.1).
+
+    Keys and values are zipped, in order: a missing or empty value matches
+    any value of the tag, also an empty one. Tag keys are taken literally by
+    `$getField` (MongoDB 5.0 or later): they may contain dots (e.g.,
+    `gateway.backend`) and start with `$`, unlike the keys of dotted paths.
+
+    Args:
+        keys: Keys of the tags (`tag_key`).
+        values: Values of the tags (`tag_value`).
+
+    Returns:
+        The filter; empty without keys.
+
+    Raises:
+        pro_tes.exceptions.BadRequest: There are more values than keys, or a
+            key or value has null characters.
+    """
+    if len(values) > len(keys):
+        raise BadRequest("More values (`tag_value`) than keys (`tag_key`) of tags")
+    if any("\x00" in item for item in (*keys, *values)):
+        raise BadRequest("Invalid tag filter: null character")
+    conditions: list[dict[str, Any]] = []
+    for key, value in zip_longest(keys, values, fillvalue=""):
+        tag = {"$getField": {"field": {"$literal": key}, "input": "$task.tags"}}
+        conditions.append(
+            {"$eq": [tag, {"$literal": value}]}
+            if value
+            else {"$eq": [{"$type": tag}, "string"]}
+        )
+    return {"$expr": {"$and": conditions}} if conditions else {}
 
 
 def _creation_tags(run: PipelineRun, provenance_path: str) -> dict[str, str]:
@@ -116,12 +156,14 @@ class _Accepted(NamedTuple):
         cli: Client of the backend.
         response: Response of the backend.
         remote_task_id: Identifier of the task at the backend.
+        tes_version: TES version that the task was relayed in.
     """
 
     attempt: Attempt
     cli: TesClient
     response: BackendResponse
     remote_task_id: str
+    tes_version: str
 
 
 class TaskRuns:
@@ -170,9 +212,11 @@ class TaskRuns:
         :py:mod:`pro_tes.ga4gh.tes.ownership`). The task is checked, then
         the plugin pipeline of the request runs (cf.
         :py:mod:`pro_tes.gateway`): its `request` phase may change the task,
-        and its `route` phase chooses the TES backends, in order, from
-        `custom.tes.backends`. Tasks that fail validation, are rejected by a
-        plugin, or have no backend are not stored.
+        and its `route` phase chooses the TES backends, in order, from those
+        of `custom.tes.backends` that can run the task unchanged (cf.
+        :py:func:`pro_tes.ga4gh.tes.backends.eligible_backends`). Tasks that
+        fail validation, are rejected by a plugin, or have no backend are not
+        stored.
 
         The task is then stored, and relayed to the backends in turn, after
         the `forward` phase of each attempt, until one accepts the task. It
@@ -311,8 +355,24 @@ class TaskRuns:
                 have accepted the task (cf. :py:meth:`create_task`).
         """
         payload: dict[str, Any] = run.request().payload
-        candidates = run.route(get_backends())
+        # plugins rank only the backends that can run the task, and get it
+        # in the canonical version
+        backends = get_backends()
+        eligible = eligible_backends(payload, backends)
+        candidates = run.route(eligible) if eligible or not backends else []
         # before the task is stored: no task is left
+        # (a backend without an answer may be fine again soon: `503` below)
+        if (
+            not candidates
+            and len(eligible) < len(backends)
+            and all(backend_versions.confirmed(backend) for backend in backends)
+        ):
+            run.final_reason = "no_eligible_backend"
+            found = ", ".join(map(str, incompatibilities(payload)))
+            raise NoEligibleBackend(
+                f"No selected TES instance can run this task unchanged: {found}",
+                run=run,
+            )
         if not candidates:
             run.final_reason = "no_backend"
             raise NoBackendAvailable("No TES backend available", run=run)
@@ -409,9 +469,14 @@ class TaskRuns:
         for attempt in run.attempts(candidates):
             tes_url = attempt.backend.url
             db_document.tes_endpoint = TesEndpoint(host=tes_url)
-            # checked by `check_outbound` before the attempt
-            task = relayed_task(attempt.outbound.payload, prefix=prefix)
+            version = backend_version(attempt.backend)
             try:
+                # checked by `check_outbound` before the attempt, but not
+                # against the version, if a plugin of the `forward` phase
+                # changed the task
+                task = relayed_task(
+                    attempt.outbound.payload, prefix=prefix, version=version
+                )
                 cli = client_for(attempt.backend)
                 remote_task_id, response = cli.forward(
                     attempt.outbound,
@@ -434,7 +499,10 @@ class TaskRuns:
                 run.final_reason = "outcome_unknown"
                 try:
                     db_connector.upsert_fields_in_root_object(
-                        root="tes_endpoint", host=tes_url, base_path=""
+                        root="tes_endpoint",
+                        host=tes_url,
+                        base_path="",
+                        tes_version=str(version),
                     )
                     db_connector.update_task_state(state=TesState.SYSTEM_ERROR.value)
                 finally:
@@ -459,6 +527,7 @@ class TaskRuns:
                 cli=cli,
                 response=response,
                 remote_task_id=remote_task_id,
+                tes_version=str(version),
             )
         # the attempts end with a success, or raise
         raise RuntimeError("Forwarding ended without outcome")
@@ -488,7 +557,7 @@ class TaskRuns:
                 rejected the response, or a step of it failed; the task is
                 kept (and tracked).
         """
-        attempt, cli, response, remote_task_id = accepted
+        attempt, cli, response, remote_task_id, tes_version = accepted
         tes_url = attempt.backend.url
         logger.info(
             "Task '%s' successfully forwarded to TES endpoint hosted at:"
@@ -503,6 +572,7 @@ class TaskRuns:
             db_connector=db_connector,
             tes_url=tes_url,
             remote_task_id=remote_task_id,
+            tes_version=tes_version,
         )
         response.client_payload = {"id": db_document.task.id}
         failed: Exception | None = None
@@ -645,13 +715,13 @@ class TaskRuns:
 
         Returns:
             Response object according to TES API schema . Cf.
-            https://github.com/ga4gh/task-execution-schemas/blob/9e9c5aa2648d683d5574f9dbd63a025b4aea285d/openapi/task_execution_service.openapi.yaml;
+            https://github.com/ga4gh/task-execution-schemas/blob/117cd927aa119469ee80cedbd8940c968b81c5d6/openapi/task_execution_service.openapi.yaml;
             only the tasks that the user owns are listed (also for admins),
             newest first, and `next_page_token` is empty on the last page.
 
         Raises:
             pro_tes.exceptions.BadRequest: The page size is not positive, or
-                the page token is invalid.
+                the page token or the tag filters are invalid.
         """
         view = kwargs.get("view", DEFAULT_VIEW)
         page_size = self._page_size(page_size=kwargs.get("page_size"), view=view)
@@ -674,6 +744,16 @@ class TaskRuns:
                 raise BadRequest("Invalid name prefix: null character")
             pattern = "^" + re.escape(name_prefix)
             filter_dict["task_original.name"] = {"$regex": pattern}
+
+        # validated by the specification; what clients get back, as for tags
+        state = kwargs.get("state")
+        if state is not None:
+            filter_dict["task.state"] = state
+        filter_dict.update(
+            tags_filter(
+                keys=kwargs.get("tag_key") or [], values=kwargs.get("tag_value") or []
+            )
+        )
 
         # one more task than the page size tells whether there is a next
         # page; documents are processed one by one, as the cursor yields them
@@ -711,7 +791,7 @@ class TaskRuns:
 
         Returns:
             Response object according to TES API schema . Cf.
-                https://github.com/ga4gh/task-execution-schemas/blob/9e9c5aa2648d683d5574f9dbd63a025b4aea285d/openapi/task_execution_service.openapi.yaml
+                https://github.com/ga4gh/task-execution-schemas/blob/117cd927aa119469ee80cedbd8940c968b81c5d6/openapi/task_execution_service.openapi.yaml
 
         Raises:
             pro_tes.exceptions.TaskNotFound: The requested task is not
@@ -755,10 +835,11 @@ class TaskRuns:
 
         Only owners of the task may cancel it (enforced by the policies).
         Tasks that have not finished (also those in state `UNKNOWN`, e.g.,
-        not tracked yet) are canceled at their TES instance; finished tasks
-        and tasks being canceled are left as they are, also if their state
-        changed while they were canceled (e.g., a final state stored by
-        their tracking).
+        not tracked yet) are canceled at their TES instance, and are then in
+        state `CANCELING`, until their tracking stores the final state that
+        their TES instance reports; finished tasks and tasks being canceled
+        are left as they are, also if their state changed while they were
+        canceled (e.g., a final state stored by their tracking).
 
         Args:
             id: Task identifier.
@@ -819,16 +900,15 @@ class TaskRuns:
                 base_path=db_document.tes_endpoint.base_path,
             )
             cli.cancel_task(task_id=task_id)
-            # unless tracking stored a final state meanwhile: the backend
-            # may accept cancels of finished tasks (as no-ops); a stored
-            # `CANCELING` (the backend confirmed the cancel) becomes
-            # `CANCELED`, which tracking keeps until the task is final
+            # unless tracking stored another state meanwhile: the backend
+            # may accept cancels of finished tasks (as no-ops); tracking keeps
+            # `CANCELING` until the task is final
             if db_connector.update_task_state(
-                state="CANCELED",
-                if_state=States.TO_CANCEL + States.CANCELING,
+                state=TesState.CANCELING.value,
+                if_state=States.TO_CANCEL,
             ):
                 logger.info(
-                    "Task '%s' with worker ID '%s' canceled.",
+                    "Task '%s' with worker ID '%s' being canceled.",
                     id,
                     db_document.worker_id,
                 )
@@ -1078,6 +1158,7 @@ class TaskRuns:
         db_connector: DbDocumentConnector,
         tes_url: str,
         remote_task_id: str,
+        tes_version: str,
     ) -> DbDocument:
         """Store the TES instance of a task, and the end time of its logs.
 
@@ -1085,6 +1166,7 @@ class TaskRuns:
             db_connector: The database connector.
             tes_url: The TES URL where the task is forwarded.
             remote_task_id: Task identifier at the remote TES instance.
+            tes_version: TES version that the task was relayed in.
 
         Returns:
             The updated database document.
@@ -1097,6 +1179,7 @@ class TaskRuns:
             "host": tes_url,
             "base_path": "",
             "task_id": remote_task_id,
+            "tes_version": tes_version,
         }
         db_document = db_connector.upsert_fields_in_root_object(
             root="tes_endpoint",
