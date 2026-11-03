@@ -196,7 +196,7 @@ both entries, but still proposes digest updates of the base image's tag.
 
 The [Helm chart](deployment.md) in `deployment/` is a thin chart over FOCA's
 library chart `foca-common` (see the [library chart's
-documentation](https://github.com/elixir-cloud-aai/foca/blob/chart-v0.2.0/docs/helm-chart.md)):
+documentation](https://github.com/elixir-cloud-aai/foca/blob/chart-v0.4.0/docs/helm-chart.md)):
 its templates are one-line includes of the library's templates, with the
 app's settings and checks in `templates/_helpers.tpl` (`protes.settings`,
 `protes.validate`), and templates of its own for Flower. `values.yaml` has

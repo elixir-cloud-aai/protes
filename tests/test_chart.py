@@ -277,7 +277,8 @@ def test_image_of_packaged_chart(
     with tarfile.open(package) as archive:
         member = archive.extractfile("protes/charts/foca-common/Chart.yaml")
         assert member is not None
-        assert yaml.safe_load(member.read())["version"] == "0.2.0"
+        library = yaml.safe_load((CHART / "Chart.lock").read_text())["dependencies"][0]
+        assert yaml.safe_load(member.read())["version"] == library["version"]
 
 
 def test_image_set() -> None:
@@ -458,7 +459,13 @@ def test_reserved_env() -> None:
         "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: reserved-test\n"
         'data:\n  names: {{ include "protes.reservedEnv" . | quote }}\n'
     )
-    docs = render_with({"reserved-test.yaml": template}, "--set", "hostName=x")
+    docs = render_with(
+        {"reserved-test.yaml": template},
+        "--set",
+        "hostName=x",
+        "--set",
+        "pluginStore.existingSecret=store-key",
+    )
     (configmap,) = [doc for doc in docs if doc["metadata"]["name"] == "reserved-test"]
     reserved = set(json.loads(configmap["data"]["names"]))
     indexed = {(doc["kind"], doc["metadata"]["name"]): doc for doc in docs}
@@ -491,6 +498,10 @@ def test_extra_env_worker_disabled() -> None:
         (
             [{"name": "MONGO_DBNAME", "value": "x"}],
             "protes.extraEnv must not set MONGO_DBNAME",
+        ),
+        (
+            [{"name": "FOCA_PLUGINS_STORE_KEY_SECRET", "value": "x"}],
+            "protes.extraEnv must not set FOCA_PLUGINS_STORE_KEY_SECRET",
         ),
         (
             [{"name": "A", "value": "1"}, {"name": "A", "value": "2"}],
@@ -915,9 +926,9 @@ def test_issuer_settings_invalid(setting: dict[str, Any], error: str) -> None:
 
 
 def test_audience_invalid_with_issuer_audiences() -> None:
-    """Rendering fails on a global audience the app refuses, if not required.
+    """Rendering fails on a global audience the app refuses.
 
-    The library checks it only if it is required (`requireAudience`).
+    Also if each issuer has an audience of its own, so that it isn't needed.
     """
     issuers = [{"issuer": "https://x.org/", "audience": ["a"]}]
     error = _render_error(
@@ -928,48 +939,6 @@ def test_audience_invalid_with_issuer_audiences() -> None:
         audience=None,
     )
     assert "config.security.auth.audience must list" in error
-
-
-@pytest.mark.parametrize(
-    ("issuers", "required"),
-    [
-        (["https://x.org/"], "true"),
-        ([{"issuer": "https://x.org/"}], "true"),
-        ([{"issuer": "https://x.org/", "audience": None}], "true"),
-        (
-            [{"issuer": "https://x.org/", "audience": ["a"]}, "https://y.org/"],
-            "true",
-        ),
-        ([{"issuer": "https://x.org/", "audience": ["a"]}], "false"),
-        (
-            [
-                {"issuer": "https://x.org/", "audience": ["a"]},
-                {"issuer": "https://y.org/", "audience": ["b"]},
-            ],
-            "false",
-        ),
-    ],
-    ids=["url", "unset", "null", "one-url", "own", "all-own"],
-)
-def test_require_audience(issuers: list[Any], required: str) -> None:
-    """The library requires a global audience unless each issuer has one."""
-    template = 'required: {{ include "protes.requireAudience" . | quote }}'
-    docs = render_with(
-        {
-            "require-audience-test.yaml": (
-                "apiVersion: v1\nkind: ConfigMap\nmetadata:\n"
-                "  name: require-audience-test\ndata:\n  " + template + "\n"
-            )
-        },
-        "--set",
-        "hostName=tes.example.org",
-        "--set-json",
-        f"config.security.auth.issuers={json.dumps(issuers)}",
-    )
-    (configmap,) = [
-        doc for doc in docs if doc["metadata"]["name"] == "require-audience-test"
-    ]
-    assert configmap["data"]["required"] == required
 
 
 def test_issuer_audience_not_verified() -> None:
@@ -1787,6 +1756,139 @@ def test_notes_flower() -> None:
     """With Flower, the notes show how to reach it."""
     notes = render_notes("--set", "hostName=x", "-n", "tes", *FLOWER_ON)
     assert f"kubectl port-forward svc/{FLOWER} 5555:5555 -n tes" in notes
+
+
+def test_plugin_store_secret() -> None:
+    """`pluginStore.existingSecret` reaches the app and the worker only as a Secret.
+
+    It is no setting of the app, so that it must stay out of the config
+    overlay, in which FOCA refuses unknown keys.
+    """
+    docs = _render("--set", "pluginStore.existingSecret=store-key")
+    for name in (APP, WORKER):
+        assert _secret_refs(_container(docs, name))[
+            "FOCA_PLUGINS_STORE_KEY_SECRET"
+        ] == ("store-key", "store-key-secret")
+    assert "existingSecret" not in _overlay(docs).get("plugins", {})
+    assert "pluginStore" not in _overlay(docs)
+
+
+def test_plugin_store_secret_default() -> None:
+    """Without a Secret, the app and the worker get no key secret."""
+    docs = _render()
+    for name in (APP, WORKER):
+        assert "FOCA_PLUGINS_STORE_KEY_SECRET" not in _env(_container(docs, name))
+
+
+def test_plugin_store_secret_in_config() -> None:
+    """Rendering fails on the key secret in the config, which is a ConfigMap."""
+    error = _render_error(
+        "--set-json",
+        'config.plugins={"defaults": {"store": {"key_secret": "x"}}}',
+    )
+    assert "key_secret" in error
+
+
+def test_replicas_default() -> None:
+    """By default, the app has one pod and no PodDisruptionBudget."""
+    docs = _render()
+    assert docs[("Deployment", APP)]["spec"]["replicas"] == 1
+    assert not [key for key in docs if key[0] == "PodDisruptionBudget"]
+
+
+def test_replicas_budget() -> None:
+    """With several pods, a PodDisruptionBudget covers those of the app."""
+    docs = _render("--set", "protes.replicas=2")
+    assert docs[("Deployment", APP)]["spec"]["replicas"] == 2
+    budget = docs[("PodDisruptionBudget", APP)]
+    assert budget["spec"]["maxUnavailable"] == 1
+    selector = budget["spec"]["selector"]["matchLabels"]
+    assert selector
+    assert selector == docs[("Deployment", APP)]["spec"]["selector"]["matchLabels"]
+
+
+@pytest.mark.parametrize(
+    ("setting", "value", "expected"),
+    [("minAvailable", "50%", "50%"), ("maxUnavailable", "0", 0)],
+)
+def test_replicas_budget_settings(setting: str, value: str, expected: Any) -> None:
+    """The settings of the budget are rendered, in place of its default."""
+    docs = _render(
+        "--set",
+        "protes.replicas=2",
+        "--set-string" if value.endswith("%") else "--set",
+        f"protes.podDisruptionBudget.{setting}={value}",
+    )
+    spec = docs[("PodDisruptionBudget", APP)]["spec"]
+    assert spec[setting] == expected
+    other = {"minAvailable", "maxUnavailable"} - {setting}
+    assert not other & set(spec)
+
+
+def test_replicas_budget_both_settings() -> None:
+    """Rendering fails if the budget sets both of its limits."""
+    error = _render_error(
+        "--set",
+        "protes.replicas=2",
+        "--set",
+        "protes.podDisruptionBudget.minAvailable=1",
+        "--set",
+        "protes.podDisruptionBudget.maxUnavailable=1",
+    )
+    assert "podDisruptionBudget" in error
+
+
+def test_replicas_at_least_one() -> None:
+    """Rendering fails without pods of the app."""
+    assert "replicas" in _render_error("--set", "protes.replicas=0")
+
+
+def test_worker_replicas() -> None:
+    """The worker's number of pods is independent of the app's."""
+    docs = _render("--set", "protes.replicas=3", "--set", "worker.replicas=2")
+    assert docs[("Deployment", APP)]["spec"]["replicas"] == 3
+    assert docs[("Deployment", WORKER)]["spec"]["replicas"] == 2
+
+
+def test_replicas_budget_disabled() -> None:
+    """`protes.podDisruptionBudget.enabled: false` renders no budget."""
+    docs = _render(
+        "--set",
+        "protes.replicas=2",
+        "--set",
+        "protes.podDisruptionBudget.enabled=false",
+    )
+    assert not [key for key in docs if key[0] == "PodDisruptionBudget"]
+
+
+@pytest.mark.parametrize("probe", ["startupProbe", "readinessProbe", "livenessProbe"])
+def test_app_probe_override(probe: str) -> None:
+    """A probe of the values replaces the default one of the app's container."""
+    spec = {"tcpSocket": {"port": 8080}, "periodSeconds": 7}
+    docs = _render("--set-json", f"protes.{probe}={json.dumps(spec)}")
+    assert _container(docs, APP)[probe] == spec
+
+
+def test_issuers_with_own_audiences() -> None:
+    """No global audience is needed if each issuer has an audience of its own."""
+    issuers = [{"issuer": "https://x.org/", "audience": ["a"]}]
+    docs = _render(
+        "--set-json",
+        f"config.security.auth.issuers={json.dumps(issuers)}",
+        audience=None,
+    )
+    assert _overlay(docs)["security"]["auth"]["issuers"] == issuers
+
+
+def test_issuers_mixed_audiences() -> None:
+    """A global audience is needed unless each issuer has one of its own."""
+    issuers = [{"issuer": "https://x.org/", "audience": ["a"]}, "https://y.org/"]
+    error = _render_error(
+        "--set-json",
+        f"config.security.auth.issuers={json.dumps(issuers)}",
+        audience=None,
+    )
+    assert "audience" in error
 
 
 def test_ci_values() -> None:

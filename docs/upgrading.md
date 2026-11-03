@@ -77,6 +77,21 @@ stored as `CANCELED` by earlier versions stay so until their TES instance has
 finished them. The filters `tag_key` and `tag_value` need MongoDB 5.0 or later
 (the chart and Compose use 7.0); other requests are not affected.
 
+**Helm chart:** the chart now uses the library chart foca-common 0.4.0 (see
+[FOCA's migration guide](https://foca.readthedocs.io/en/v0.20.0/migration-0.20/)).
+Rendering now also fails on a global `config.security.auth.audience` that
+FOCA wouldn't use, if it is invalid and each issuer has its own, and if
+`protes.extraEnv` sets `FOCA_PLUGINS_STORE_KEY_SECRET`. New values are
+optional, and without them the chart otherwise renders as before:
+
+- `pluginStore.existingSecret`: an existing Secret with the key
+  `store-key-secret`, the key secret of the plugin store. **Setting it makes
+  existing entries that plugins keyed with `key_for()` unreachable.** See the
+  [chart's README](https://github.com/elixir-cloud-aai/protes/blob/dev/deployment/README.md#secrets).
+- `protes.replicas` and `protes.podDisruptionBudget`: several pods of the app.
+- `protes.startupProbe`, `protes.readinessProbe` and `protes.livenessProbe`:
+  replace the default probes of the app's container.
+
 **TES 1.1 (operators):** proTES now adapts tasks to the TES version of each TES
 instance (see [TES versions](tes-versions.md)). Tasks with features that TES
 1.0 can't express (`ignore_error: true`, strict `backend_parameters`, wildcards

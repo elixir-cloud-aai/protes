@@ -6,7 +6,7 @@ MongoDB database and a RabbitMQ broker, and optionally Flower, the monitoring
 UI of the worker. It is a thin chart over FOCA's library chart `foca-common`
 (the version in `Chart.yaml`), which renders most resources from the values
 described here and in `values.yaml` (see the [library chart's
-documentation](https://github.com/elixir-cloud-aai/foca/blob/chart-v0.2.0/docs/helm-chart.md)).
+documentation](https://github.com/elixir-cloud-aai/foca/blob/chart-v0.4.0/docs/helm-chart.md)).
 The chart in the repository downloads the library chart with `helm
 dependency build` (see [Installation](#installation)).
 
@@ -280,6 +280,7 @@ never appear in values files or ConfigMaps.
 | `mongodb.auth.existingSecret` (required, unless `mongodb.auth.enabled` is false) | `root-username`, `root-password` (bundled MongoDB only), `username`, `password` | MongoDB; the app and the worker (`MONGO_USERNAME`, `MONGO_PASSWORD`) |
 | `broker.existingSecret` (required) | `broker-url`, optionally `result-backend`; `username`, `password` (bundled RabbitMQ only) | RabbitMQ; the app, the worker and Flower (`CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`) |
 | `flower.existingSecret` (if `flower.enabled`) | `basic-auth` (`<user>:<password>`) | Flower (`FLOWER_BASIC_AUTH`) |
+| `pluginStore.existingSecret` (optional) | `store-key-secret` | the app and the worker (`FOCA_PLUGINS_STORE_KEY_SECRET`, the key of the hashes that plugins store) |
 | any, via `protes.extraEnv` | any | the app and the worker |
 
 `protes.extraEnv` adds environment variables to the app's and the worker's
@@ -308,6 +309,16 @@ protes:
         name: protes-tes-credentials
         key: client-secret
 ```
+
+Set `pluginStore.existingSecret` if plugins keep their store in the
+database and it holds personal data: `ctx.store.key_for()` then keys its
+hashes with the secret, which FOCA reads from
+`FOCA_PLUGINS_STORE_KEY_SECRET`. This needs an image on FOCA 0.20 or later:
+earlier ones ignore the variable, and keep plain hashes. Rendering fails if
+`config.plugins.defaults.store.key_secret` is set, as `config` is a
+ConfigMap, and if `protes.extraEnv` sets the variable. Changing, adding or removing the secret makes the entries keyed
+with `key_for()` unreachable; restart the app's and the worker's pods
+together.
 
 Helm does not restart pods when a Secret changes (only when the config
 changes), as the chart does not manage the Secrets: restart them after
@@ -356,7 +367,7 @@ kubectl get pods -n <namespace> -l app.kubernetes.io/instance=protes
 
 The chart exposes the app for `hostName` in one of three ways (see
 [Exposing the
-app](https://github.com/elixir-cloud-aai/foca/blob/chart-v0.2.0/docs/helm-chart.md#exposing-the-app) in
+app](https://github.com/elixir-cloud-aai/foca/blob/chart-v0.4.0/docs/helm-chart.md#exposing-the-app) in
 the library chart's documentation for TLS, body size and rate limits,
 NetworkPolicy peers and keep-alive settings of ingress-nginx, Traefik, the
 Gateway API, OpenShift and cloud load balancers):
@@ -479,7 +490,7 @@ change the password later, change it in the Secret and in RabbitMQ
 <namespace> -- rabbitmqctl change_password protes`), then restart the app,
 the worker and Flower. For an external broker, set `broker.enabled: false`
 and only `broker.existingSecret` (with `broker-url`). See [Deployment
-notes](https://github.com/elixir-cloud-aai/foca/blob/chart-v0.2.0/docs/helm-chart.md#deployment-notes)
+notes](https://github.com/elixir-cloud-aai/foca/blob/chart-v0.4.0/docs/helm-chart.md#deployment-notes)
 of the library chart for the persistence of queued tasks and the result
 backend (key `result-backend`; by default `jobs.backend` of the config).
 
@@ -562,7 +573,7 @@ them allows.
   There are none by default, as they depend on the cluster: when enabling
   the policy, set them to the pods of the cluster's ingress controller,
   Gateway or OpenShift router (see [NetworkPolicy
-  peers](https://github.com/elixir-cloud-aai/foca/blob/chart-v0.2.0/docs/helm-chart.md#networkpolicy-peers)
+  peers](https://github.com/elixir-cloud-aai/foca/blob/chart-v0.4.0/docs/helm-chart.md#networkpolicy-peers)
   in the library chart's documentation), and add other clients in the
   cluster that call the app's Service directly; otherwise, the app is
   unreachable through the Ingress (or Route). Rendering fails if the
@@ -609,12 +620,27 @@ local host only; to trust those of the ingress controller, set its pods'
 addresses in `FORWARDED_ALLOW_IPS` via `protes.extraEnv` (never `*` if
 clients can reach the app's pods directly).
 
+## Several replicas
+
+`protes.replicas` (default: 1) sets the number of the app's pods; the
+worker has its own, `worker.replicas`. With more than one, the chart renders
+a PodDisruptionBudget, so that voluntary disruptions (e.g., node drains)
+evict at most one pod at once; set `protes.podDisruptionBudget.minAvailable`
+or `maxUnavailable` to change that, or `enabled: false` to render none.
+Task state is kept in MongoDB. Plugins that cache per process don't share
+their caches between pods, and the plugin store's secret must be the same
+in all of them. See [Several
+replicas](https://github.com/elixir-cloud-aai/foca/blob/chart-v0.4.0/docs/helm-chart.md#several-replicas)
+in FOCA's docs for the caveats.
+
 ## Probes
 
 - **App:** ready once it serves its Swagger UI (`/ga4gh/tes/v1/ui/`; it
   needs neither authentication nor the database; set `protes.probePath` if
   the config disables the Swagger UI); up to 5 minutes are allowed for the
-  start.
+  start. `protes.startupProbe`, `protes.readinessProbe` and
+  `protes.livenessProbe` (Kubernetes probe specs) each replace a default
+  entirely.
 - **Worker:** no probes by default (`worker.readinessProbe`,
   `worker.livenessProbe`), e.g., an `exec` probe with `celery --app
   pro_tes.celery_worker inspect ping`, with long periods and timeouts, as it
@@ -671,7 +697,7 @@ the app user gets access to it too, for new databases; for existing ones,
 grant it with `mongosh` as the root user. Changing the Secret does not change
 the users: change a password in MongoDB first, then in the Secret, and
 restart the app and the worker. See [Deployment
-notes](https://github.com/elixir-cloud-aai/foca/blob/chart-v0.2.0/docs/helm-chart.md#deployment-notes)
+notes](https://github.com/elixir-cloud-aai/foca/blob/chart-v0.4.0/docs/helm-chart.md#deployment-notes)
 of the library chart for creating the users of an existing database.
 
 ### Persistence
