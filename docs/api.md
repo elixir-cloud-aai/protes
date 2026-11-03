@@ -1,8 +1,8 @@
 # API
 
 proTES implements the [GA4GH Task Execution Service (TES)
-API](https://github.com/ga4gh/task-execution-schemas), version 1.0
-([specification](https://github.com/elixir-cloud-aai/protes/blob/dev/pro_tes/api/9e9c5aa.task_execution_service.openapi.yaml)),
+API](https://github.com/ga4gh/task-execution-schemas), version 1.1
+([specification](https://github.com/elixir-cloud-aai/protes/blob/dev/pro_tes/api/20221114.117cd92.task_execution_service.openapi.yaml)),
 at `/ga4gh/tes/v1/`. A deployment's Swagger UI (`/ga4gh/tes/v1/ui/`) shows
 the endpoints and lets you try them; the specification is served at
 `/ga4gh/tes/v1/openapi.json`. All endpoints except `GET /service-info`, the
@@ -13,12 +13,12 @@ control](access-control.md)).
 | --- | --- |
 | `GET /service-info` | The service info of the deployment (see [Service info](configuration.md#service-info)). |
 | `POST /tasks` | Create a task: proTES forwards it to a TES instance (see [Tasks](#tasks)) and returns its own identifier of the task. |
-| `GET /tasks` | List the caller's tasks, newest first, one page at a time (`page_size`, at most `max_page_size` of the [config](configuration.md#tasks), and `max_page_size_full` for the view `FULL`; `page_token` from `next_page_token` of the previous page, which is empty on the last page), optionally only those whose name starts with `name_prefix` (taken literally; matched against the name of the task as submitted, before plugins may have renamed it). |
+| `GET /tasks` | List the caller's tasks, newest first, one page at a time (`page_size`, at most `max_page_size` of the [config](configuration.md#tasks), and `max_page_size_full` for the view `FULL`; `page_token` from `next_page_token` of the previous page, which is empty on the last page), optionally only those whose name starts with `name_prefix` (taken literally; matched against the name of the task as submitted, before plugins may have renamed it), by `state`, or by tags (`tag_key` and `tag_value`, in pairs, taken literally: a key without a value, or with an empty one, matches any value of that tag; a task must match all pairs; more values than keys are rejected with `400 Bad Request`). |
 | `GET /tasks/{id}` | Get a task of the caller, with its state as last tracked from the TES instance. |
 | `GET /tasks/{id}/provenance` | proTES extension: get the provenance of a task, for its owner and for admins (see [Provenance](#provenance)). |
 | `GET /plugins` | proTES extension (FOCA's plugin listing): list the plugins and presets that the caller may choose for its tasks, and the limits, for users; the default pipeline only for callers who may choose pipelines (see [Choices of clients](plugins.md#choices-of-clients)). |
 | `GET /plugins/{plugin_id}` | proTES extension: describe a plugin that the caller may choose (`404 Not Found` otherwise). |
-| `POST /tasks/{id}:cancel` | Cancel a task of the caller that has not finished yet (also in state `UNKNOWN`, e.g., not tracked yet), at the TES instance that runs it; finished tasks are left as they are, also tasks that finish while they are canceled (their final state is kept). Unfinished tasks whose identifier at their TES instance is unknown (e.g., while they are being forwarded, or if forwarding failed unexpectedly) can't be canceled (`409 Conflict`). |
+| `POST /tasks/{id}:cancel` | Cancel a task of the caller that has not finished yet (also in state `UNKNOWN`, e.g., not tracked yet), at the TES instance that runs it; the task is then in state `CANCELING` until the TES instance reports its final state (usually `CANCELED`); finished tasks are left as they are, also tasks that finish while they are canceled (their final state is kept). Unfinished tasks whose identifier at their TES instance is unknown (e.g., while they are being forwarded, or if forwarding failed unexpectedly) can't be canceled (`409 Conflict`). |
 
 Only the owner of a task, the user who created it, can read and cancel it
 (see [Task ownership](access-control.md#task-ownership)). Admins can manage

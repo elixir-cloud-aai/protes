@@ -5,6 +5,7 @@ from contextlib import suppress
 from copy import deepcopy
 from dataclasses import replace
 from functools import cached_property
+from itertools import zip_longest
 import logging
 import re
 from typing import Any, NamedTuple
@@ -86,6 +87,40 @@ logger = logging.getLogger(__name__)
 
 # view of `GET /tasks` and `GET /tasks/{id}` if none is given, as in the spec
 DEFAULT_VIEW = "MINIMAL"
+
+
+def tags_filter(keys: list[str], values: list[str]) -> dict[str, Any]:
+    """Get the database filter of the tag filters of `GET /tasks` (TES 1.1).
+
+    Keys and values are zipped, in order: a missing or empty value matches
+    any value of the tag, also an empty one. Tag keys are taken literally by
+    `$getField` (MongoDB 5.0 or later): they may contain dots (e.g.,
+    `gateway.backend`) and start with `$`, unlike the keys of dotted paths.
+
+    Args:
+        keys: Keys of the tags (`tag_key`).
+        values: Values of the tags (`tag_value`).
+
+    Returns:
+        The filter; empty without keys.
+
+    Raises:
+        pro_tes.exceptions.BadRequest: There are more values than keys, or a
+            key or value has null characters.
+    """
+    if len(values) > len(keys):
+        raise BadRequest("More values (`tag_value`) than keys (`tag_key`) of tags")
+    if any("\x00" in item for item in (*keys, *values)):
+        raise BadRequest("Invalid tag filter: null character")
+    conditions: list[dict[str, Any]] = []
+    for key, value in zip_longest(keys, values, fillvalue=""):
+        tag = {"$getField": {"field": {"$literal": key}, "input": "$task.tags"}}
+        conditions.append(
+            {"$eq": [tag, {"$literal": value}]}
+            if value
+            else {"$eq": [{"$type": tag}, "string"]}
+        )
+    return {"$expr": {"$and": conditions}} if conditions else {}
 
 
 def _creation_tags(run: PipelineRun, provenance_path: str) -> dict[str, str]:
@@ -645,13 +680,13 @@ class TaskRuns:
 
         Returns:
             Response object according to TES API schema . Cf.
-            https://github.com/ga4gh/task-execution-schemas/blob/9e9c5aa2648d683d5574f9dbd63a025b4aea285d/openapi/task_execution_service.openapi.yaml;
+            https://github.com/ga4gh/task-execution-schemas/blob/117cd927aa119469ee80cedbd8940c968b81c5d6/openapi/task_execution_service.openapi.yaml;
             only the tasks that the user owns are listed (also for admins),
             newest first, and `next_page_token` is empty on the last page.
 
         Raises:
             pro_tes.exceptions.BadRequest: The page size is not positive, or
-                the page token is invalid.
+                the page token or the tag filters are invalid.
         """
         view = kwargs.get("view", DEFAULT_VIEW)
         page_size = self._page_size(page_size=kwargs.get("page_size"), view=view)
@@ -674,6 +709,16 @@ class TaskRuns:
                 raise BadRequest("Invalid name prefix: null character")
             pattern = "^" + re.escape(name_prefix)
             filter_dict["task_original.name"] = {"$regex": pattern}
+
+        # validated by the specification; what clients get back, as for tags
+        state = kwargs.get("state")
+        if state is not None:
+            filter_dict["task.state"] = state
+        filter_dict.update(
+            tags_filter(
+                keys=kwargs.get("tag_key") or [], values=kwargs.get("tag_value") or []
+            )
+        )
 
         # one more task than the page size tells whether there is a next
         # page; documents are processed one by one, as the cursor yields them
@@ -711,7 +756,7 @@ class TaskRuns:
 
         Returns:
             Response object according to TES API schema . Cf.
-                https://github.com/ga4gh/task-execution-schemas/blob/9e9c5aa2648d683d5574f9dbd63a025b4aea285d/openapi/task_execution_service.openapi.yaml
+                https://github.com/ga4gh/task-execution-schemas/blob/117cd927aa119469ee80cedbd8940c968b81c5d6/openapi/task_execution_service.openapi.yaml
 
         Raises:
             pro_tes.exceptions.TaskNotFound: The requested task is not
@@ -755,10 +800,11 @@ class TaskRuns:
 
         Only owners of the task may cancel it (enforced by the policies).
         Tasks that have not finished (also those in state `UNKNOWN`, e.g.,
-        not tracked yet) are canceled at their TES instance; finished tasks
-        and tasks being canceled are left as they are, also if their state
-        changed while they were canceled (e.g., a final state stored by
-        their tracking).
+        not tracked yet) are canceled at their TES instance, and are then in
+        state `CANCELING`, until their tracking stores the final state that
+        their TES instance reports; finished tasks and tasks being canceled
+        are left as they are, also if their state changed while they were
+        canceled (e.g., a final state stored by their tracking).
 
         Args:
             id: Task identifier.
@@ -819,16 +865,15 @@ class TaskRuns:
                 base_path=db_document.tes_endpoint.base_path,
             )
             cli.cancel_task(task_id=task_id)
-            # unless tracking stored a final state meanwhile: the backend
-            # may accept cancels of finished tasks (as no-ops); a stored
-            # `CANCELING` (the backend confirmed the cancel) becomes
-            # `CANCELED`, which tracking keeps until the task is final
+            # unless tracking stored another state meanwhile: the backend
+            # may accept cancels of finished tasks (as no-ops); tracking keeps
+            # `CANCELING` until the task is final
             if db_connector.update_task_state(
-                state="CANCELED",
-                if_state=States.TO_CANCEL + States.CANCELING,
+                state=TesState.CANCELING.value,
+                if_state=States.TO_CANCEL,
             ):
                 logger.info(
-                    "Task '%s' with worker ID '%s' canceled.",
+                    "Task '%s' with worker ID '%s' being canceled.",
                     id,
                     db_document.worker_id,
                 )

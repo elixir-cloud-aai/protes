@@ -75,7 +75,7 @@ def test_service_info(client: FlaskClient) -> None:
     assert service_info["type"] == {
         "group": "org.ga4gh",
         "artifact": "tes",
-        "version": "1.0.0",
+        "version": "1.1.0",
     }
     assert service_info["id"] == "org.example.protes"
     assert service_info["organization"] == {

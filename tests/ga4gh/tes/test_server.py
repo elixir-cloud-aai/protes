@@ -31,7 +31,7 @@ from pro_tes.ga4gh.tes import ownership, server, task_runs
 from pro_tes.ga4gh.tes.models import DbDocument, TesTask
 from pro_tes.tasks import track_task_progress
 from pro_tes.utils.db import DbDocumentConnector
-from tests.conftest import DB, OTHER_USER, USER
+from tests.conftest import DB, MONGODB_TEST_URI, OTHER_USER, USER
 from tests.ga4gh.tes.conftest import (
     BACKENDS,
     BASE_PATH,
@@ -392,7 +392,7 @@ def test_cancel_task(
     response = client.get(
         f"{BASE_PATH}/tasks/{task_id}", query_string={"view": "MINIMAL"}
     )
-    assert response.get_json()["state"] == "CANCELED"
+    assert response.get_json()["state"] == "CANCELING"
 
 
 def test_create_task_state_stored(
@@ -410,7 +410,7 @@ def test_cancel_task_after_create(
     assert response.status_code == 200
     assert backend.canceled == ["remote-1"]
     response = client.get(f"{BASE_PATH}/tasks/{task_id}")
-    assert response.get_json()["state"] == "CANCELED"
+    assert response.get_json()["state"] == "CANCELING"
 
 
 def test_cancel_task_unknown_state(
@@ -423,7 +423,7 @@ def test_cancel_task_unknown_state(
     set_state(mongo_client, task_id, "UNKNOWN")
     assert client.post(f"{BASE_PATH}/tasks/{task_id}:cancel").status_code == 200
     assert backend.canceled == ["remote-1"]
-    assert stored(mongo_client, task_id)["task"]["state"] == "CANCELED"
+    assert stored(mongo_client, task_id)["task"]["state"] == "CANCELING"
 
 
 @pytest.mark.parametrize("state", ["COMPLETE", "EXECUTOR_ERROR", "CANCELED"])
@@ -1107,7 +1107,7 @@ def test_cancel_task_remote_id_stored_meanwhile(
     assert response.status_code == 200
     assert calls == [task_id, task_id]
     assert len(backend.canceled) == 1
-    assert stored(mongo_client, task_id)["task"]["state"] == "CANCELED"
+    assert stored(mongo_client, task_id)["task"]["state"] == "CANCELING"
 
 
 @pytest.mark.parametrize(
@@ -1118,8 +1118,8 @@ def test_cancel_task_remote_id_stored_meanwhile(
         ("SYSTEM_ERROR", "SYSTEM_ERROR"),
         ("PREEMPTED", "PREEMPTED"),
         ("CANCELED", "CANCELED"),
-        # the backend confirmed the cancel: tracking keeps `CANCELED`
-        ("CANCELING", "CANCELED"),
+        # the backend confirmed the cancel: tracking stores the final state
+        ("CANCELING", "CANCELING"),
     ],
 )
 def test_cancel_task_finished_meanwhile(
@@ -1134,8 +1134,7 @@ def test_cancel_task_finished_meanwhile(
     """Final states stored while tasks are canceled at their backend are kept.
 
     E.g., if a poll stored the final state reported by the backend after the
-    task was read, and the backend accepts cancels of finished tasks; a
-    stored `CANCELING` becomes `CANCELED`.
+    task was read, and the backend accepts cancels of finished tasks.
     """
     set_state(mongo_client, task_id, "RUNNING")
     cancel_task = backend.cancel_task
@@ -1723,3 +1722,90 @@ def test_task_owner_partly_granted(
     assert granted
     assert mongo_client[DB]["policy_rules"].count_documents({"ptype": "g2"}) == 0
     assert mongo_client[DB]["tasks"].count_documents({}) == 0
+
+
+@pytest.mark.parametrize(
+    ("keys", "values", "conditions"),
+    [
+        ([], [], None),
+        (["a"], [], [{"$eq": [{"$type": "TAG"}, "string"]}]),
+        (["a"], [""], [{"$eq": [{"$type": "TAG"}, "string"]}]),
+        (["a"], ["$b"], [{"$eq": ["TAG", {"$literal": "$b"}]}]),
+    ],
+)
+def test_tags_filter(
+    keys: list[str], values: list[str], conditions: list[dict[str, Any]] | None
+) -> None:
+    """Tag filters are zipped, literal, and match any value without a value."""
+    tag = {"$getField": {"field": {"$literal": "a"}, "input": "$task.tags"}}
+    built = task_runs.tags_filter(keys, values)
+    if conditions is None:
+        assert built == {}
+        return
+    expected = str(conditions).replace("'TAG'", str(tag))
+    assert str(built["$expr"]["$and"]) == expected
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        {"tag_value": "a"},
+        {"tag_key": ["a"], "tag_value": ["b", "c"]},
+        {"tag_key": "a\x00"},
+        {"tag_key": "a", "tag_value": "b\x00"},
+        {"state": "NOT_A_STATE"},
+    ],
+)
+def test_list_tasks_invalid_filters(client: FlaskClient, query: dict[str, Any]) -> None:
+    """Invalid filters of task lists are rejected."""
+    response = client.get(f"{BASE_PATH}/tasks", query_string=query)
+    assert response.status_code == 400
+
+
+def test_list_tasks_state(
+    client: FlaskClient, task_id: str, mongo_client: MongoClient[dict[str, Any]]
+) -> None:
+    """Tasks are filtered by their state."""
+    assert list_tasks(client, state="QUEUED")["tasks"][0]["id"] == task_id
+    assert list_tasks(client, state="RUNNING")["tasks"] == []
+    set_state(mongo_client, task_id, "PREEMPTED")
+    assert list_tasks(client, state="PREEMPTED")["tasks"][0]["id"] == task_id
+
+
+@pytest.mark.skipif(
+    not MONGODB_TEST_URI, reason="mongomock doesn't implement `$getField`"
+)
+@pytest.mark.parametrize(
+    ("query", "names"),
+    [
+        ({"tag_key": "a"}, ["both", "only-a", "empty"]),
+        ({"tag_key": "a", "tag_value": ""}, ["both", "only-a", "empty"]),
+        ({"tag_key": "a", "tag_value": "1"}, ["both", "only-a"]),
+        ({"tag_key": "a", "tag_value": "2"}, []),
+        ({"tag_key": ["a", "b.c"], "tag_value": ["1", "2"]}, ["both"]),
+        ({"tag_key": ["b.c", "a"], "tag_value": ["2"]}, ["both"]),
+        ({"tag_key": "$a"}, ["dollar"]),
+        ({"tag_key": "$a", "tag_value": "$a"}, ["dollar"]),
+        ({"tag_key": "$a", "tag_value": "$task.name"}, []),
+        ({"tag_key": "gateway.backend", "tag_value": "none"}, []),
+    ],
+)
+def test_list_tasks_tags(
+    client: FlaskClient,
+    backend: type[FakeBackend],
+    query: dict[str, Any],
+    names: list[str],
+) -> None:
+    """Tags match as in the table of the specification, with literal keys."""
+    tasks = {
+        "both": {"a": "1", "b.c": "2"},
+        "only-a": {"a": "1"},
+        "empty": {"a": ""},
+        "dollar": {"$a": "$a"},
+        "no-tags": None,
+    }
+    for name, tags in tasks.items():
+        task = {**TASK, "name": name, **({} if tags is None else {"tags": tags})}
+        assert client.post(f"{BASE_PATH}/tasks", json=task).status_code == 200
+    listed = list_tasks(client, view="BASIC", **query)["tasks"]
+    assert sorted(task["name"] for task in listed) == sorted(names)

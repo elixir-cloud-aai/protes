@@ -167,14 +167,17 @@ def _store_state(
         collection: Database collection of the tasks.
         worker_id: Worker identifier of the task.
         state: State of the task.
-        keep_canceled: Whether a stored `CANCELED` is kept: backends cancel
-            tasks asynchronously, and may report them as running (or be
-            unreachable) for a while; also if the task is canceled while it
-            is polled.
+        keep_canceled: Whether a stored cancelation (`CANCELING`, or
+            `CANCELED` of tasks stored by earlier versions) is kept: backends
+            cancel tasks asynchronously, and may report them as running (or
+            be unreachable) for a while; also if the task is canceled while
+            it is polled.
     """
     query: dict[str, Any] = {"worker_id": worker_id}
     if keep_canceled:
-        query["task.state"] = {"$ne": TesState.CANCELED.value}
+        query["task.state"] = {
+            "$nin": [TesState.CANCELED.value, TesState.CANCELING.value]
+        }
     result = collection.update_one(query, {"$set": {"task.state": state}})
     if result.modified_count:
         logger.info("[%s] %s", worker_id, state)
@@ -314,7 +317,7 @@ def task__track_task_progress(
 ) -> None:
     """Poll a task at its TES backend once, and schedule the next poll.
 
-    The state is stored if it changed (a stored `CANCELED` only once the
+    The state is stored if it changed (a stored cancelation only once the
     backend has finished the task); once the task is finished, its logs and
     outputs are stored, and tracking ends. Failed polls are retried, also if
     the backend is not (or no longer) configured or discovered; after

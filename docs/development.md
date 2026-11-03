@@ -235,6 +235,22 @@ the links to the library's docs in `deployment/README.md` (the tests check
 that they point to the pinned version, `chart-vX.Y.Z`), and check the
 rendered chart with the tests and `helm template`.
 
+## TES specification
+
+The TES specification is vendored as
+`pro_tes/api/<date>.<commit>.task_execution_service.openapi.yaml`, with the
+date and the short hash of the commit of the upstream
+[tag](https://github.com/ga4gh/task-execution-schemas/tags), unchanged but for
+commented deviations (the references to the schemas of the service info, which
+`additions.openapi.yaml` holds, and which would otherwise be fetched at
+startup); the extensions of proTES go into `additions.openapi.yaml`. To update
+it, replace the file, change `api.specs.tes.path` and
+`service_info.service.type.version` in `pro_tes/config.yaml`, the paths in
+`.editorconfig` and `.pre-commit-config.yaml`, and the link in `docs/api.md`,
+and follow the changes in the models (`pro_tes/ga4gh/tes/models.py`, kept by
+hand, as generating them would undo manual fixes).
+`tests/ga4gh/tes/test_contract.py` checks responses against the file.
+
 ## Documentation
 
 This documentation is built with [MkDocs](https://www.mkdocs.org/) and
