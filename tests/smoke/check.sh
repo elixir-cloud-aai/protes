@@ -92,6 +92,8 @@ check GET '/tasks?view=MINIMAL&tag_key=smoke.key&tag_value=a%2Cb' 200 \
   "any(.tasks[]; .id == \"${id}\")"
 check GET '/tasks?view=MINIMAL&tag_key=smoke.key&tag_value=a' 200 \
   "all(.tasks[]; .id != \"${id}\")"
+check GET '/tasks?view=MINIMAL&tag_key=smoke.other&tag_value=a%2Cb' 200 \
+  "all(.tasks[]; .id != \"${id}\")"
 check GET '/tasks?view=MINIMAL&tag_key=gateway.backend&tag_value=http://fake-tes:8080' 200 \
   "any(.tasks[]; .id == \"${id_11}\") and all(.tasks[]; .id != \"${id}\")"
 # Canceled tasks are `CANCELING` until their backend reports the final state

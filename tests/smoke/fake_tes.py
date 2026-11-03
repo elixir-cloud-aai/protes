@@ -77,12 +77,19 @@ def fields_of_tes_11(task: dict[str, Any]) -> list[str]:
     Returns:
         The names of the fields, as TESK rejects them.
     """
-    items = (
-        [(item, ("ignore_error",)) for item in task.get("executors") or []]
-        + [(item, ("streamable",)) for item in task.get("inputs") or []]
-        + [(item, ("path_prefix",)) for item in task.get("outputs") or []]
-    )
-    return [name for item, names in items for name in names if name in item]
+    items = [(item, ("ignore_error",)) for item in task.get("executors") or []]
+    items += [(item, ("streamable",)) for item in task.get("inputs") or []]
+    items += [(item, ("path_prefix",)) for item in task.get("outputs") or []]
+    items += [
+        (
+            task.get("resources") or {},
+            ("backend_parameters", "backend_parameters_strict"),
+        )
+    ]
+    found = [name for item, names in items for name in names if name in item]
+    # required in TES 1.0
+    files = (task.get("inputs") or []) + (task.get("outputs") or [])
+    return found + ["no type" for item in files if "type" not in item]
 
 
 class Handler(BaseHTTPRequestHandler):
