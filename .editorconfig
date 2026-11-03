@@ -29,7 +29,7 @@ trim_trailing_whitespace = false
 
 # Vendored GA4GH specifications are kept as published (as in the pre-commit
 # hooks)
-[pro_tes/api/9e9c5aa.*]
+[pro_tes/api/20221114.117cd92.*]
 charset = unset
 end_of_line = unset
 insert_final_newline = unset

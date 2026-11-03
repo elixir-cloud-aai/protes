@@ -243,7 +243,17 @@ class TesOutput(CustomBaseModel):
         ...,
         description=(
             "Path of the file inside the container.\nMust be an            "
-            " absolute path."
+            " absolute path. May contain wildcards (POSIX), to select"
+            " several outputs at once."
+        ),
+    )
+    path_prefix: str | None = Field(
+        default=None,
+        description=(
+            "Prefix to be removed from matching outputs if `path` contains"
+            " wildcards; output URLs are constructed by appending pruned paths"
+            " to the directory specified in `url`. Required if `path` contains"
+            " wildcards, ignored otherwise."
         ),
     )
     type: TesFileType | None = TesFileType.FILE

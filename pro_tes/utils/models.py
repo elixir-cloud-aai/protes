@@ -93,6 +93,7 @@ class TaskModelConverter:
                     description=_input.description,
                     name=_input.name,
                     content=_input.content,
+                    streamable=_input.streamable,
                 )
                 for _input in self.task.inputs
             ]
@@ -111,6 +112,7 @@ class TaskModelConverter:
                 TesOutput(
                     url=_output.url,
                     path=_output.path,
+                    path_prefix=_output.path_prefix,
                     type=TesFileType[_output.type],
                     name=_output.name,
                     description=_output.description,
@@ -134,6 +136,10 @@ class TaskModelConverter:
                 disk_gb=self.task.resources.disk_gb,
                 preemptible=self.task.resources.preemptible,
                 zones=self.task.resources.zones,
+                backend_parameters=self.task.resources.backend_parameters,
+                backend_parameters_strict=(
+                    self.task.resources.backend_parameters_strict
+                ),
             )
         return resources
 

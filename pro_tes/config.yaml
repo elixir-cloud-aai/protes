@@ -142,7 +142,7 @@ api:
   specs:
     tes:
       path:
-        - api/9e9c5aa.task_execution_service.openapi.yaml
+        - api/20221114.117cd92.task_execution_service.openapi.yaml
         - api/additions.openapi.yaml
         - api/security_schemes.yaml
       add_operation_fields:
@@ -207,7 +207,7 @@ service_info:
     type:
       group: org.ga4gh
       artifact: tes
-      version: 1.0.0
+      version: 1.1.0
     description: >-
       Proxy for GA4GH Task Execution Service (TES) instances, distributing
       tasks across them.
