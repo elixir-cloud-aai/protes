@@ -147,6 +147,37 @@ proxy's timeout) for long lists of unreliable TES instances.
 Requests in flight when an instance of proTES stops are cut off after
 Gunicorn's graceful timeout (20 seconds in the chart).
 
+### TES versions
+
+proTES serves TES 1.1, and relays tasks to TES instances of TES 1.0 and 1.1.
+It needs to know which one each TES instance implements: the label `tes.version` of its entry (`"1.0"` or `"1.1"`;
+other values make the app refuse to start) wins; otherwise, proTES reads
+`GET <url>/ga4gh/tes/v1/service-info`, with its credentials for the TES
+instance and a timeout of 5 seconds, and caches the result per process for
+`custom.tes.version_cache_ttl` seconds (default: 3600; failures for 60
+seconds). It reads `type.version` leniently (e.g., `TES`, `1.0`, `v1.1.0`), if
+`type.group` is `org.ga4gh` and `type.artifact` is `tes`. A TES instance that
+reports no version that proTES supports, or doesn't answer, counts as TES 1.0
+(with a warning in the logs).
+
+**Set the label for Funnel:** Funnel implements TES 1.1, but reports its own
+version as `type.version`:
+
+```yaml
+custom:
+  tes:
+    backends:
+      - type: ga4gh-tes
+        url: https://funnel.example.org
+        auth: none
+        labels:
+          tes.version: "1.1"
+```
+
+The label of a registry entry applies to all TES instances that it discovers.
+To tell the versions in a registry apart, use one entry per version, with its
+`versions` and label (`versions: ["1.1"]` and `tes.version: "1.1"`).
+
 ### Discovery in a service registry
 
 proTES can also take TES instances from service registries implementing the

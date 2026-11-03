@@ -329,6 +329,10 @@ custom:
     # backends) below the read timeout of a reverse proxy in front of proTES
     # (see `docs/configuration.md`)
     timeout: 15
+    # Seconds that the TES version of a backend, as read from its service
+    # info, is cached per process; backends can state it instead, with the
+    # label `tes.version` (see `docs/configuration.md`)
+    version_cache_ttl: 3600
   # Whether the service info, which anyone can read, lists the TES backends
   # (`backends`); its field `gateway` stays either way
   service_info:
