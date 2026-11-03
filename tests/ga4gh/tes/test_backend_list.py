@@ -19,6 +19,7 @@ from foca.plugins import OutboundRequest
 from foca.plugins.backends import BackendListConfig, registry
 from foca.utils import http
 from foca.utils.http import AddressNotAllowed, HostNotResolved
+from pydantic import ValidationError
 import pytest
 import requests
 import tes
@@ -270,6 +271,19 @@ def test_service_info_fields(discovering: FakeRegistry) -> None:
     }
 
 
+def test_service_info_fields_hidden(
+    discovering: FakeRegistry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hidden backends are left out, `gateway` stays, no registry is read."""
+    discovering.add("a", "https://tes1.example.org")
+    monkeypatch.setattr(
+        get_custom_config(CustomConfig).service_info, "list_backends", False
+    )
+    fields = backends.service_info_fields()
+    assert set(fields) == {"gateway"}
+    assert not discovering.reads
+
+
 def test_service_info(client: FlaskClient) -> None:
     """`GET /service-info` lists the backends of the test overlay."""
     response = client.get(f"{BASE_PATH}/service-info")
@@ -277,6 +291,29 @@ def test_service_info(client: FlaskClient) -> None:
     assert [backend["url"] for backend in response.get_json()["backends"]] == [
         "https://tes.example.org"
     ]
+
+
+def test_service_info_hidden(
+    app: FlaskApp, client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`GET /service-info` hides the backends, and keeps the rest."""
+    with app.app.app_context():
+        monkeypatch.setattr(
+            get_custom_config(CustomConfig).service_info, "list_backends", False
+        )
+    response = client.get(f"{BASE_PATH}/service-info")
+    assert response.status_code == 200
+    body = response.get_json()
+    assert "backends" not in body
+    assert "gateway" in body
+    assert "https://tes.example.org" not in response.get_data(as_text=True)
+
+
+def test_service_info_config_default() -> None:
+    """Backends are listed by default; unknown keys are refused."""
+    assert CustomConfig().service_info.list_backends is True
+    with pytest.raises(ValidationError):
+        CustomConfig.model_validate({"service_info": {"backends": False}})
 
 
 def test_client_discovered(discovering: FakeRegistry) -> None:
