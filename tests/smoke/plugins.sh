@@ -2,7 +2,8 @@
 # Smoke test of the derived-image recipe for plugins (`docs/plugin-images.md`,
 # `examples/plugin-image/Dockerfile`), after `check.sh`: builds the wheel of
 # the test plugin (`plugin/`), pins it with the recipe's `resolve.sh` (and
-# checks that a wrong hash fails the build), builds the image derived from
+# downloads it with `download.sh`, and checks that a wrong hash fails the
+# build), builds the image derived from
 # the app's image with the recipe, restarts proTES and the Celery worker with
 # it and the plugin enabled (`plugins.yaml`), and checks that a new task gets
 # the plugin's tag. Run it from the repository
@@ -10,7 +11,8 @@
 # API as argument (default `http://localhost:8080/ga4gh/tes/v1`); the base
 # image is `PROTES_IMAGE` (default `protes:local`, built by Compose), the
 # derived one `PLUGIN_IMAGE` (default `protes:plugins`), and the wheel is
-# built with `PYTHON` (default `python3`, with pip). Needs curl, jq and
+# built with `PYTHON` (default `python3`, with pip; that of the runner, not
+# of the image). Needs curl, jq and
 # docker compose.
 set -euo pipefail
 
@@ -21,8 +23,9 @@ trap 'rm -rf "${context}"' EXIT
 
 base="${PROTES_IMAGE:-protes:local}"
 # The build context of the recipe: the wheel, and `plugins.txt`, which
-# `resolve.sh` pins against the base image, from the wheel's directory
-# instead of the package index
+# `resolve.sh` pins against the base image, with the wheel's directory in
+# addition to the package index, which has the dependencies (so it needs the
+# image's FOCA on the index, not a FOCA commit)
 "${PYTHON:-python3}" -m pip wheel --quiet --no-deps \
   --wheel-dir "${context}/wheels" tests/smoke/plugin
 wheels=("${context}"/wheels/*.whl)
@@ -30,24 +33,31 @@ hash="$(sha256sum "${wheels[0]}" | cut -d ' ' -f 1)"
 pin="protes-smoke-plugin==0.1.0 --hash=sha256:${hash}"
 echo "protes-smoke-plugin==0.1.0" > "${context}/plugins.in"
 examples/plugin-image/resolve.sh "${base}" "${context}/plugins.in" \
-  "${context}/plugins.txt" --env PIP_NO_INDEX=1 \
-  --env PIP_FIND_LINKS=/wheels --volume "${context}/wheels:/wheels:ro"
+  "${context}/plugins.txt" \
+  --env UV_FIND_LINKS=/local --volume "${context}/wheels:/local:ro"
 if [ "$(cat "${context}/plugins.txt")" != "${pin}" ]; then
   echo "::error::resolve.sh pinned '$(cat "${context}/plugins.txt")', expected '${pin}'"
   exit 1
 fi
+# The wheels of the build, downloaded as the recipe does, by their hashes
+mv "${context}/wheels" "${context}/local"
+examples/plugin-image/download.sh "${base}" "${context}/plugins.txt" \
+  "${context}/wheels" --env PIP_NO_INDEX=1 --env PIP_FIND_LINKS=/local \
+  --volume "${context}/local:/local:ro"
+cmp "${context}/local/$(basename "${wheels[0]}")" \
+  "${context}/wheels/$(basename "${wheels[0]}")"
 build() {
   docker build --file examples/plugin-image/Dockerfile \
     --build-arg PROTES_IMAGE="${base}" "$@" "${context}"
 }
-# The build fails if a hash differs (pip's message)
+# The build fails if a hash differs (uv's message)
 cp "${context}/plugins.txt" "${context}/plugins.txt.pinned"
 sed -i "s/${hash}/$(printf '0%.0s' {1..64})/" "${context}/plugins.txt"
 if output="$(build --progress plain 2>&1)"; then
   echo "::error::Image built despite a wrong hash in plugins.txt"
   exit 1
 fi
-if ! grep -q "DO NOT MATCH THE HASHES" <<< "${output}"; then
+if ! grep -q "Hash mismatch" <<< "${output}"; then
   echo "::error::Build with a wrong hash failed for another reason: ${output}"
   exit 1
 fi

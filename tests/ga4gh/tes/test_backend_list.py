@@ -440,8 +440,8 @@ def test_client_private_allowed(rebinding: tuple[str, Listener]) -> None:
     [
         (HostNotResolved("x not resolved"), BackendAddressNotAllowed),
         (http.RequestNotSent("x not reached"), BackendRequestNotSent),
-        (http.InvalidRequest("x", reason="invalid_header"), requests.ConnectionError),
-        (http.InvalidRequestURL("x"), requests.ConnectionError),
+        (http.InvalidRequest("x", reason="invalid_header"), BackendRequestNotSent),
+        (http.InvalidRequestURL("x"), BackendRequestNotSent),
         (http.RequestMaybeSent("x", reason="read_timeout"), requests.ReadTimeout),
         (http.RequestMaybeSent("x lost"), requests.ConnectionError),
     ],
@@ -473,18 +473,16 @@ def test_client_guarded_errors(
 
 
 @pytest.mark.parametrize(
-    "cause, sent",
-    [(ssl.SSLCertVerificationError("bad certificate"), False), (ssl.SSLError(), None)],
+    "cause", [ssl.SSLCertVerificationError("bad certificate"), ssl.SSLError()]
 )
 def test_client_guarded_tls_error(
     discovering: FakeRegistry,
     monkeypatch: pytest.MonkeyPatch,
     cause: Exception,
-    sent: bool | None,
 ) -> None:
-    """Only refused certificates count as TLS errors before sending.
+    """TLS errors that FOCA reports as not sent allow trying other backends.
 
-    Other TLS errors may come after the request was sent (outcome unknown).
+    FOCA tells them from those after sending, which are `RequestMaybeSent`.
     """
     discovering.add("a", "https://tes1.example.org")
     client = backends.create_client(host="https://tes1.example.org")
@@ -498,12 +496,28 @@ def test_client_guarded_tls_error(
     request = OutboundRequest(
         backend=client.backend, method="POST", path="/ga4gh/tes/v1/tasks"
     )
-    if sent is False:
-        with pytest.raises(BackendRequestNotSent):
-            client.forward(request, tes.Task(executors=[]))
-    else:
-        with pytest.raises(BackendOutcomeUnknown):
-            client.forward(request, tes.Task(executors=[]))
+    with pytest.raises(BackendRequestNotSent):
+        client.forward(request, tes.Task(executors=[]))
+
+
+def test_client_guarded_tls_error_after_sending(
+    discovering: FakeRegistry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TLS errors after sending leave the outcome unknown."""
+    discovering.add("a", "https://tes1.example.org")
+    client = backends.create_client(host="https://tes1.example.org")
+
+    def fail(*args: Any, **kwargs: Any) -> Any:
+        """Fail with a TLS error, as the guarded client does after sending."""
+        raise http.RequestMaybeSent("lost") from ssl.SSLError()
+
+    assert client.guarded is not None
+    monkeypatch.setattr(client.guarded, "request", fail)
+    request = OutboundRequest(
+        backend=client.backend, method="POST", path="/ga4gh/tes/v1/tasks"
+    )
+    with pytest.raises(BackendOutcomeUnknown):
+        client.forward(request, tes.Task(executors=[]))
 
 
 @pytest.mark.parametrize(

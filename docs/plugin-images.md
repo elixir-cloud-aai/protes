@@ -34,11 +34,14 @@ the config (see [Plugins](plugins.md)): installed is not enabled.
     recipe](#testing-the-recipe)).
 
 The commands below run in a directory of their own (the build context),
-with Docker and [jq](https://jqlang.org/), and the files `resolve.sh`,
+with Docker and the files `resolve.sh`, `download.sh`, `common.sh`,
 `Dockerfile` and `Dockerfile.dockerignore` of `examples/plugin-image/` of
-the proTES repository (of the release that you build on), copied to the
-directory. pip runs inside the proTES image, so that the plugins are
-resolved for its Python version, platform and installed packages.
+the proTES
+repository (of the release that you build on), copied to the directory.
+The proTES image has no pip and no uv: the scripts and the `Dockerfile`
+mount uv, from the image pinned by digest in the `Dockerfile`, so that the
+plugins are resolved for the image's Python version, platform and installed
+packages, and uv never stays in an image.
 
 ## Base image
 
@@ -52,7 +55,7 @@ export PROTES_IMAGE=docker.io/elixircloud/protes:{{ version }}@sha256:<digest>
 
 ## Pinning plugins
 
-List the plugins in `plugins.in`, as pip requirements: single distributions
+List the plugins in `plugins.in`, as requirements: single distributions
 or a release train, e.g.:
 
 ```text
@@ -65,17 +68,18 @@ Resolve them against the image:
 ./resolve.sh "$PROTES_IMAGE" plugins.in plugins.txt
 ```
 
-`resolve.sh` runs pip inside the image, with the image's installed packages
-(`pip list`) as constraints, and writes the distributions that the image
-lacks (the plugins and their dependencies), with their exact versions and
-the hashes of their wheels, to `plugins.txt`. It uses pip's report of a dry
-run (`pip install --dry-run --report`) instead of tools such as
-`pip-compile`, as it resolves for the image's environment. Options of
-`docker run` follow the file names, e.g., `--env PIP_INDEX_URL=<index>` for
-another package index.
+`resolve.sh` runs `uv pip compile` inside the image, with the image's
+installed packages as constraints, and writes the distributions that the
+image lacks (the plugins and their dependencies), with their exact versions
+and the hashes of their wheels, to `plugins.txt`. Options of `docker run`
+follow the file names, e.g., `--env UV_DEFAULT_INDEX=<index>` for another
+package index, which must also serve the dependencies of the plugins that
+the image has (e.g., FOCA), as uv doesn't take them from the image. They go
+to the `docker run` that resolves, so run the scripts on the image's
+architecture: `--platform` doesn't work.
 
 The constraints keep the packages of the image as they are: `resolve.sh`
-fails (with pip's errors) and removes `plugins.txt` if a plugin needs other
+fails (with uv's errors) and removes `plugins.txt` if a plugin needs other
 versions of them (e.g., another FOCA version), or if a distribution can't be
 found; choose plugin versions that work with those of the image.
 Review `plugins.txt` and keep it, e.g., in the repository of your
@@ -87,12 +91,15 @@ the image has all the plugins already: skip the remaining steps.
 Download the wheels:
 
 ```bash
-docker run --rm --user "$(id -u):$(id -g)" --volume "$PWD:/work" --workdir /work "$PROTES_IMAGE" \
-  pip download --no-cache-dir --no-deps --only-binary :all: --require-hashes \
-    --requirement plugins.txt --dest wheels
+./download.sh "$PROTES_IMAGE" plugins.txt wheels
 ```
 
-pip checks the hashes of `plugins.txt`. Before the build, also check where
+`download.sh` runs pip for this one command, as uv has no download command:
+a version pinned in the script, without a hash check of its own, from uv's
+temporary environment, not from the image. Options of `docker run` follow
+the directory, e.g., `--env PIP_INDEX_URL=<index>` for the wheels and `--env
+UV_DEFAULT_INDEX=<index>` for pip itself. pip checks the hashes of
+`plugins.txt`, and the image build checks them again. Before the build, also check where
 the wheels come from: the plugins of foca-plugins are published with [PEP
 740](https://peps.python.org/pep-0740/) attestations and GitHub artifact
 attestations of their build provenance (see [Verifying
@@ -124,7 +131,7 @@ The `Dockerfile`:
 The build installs the wheels of `wheels/` that `plugins.txt` lists, and
 nothing else: without the package index and without further dependencies
 (`--no-index --no-deps --require-hashes`). It fails if a hash differs or a
-dependency of an installed distribution is missing (`pip check`). The image
+dependency of an installed distribution is missing (`uv pip check`). The image
 runs as user 1000, as that of proTES. Only `plugins.txt` and `wheels/` are
 sent to the build (`Dockerfile.dockerignore`), so that other files of the
 directory, e.g., `.env` files, never reach it.
@@ -168,13 +175,13 @@ wrong image fails at once, not with the first task.
 Rebuild the image for every release of proTES that you deploy, and resolve
 `plugins.in` against the new image again (see [Pinning
 plugins](#pinning-plugins)), as its packages change. Plugins declare the
-FOCA versions that they support (e.g., `foca>=0.19.0,<0.20`), so resolving
+FOCA versions that they support (e.g., `foca>=0.20.0,<0.21`), so resolving
 them against an image with another FOCA version fails.
 
 ## Local builds
 
-For development, the `Dockerfile` of proTES installs plugins given as pip
-requirements in the build argument `PLUGINS` (empty by default), from the
+For development, the `Dockerfile` of proTES installs plugins with uv, given
+as requirements in the build argument `PLUGINS` (empty by default), from the
 package index and with their dependencies; Docker Compose passes the host's
 `PLUGINS`:
 
@@ -195,6 +202,7 @@ index).
 The smoke test of CI (`tests/smoke/plugins.sh`, see
 [Development](development.md)) builds the image of the recipe from the app's
 image with a test plugin (`tests/smoke/plugin/`, which tags each new task),
-pinned by hash with `resolve.sh` (from a local directory instead of the
-package index), checks that a wrong hash fails the build, runs proTES with
+pinned by hash with `resolve.sh` and downloaded with `download.sh` (the
+plugin from a local directory, its dependencies from the package index, and
+pip itself too), checks that a wrong hash fails the build, runs proTES with
 it enabled, and checks that new tasks get its tag.

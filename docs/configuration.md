@@ -111,9 +111,11 @@ connection was lost after the request was sent, or it answered with a
 server error (5xx; gateways answer `502`, `503` or `504` also when the TES
 instance behind them got the request), the task is not sent to other TES
 instances, as it may run already: it fails with `SYSTEM_ERROR` (see
-[Tasks](api.md#tasks)). Other failures of TLS handshakes (e.g., an `https`
-URL of a plain HTTP port) and of proxies count as unknown outcomes too, so
-they stop the failover: check the URLs of the TES instances. Set the
+[Tasks](api.md#tasks)). For configured TES instances, other failures of TLS
+handshakes (e.g., an `https` URL of a plain HTTP port) and of proxies count
+as unknown outcomes too, so they stop the failover: check their URLs. For
+discovered ones, failed handshakes mean that nothing was sent, so that the
+next TES instance is tried. Set the
 timeout long enough for slow TES instances, but keep the duration of a
 request to create a task below the read timeout of a reverse proxy in front
 of proTES (e.g., 60 seconds by default for ingress-nginx): clients that
@@ -259,8 +261,7 @@ following hold:
   (FOCA's guarded HTTP client), so that hosts whose addresses change after
   the check (DNS rebinding) can't lead requests, and proTES's credentials,
   to such addresses. Requests to discovered TES instances don't follow
-  redirects, and their responses are limited to 64 MiB (except the bodies
-  of redirects, which FOCA 0.19 reads whole).
+  redirects, and their responses are limited to 64 MiB.
 
 The registry is read without access token (its reads are public), over a
 URL with a scheme of the entry's `url_schemes`, at public addresses (unless

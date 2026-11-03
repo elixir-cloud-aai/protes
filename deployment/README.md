@@ -232,7 +232,7 @@ Always`), so that moving tags such as `dev` deploy the latest image; set
 the nodes (e.g., with `kind load`). The images of MongoDB, RabbitMQ and
 Flower are pinned to patch versions and pulled only if missing.
 
-The chart needs images of its release, built with FOCA 0.19 (installed as a
+The chart needs images of its release, built with FOCA 0.20 (installed as a
 package, with the worker entry point `pro_tes.celery_worker`,
 `security.access_control.require_admin`, and the store settings of plugins,
 `plugins.available.<id>.store` and `config.plugins.defaults.store`, which
@@ -313,8 +313,7 @@ protes:
 Set `pluginStore.existingSecret` if plugins keep their store in the
 database and it holds personal data: `ctx.store.key_for()` then keys its
 hashes with the secret, which FOCA reads from
-`FOCA_PLUGINS_STORE_KEY_SECRET`. This needs an image on FOCA 0.20 or later:
-earlier ones ignore the variable, and keep plain hashes. Rendering fails if
+`FOCA_PLUGINS_STORE_KEY_SECRET`. Rendering fails if
 `config.plugins.defaults.store.key_secret` is set, as `config` is a
 ConfigMap, and if `protes.extraEnv` sets the variable. Changing, adding or removing the secret makes the entries keyed
 with `key_for()` unreachable; restart the app's and the worker's pods

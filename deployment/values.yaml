@@ -168,8 +168,7 @@ pluginStore:
   # secret of the plugin store (FOCA's `plugins.defaults.store.key_secret`),
   # passed to the app and the worker as `FOCA_PLUGINS_STORE_KEY_SECRET`; none
   # if empty. Set it if plugins keep their store in the database; changing it
-  # makes existing entries keyed with `ctx.store.key_for()` unreachable. Needs
-  # an image on FOCA 0.20 or later, as earlier ones ignore it (see
+  # makes existing entries keyed with `ctx.store.key_for()` unreachable (see
   # deployment/README.md, Secrets)
   existingSecret: ""
 

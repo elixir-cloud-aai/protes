@@ -28,8 +28,7 @@ checks the address of each connection itself, so that hosts whose addresses
 change between checks (DNS rebinding) can't lead requests to private
 addresses (unless allowed, `allow_private_addresses` of the registry entry);
 their redirects are not followed, and their responses are limited to
-`MAX_RESPONSE_SIZE` bytes (not those of redirects yet, which FOCA 0.19
-reads whole). Requests to configured backends time out after
+`MAX_RESPONSE_SIZE` bytes. Requests to configured backends time out after
 `custom.tes.timeout` seconds without data, and after `CONNECT_TIMEOUT`
 seconds while connecting; requests to discovered backends must end within
 `custom.tes.timeout` seconds as a whole, and connecting within FOCA's
@@ -69,8 +68,6 @@ from foca.utils.http import (
     GuardedClient,
     HostNotResolved,
     HttpResponse,
-    InvalidRequest,
-    InvalidRequestURL,
     RequestMaybeSent,
     RequestNotSent,
 )
@@ -862,18 +859,8 @@ class TesClient(tes.HTTPClient):
         except (AddressNotAllowed, HostNotResolved) as exc:
             raise BackendAddressNotAllowed(str(exc)) from exc
         except RequestNotSent as exc:
-            # TLS errors after the handshake may come after the request was
-            # sent; only refused certificates certainly prevent sending (as
-            # for configured backends, cf. `not_sent`)
-            # FOCA reports invalid headers and URLs of responses (e.g., of
-            # redirects) like those of requests, after the request was sent
-            if isinstance(exc, InvalidRequest | InvalidRequestURL):
-                raise requests.ConnectionError(str(exc)) from exc
-            if exc.reason == "tls_error" and not any(
-                isinstance(cause, ssl.SSLCertVerificationError)
-                for cause in _causes(exc)
-            ):
-                raise requests.ConnectionError(str(exc)) from exc
+            # FOCA reports errors as not sent only before sending started,
+            # also TLS errors and invalid requests
             if any(
                 isinstance(cause, ConnectTimeoutError)
                 and not isinstance(cause, NewConnectionError)
