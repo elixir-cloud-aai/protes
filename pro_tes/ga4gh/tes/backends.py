@@ -41,6 +41,11 @@ doesn't follow redirects), to the API path of the backend's URL
 got from the same path. If it is unknown whether the backend processed such
 a request (e.g., because the response timed out), the request is not sent
 again (cf. :py:class:`pro_tes.exceptions.BackendOutcomeUnknown`).
+
+The TES version of a backend (:py:func:`backend_version`) is the label
+`tes.version` of its entry; otherwise, what its service info reports, read
+leniently and cached per process. Backends of unknown versions count as the
+oldest supported version.
 """
 
 from collections.abc import Iterator
@@ -88,6 +93,7 @@ from pro_tes.exceptions import (
     BackendOutcomeUnknown,
     BackendRequestNotSent,
 )
+from pro_tes.ga4gh.tes.versions import OLDEST, SUPPORTED, TesVersion
 from pro_tes.gateway import PLUGINS_PATH
 
 logger = logging.getLogger(__name__)
@@ -109,6 +115,13 @@ CONNECT_TIMEOUT = 5
 # Maximum size of responses of discovered backends, in bytes (e.g., tasks
 # with their logs)
 MAX_RESPONSE_SIZE = 64 * 1024 * 1024
+# Label of a backend with its TES version, which wins over its service info
+TES_VERSION_LABEL = "tes.version"
+# Timeout of reading the service info of a backend, in seconds; short, as
+# requests to create tasks wait for it
+PROBE_TIMEOUT = 5
+# Seconds until the service info of a backend is read again after a failure
+PROBE_RETRY = 60
 
 
 class BackendConnectTimeout(BackendRequestNotSent, requests.ConnectTimeout):
@@ -659,6 +672,26 @@ class TesClient(tes.HTTPClient):
         task: tes.Task = unmarshal(response.json(), tes.Task)
         return task
 
+    def service_info(self) -> Any:
+        """Get the service info (`GET /service-info`), with a single request.
+
+        Returns:
+            The service info, as the backend serves it.
+
+        Raises:
+            requests.RequestException: The request failed, or the backend
+                answered with an error.
+            pro_tes.exceptions.BackendAuthError: No credentials are
+                available.
+            ValueError: The response is no JSON.
+        """
+        kwargs = self._request_params()
+        timeout = kwargs.pop("timeout")
+        url = f"{self.url}/{API_PATH}/service-info"
+        response = self._request("GET", url, timeout=timeout, **kwargs)
+        response.raise_for_status()
+        return response.json()
+
     def cancel_task(self, task_id: str) -> None:
         """Cancel a task (`POST /tasks/{id}:cancel`), with a single request.
 
@@ -952,12 +985,14 @@ def create_client(host: str, base_path: str = "") -> TesClient:
     return TesClient(url=url, backend=backend, entry=entry)
 
 
-def client_for(backend: Backend) -> TesClient:
+def client_for(backend: Backend, timeout: int | None = None) -> TesClient:
     """Create a client of a candidate backend, e.g., of a pipeline run.
 
     Args:
         backend: Backend, as expanded from `custom.tes.backends` (cf.
             :py:func:`get_backends`).
+        timeout: Timeout of requests, in seconds; by default
+            `custom.tes.timeout`.
 
     Returns:
         Client of the backend, with the credentials of its entry.
@@ -973,7 +1008,134 @@ def client_for(backend: Backend) -> TesClient:
         raise BackendNotConfigured(
             f"TES backend not configured: {backend.url}"
         ) from exc
-    return TesClient(url=backend.url, backend=backend, entry=entry)
+    return TesClient(url=backend.url, backend=backend, entry=entry, timeout=timeout)
+
+
+def reported_version(service_info: Any) -> TesVersion | None:
+    """Get the TES version that a service info reports, read leniently.
+
+    Backends report it in different ways (e.g., TESK: artifact `TES`, version
+    `1.0`, also as a number; Poiesis: `v1.1.0`), or report their own version
+    (Funnel), which is no supported version, usually.
+
+    Args:
+        service_info: Service info, as served by a backend.
+
+    Returns:
+        The version; `None` if it reports none that proTES supports.
+    """
+    service_type = service_info.get("type") if isinstance(service_info, dict) else None
+    if not isinstance(service_type, dict):
+        return None
+    group, artifact = service_type.get("group"), service_type.get("artifact")
+    if (
+        not isinstance(group, str)
+        or not isinstance(artifact, str)
+        or group.lower() != "org.ga4gh"
+        or artifact.lower() != "tes"
+    ):
+        return None
+    version = TesVersion.parse(service_type.get("version"))
+    return version if version in SUPPORTED else None
+
+
+class BackendVersions:
+    """TES versions of backends, from their service info, cached.
+
+    Thread-safe (a lost update only reads a service info once more, and
+    failures keep what other threads have read meanwhile); each process (e.g.,
+    each Gunicorn or Celery worker) has its own cache.
+    """
+
+    def __init__(self) -> None:
+        """Create an empty cache."""
+        self._cache: dict[str, tuple[TesVersion | None, float]] = {}
+
+    def clear(self) -> None:
+        """Remove all cached versions."""
+        self._cache.clear()
+
+    def get(self, backend: Backend, probe: bool = True) -> TesVersion:
+        """Get the TES version of a backend.
+
+        Never raises: tasks can be relayed to backends of unknown versions.
+
+        Args:
+            backend: Backend.
+            probe: Whether to read the service info of the backend if no
+                version is cached, or the cached one expired.
+
+        Returns:
+            The version of the label `tes.version` of the backend, else that
+            of its service info, else (e.g., if the backend is unavailable)
+            the oldest supported version.
+        """
+        version = TesVersion.parse(backend.labels.get(TES_VERSION_LABEL))
+        if version is not None and version in SUPPORTED:
+            return version
+        cached = self._cache.get(backend.url)
+        if probe and (cached is None or time.monotonic() >= cached[1]):
+            cached = self._probe(backend)
+            self._cache[backend.url] = cached
+        return (cached[0] if cached is not None else None) or OLDEST
+
+    def _probe(self, backend: Backend) -> tuple[TesVersion | None, float]:
+        """Read the TES version of a backend from its service info.
+
+        A failure doesn't change what is known: a version that was read before
+        stays, so that one failed request doesn't make a backend count as
+        another version. An answer without a valid version does.
+
+        Args:
+            backend: Backend.
+
+        Returns:
+            The version, if any, and when to read it again
+            (`time.monotonic()`).
+        """
+        try:
+            version = reported_version(
+                client_for(backend, timeout=PROBE_TIMEOUT).service_info()
+            )
+        except Exception as exc:
+            logger.warning(
+                "Service info of TES backend %s not available: %s",
+                backend.url,
+                type(exc).__name__,
+            )
+            # as it is now: other threads may have read it meanwhile
+            previous = self._cache.get(backend.url)
+            return (
+                previous[0] if previous is not None else None,
+                time.monotonic() + PROBE_RETRY,
+            )
+        now = time.monotonic()
+        if version is None:
+            logger.warning(
+                "TES version of backend %s unknown: taken as %s; set its label"
+                " `%s` if it is another one",
+                backend.url,
+                OLDEST,
+                TES_VERSION_LABEL,
+            )
+            return OLDEST, now + PROBE_RETRY
+        return version, now + get_custom_config(CustomConfig).tes.version_cache_ttl
+
+
+backend_versions = BackendVersions()
+
+
+def backend_version(backend: Backend, probe: bool = True) -> TesVersion:
+    """Get the TES version of a backend (cf. :py:class:`BackendVersions`).
+
+    Args:
+        backend: Backend.
+        probe: Whether its service info may be read now.
+
+    Returns:
+        The version; the oldest supported one if it is unknown.
+    """
+    return backend_versions.get(backend, probe=probe)
 
 
 # Reason codes of errors of attempts to relay tasks, by error class; the
