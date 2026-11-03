@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft-07/schema#",
-  "$comment": "Schema of the values of the proTES chart: app-values.schema.json of the library chart foca-common 0.2.0 (released with FOCA 0.17 and unchanged since; this release requires it, with FOCA 0.19; scripts/check_release_pins.py checks that Chart.yaml and Chart.lock pin it), with the app's key (protes, with extraEnv) and Flower (flower) added; update it with the library chart",
+  "$comment": "Schema of the values of the proTES chart: app-values.schema.json of the library chart foca-common 0.4.0 (released with FOCA 0.20; scripts/check_release_pins.py checks that Chart.yaml and Chart.lock pin it), with the app's key (protes, with extraEnv) and Flower (flower) added; update it with the library chart",
   "$defs": {
     "tmpSizeLimit": {
       "type": [
@@ -124,10 +124,88 @@
           "type": "string",
           "description": "App image tag; defaults to the chart's appVersion"
         },
+        "replicas": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of the app's pods"
+        },
+        "podDisruptionBudget": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": [
+                "boolean",
+                "null"
+              ],
+              "description": "Create a PodDisruptionBudget of the app's pods if there is more than one (replicas); true if null"
+            },
+            "minAvailable": {
+              "type": [
+                "integer",
+                "string",
+                "null"
+              ],
+              "minimum": 0,
+              "pattern": "^(100|[1-9]?[0-9])%$",
+              "description": "Pods that voluntary disruptions (e.g., node drains) keep available: a number or a percentage (e.g., 50%); not set if null"
+            },
+            "maxUnavailable": {
+              "type": [
+                "integer",
+                "string",
+                "null"
+              ],
+              "minimum": 0,
+              "pattern": "^(100|[1-9]?[0-9])%$",
+              "description": "Pods that voluntary disruptions (e.g., node drains) may evict at once: a number or a percentage (e.g., 50%); 1 if neither it nor minAvailable is set"
+            }
+          },
+          "not": {
+            "$comment": "Rejects setting both minAvailable and maxUnavailable (null counts as not set)",
+            "properties": {
+              "minAvailable": {
+                "not": {
+                  "type": "null"
+                }
+              },
+              "maxUnavailable": {
+                "not": {
+                  "type": "null"
+                }
+              }
+            },
+            "required": [
+              "minAvailable",
+              "maxUnavailable"
+            ]
+          }
+        },
         "probePath": {
           "type": "string",
           "pattern": "^/",
           "description": "Path of the app's probes"
+        },
+        "startupProbe": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "Replaces the default startup probe of the app's container, if not empty"
+        },
+        "readinessProbe": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "Replaces the default readiness probe of the app's container, if not empty"
+        },
+        "livenessProbe": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "Replaces the default liveness probe of the app's container, if not empty"
         },
         "ingress": {
           "type": "object",
@@ -867,6 +945,17 @@
           "description": "Records of pipeline runs"
         }
       }
+    },
+    "pluginStore": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "existingSecret": {
+          "type": "string",
+          "description": "Secret with the key secret of the plugin store (key store-key-secret), passed to the app and the worker as FOCA_PLUGINS_STORE_KEY_SECRET; none if empty"
+        }
+      },
+      "description": "Secret of the plugin store of gateway apps (the other settings are in config.plugins)"
     },
     "mongodb": {
       "type": "object",

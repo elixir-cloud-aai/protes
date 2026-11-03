@@ -160,6 +160,19 @@ plugins:
   # Records of pipeline runs (`recordFailed`, `secretHeaders`)
   provenance: {}
 
+# Plugin store of the plugins: settings kept in Secrets, which `config` must
+# not contain (the other settings are under `plugins` and in
+# `config.plugins.defaults.store`)
+pluginStore:
+  # Name of an existing Secret with the key `store-key-secret`, the key
+  # secret of the plugin store (FOCA's `plugins.defaults.store.key_secret`),
+  # passed to the app and the worker as `FOCA_PLUGINS_STORE_KEY_SECRET`; none
+  # if empty. Set it if plugins keep their store in the database; changing it
+  # makes existing entries keyed with `ctx.store.key_for()` unreachable. Needs
+  # an image on FOCA 0.20 or later, as earlier ones ignore it (see
+  # deployment/README.md, Secrets)
+  existingSecret: ""
+
 protes:
   # Image repository; may include a tag or digest instead of setting `tag`
   # (e.g., `elixircloud/protes:1.2.3`). The image of the app also runs the
@@ -174,13 +187,33 @@ protes:
   # Path of the app's startup, readiness and liveness probes; change it if
   # the config disables the Swagger UI
   probePath: /ga4gh/tes/v1/ui/
+  # Probes of the app's container (Kubernetes probe specs); if set, one
+  # replaces the default on `probePath` entirely
+  startupProbe: {}
+  readinessProbe: {}
+  livenessProbe: {}
+  # Number of the app's pods; with more than one, the app stays available
+  # while a pod is restarted or evicted, e.g., on node drains (see
+  # deployment/README.md, Several replicas)
+  replicas: 1
+  # PodDisruptionBudget of the app's pods, so that voluntary disruptions
+  # (e.g., node drains) evict at most `maxUnavailable` pods at once (1 if
+  # neither it nor `minAvailable` is set), or keep at least `minAvailable`
+  # (a number or a percentage, e.g., `50%`; set at most one of them). Only
+  # rendered with more than one replica: a single pod is evicted on node
+  # drains anyway, as a budget keeping it would block the drain
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: null
+    maxUnavailable: null
   # Environment variables of the app's and the worker's containers
   # (Kubernetes `EnvVar`s), e.g., credentials for TES instances from a
   # Secret (`valueFrom.secretKeyRef`), which must not be in `config`; see
   # deployment/README.md, Secrets. Rendering fails for the variables that
   # the chart sets (`FOCA_CONFIG_OVERLAY`, `GUNICORN_CMD_ARGS`,
   # `MONGO_USERNAME`, `MONGO_PASSWORD`, `CELERY_BROKER_URL`,
-  # `CELERY_RESULT_BACKEND`), and for `MONGO_DBNAME`, as the chart
+  # `CELERY_RESULT_BACKEND`, `FOCA_PLUGINS_STORE_KEY_SECRET`, which
+  # `pluginStore.existingSecret` sets), and for `MONGO_DBNAME`, as the chart
   # provisions the database `taskStore`
   extraEnv: []
   # The app is exposed for `hostName` via one of: an Ingress (`ingress`), a
@@ -250,7 +283,7 @@ protes:
     # app: none by default, as they depend on the cluster. Set them when
     # enabling the policy, which fails to render without peers (which would
     # allow all sources); see deployment/README.md, Network policies, and
-    # https://github.com/elixir-cloud-aai/foca/blob/chart-v0.2.0/docs/helm-chart.md#networkpolicy-peers
+    # https://github.com/elixir-cloud-aai/foca/blob/chart-v0.4.0/docs/helm-chart.md#networkpolicy-peers
     # for the peers of common ingress controllers and Gateways
     ingressFrom: []
   # Security contexts of the pod and the container (also of the worker); the

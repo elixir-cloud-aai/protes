@@ -1,8 +1,12 @@
 # Values for rendering the chart in CI with its optional parts: Flower, TES
 # backends (`tes.backends`), credentials for TES instances from a Secret
-# (`protes.extraEnv`) and plugins (`plugins`); used together with
+# (`protes.extraEnv`), plugins (`plugins`), the secret of the plugin store
+# (`pluginStore`) and several replicas (`protes.replicas`); used together with
 # `test-values.yaml` (see `.github/workflows/ci.yml`)
+pluginStore:
+  existingSecret: plugin-store
 protes:
+  replicas: 2
   extraEnv:
   - name: TES_PASSWORD
     valueFrom:

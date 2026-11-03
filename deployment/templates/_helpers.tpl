@@ -5,7 +5,7 @@ YAML; the templates are called with a dict of the root context (`root`) and
 these settings (`settings`). They follow the base config in the image
 (`pro_tes/config.yaml`): its size limit of request bodies
 (`server.max_content_length`), its token issuers (so an audience is
-required, unless each issuer has one, cf. `protes.requireAudience`), its
+required, unless each issuer has one, as the library checks), its
 database (`db.dbs`) and that of access control
 (`security.access_control.db_name`). The generated config sets the public
 URL of the app (`server.public_url`, cf. `protes.publicUrl`), if known,
@@ -19,7 +19,7 @@ and whichever template Helm renders first.
 {{- include "protes.validate" . -}}
 valuesKey: protes
 maxContentLength: 1048576
-requireAudience: {{ include "protes.requireAudience" . }}
+requireAudience: true
 mongodb:
   databases: [taskStore]
   accessControlDatabase: taskStore
@@ -309,9 +309,7 @@ group mapping but no group claim (global or of an issuer), or without a
 group mapped to the role `admin` (unless admins are explicitly not
 required, `security.access_control.require_admin`, FOCA's); renders
 nothing. The audiences of issuers are checked here, and the global audience
-by the library if it is required (`requireAudience`, cf.
-`protes.requireAudience`, which relies on these checks), else its type
-here. Fails on
+by the library (`requireAudience`). Fails on
 `custom.access_control` (its `require_admin` moved to FOCA's setting).
 */}}
 {{- define "protes.checkSecurity" -}}
@@ -420,8 +418,8 @@ in the app, group mappings need a group claim of at least one issuer
 {{- end -}}
 {{- end -}}
 {{- /*
-Checked here, as the library checks the global audience only if it is
-required (`protes.requireAudience`)
+Checked here too, with the app's message, also if each issuer has an
+audience of its own, so that the global one is not needed
 */ -}}
 {{- /* `security` and `auth` are maps here, as the issuers are set */ -}}
 {{- $globalAudience := get (get $security "auth") "audience" -}}
@@ -459,29 +457,6 @@ required (`protes.requireAudience`)
 {{- end -}}
 
 {{/*
-Whether an audience is required (`requireAudience` of the settings, checked
-by the library; renders "true" or "false"): unless each trusted issuer is a
-map with an audience of its own (`audience`, checked by
-`protes.checkSecurity`, which runs first), which replaces the global one
-(`security.auth.audience`) for its tokens, as in FOCA's `IssuerConfig`.
-Keep in line with the issuers' checks in `protes.checkSecurity`.
-*/}}
-{{- define "protes.requireAudience" -}}
-{{- $issuers := dig "security" "auth" "issuers" list (.Values.config | default dict) -}}
-{{- $required := false -}}
-{{- if and (kindIs "slice" $issuers) $issuers -}}
-{{- range $issuer := $issuers -}}
-{{- if not (and (kindIs "map" $issuer) (get $issuer "audience")) -}}
-{{- $required = true -}}
-{{- end -}}
-{{- end -}}
-{{- else -}}
-{{- $required = true -}}
-{{- end -}}
-{{- $required -}}
-{{- end -}}
-
-{{/*
 A boolean of the config, parsed as pydantic parses booleans (lax mode), as the
 app does: `true` or `false`, the strings `1`, `on`, `t`, `true`, `y`, `yes`
 and `0`, `off`, `f`, `false`, `n`, `no` (in any case, without whitespace),
@@ -513,7 +488,7 @@ containers, which `protes.extraEnv` must not set again, and `MONGO_DBNAME`,
 which would move the app to a database that the chart does not provision.
 */}}
 {{- define "protes.reservedEnv" -}}
-{{- list "FOCA_CONFIG_OVERLAY" "GUNICORN_CMD_ARGS" "MONGO_USERNAME" "MONGO_PASSWORD" "CELERY_BROKER_URL" "CELERY_RESULT_BACKEND" "MONGO_DBNAME" | toJson -}}
+{{- list "FOCA_CONFIG_OVERLAY" "GUNICORN_CMD_ARGS" "MONGO_USERNAME" "MONGO_PASSWORD" "CELERY_BROKER_URL" "CELERY_RESULT_BACKEND" "MONGO_DBNAME" "FOCA_PLUGINS_STORE_KEY_SECRET" | toJson -}}
 {{- end -}}
 
 {{/*
