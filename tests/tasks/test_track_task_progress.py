@@ -573,31 +573,46 @@ def test_cancelation_kept(
     tasks.update_one({}, {"$set": {"task.state": stored_state}})
     client_class.states = ["RUNNING", None, "CANCELING", final]
     track(scheduled)
-    assert stored_states == ([] if final == "CANCELED" else [final])
+    assert stored_states == ([] if final == stored_state else [final])
     document = tasks.find_one({"worker_id": ARGS["worker_id"]})
     assert document is not None
     assert document["task"]["state"] == final
 
 
+@pytest.mark.parametrize(
+    ("state", "status", "expected", "polls_go_on"),
+    [
+        ("CANCELING", 404, "CANCELED", False),
+        # may still run
+        ("CANCELING", 503, "CANCELING", True),
+        ("RUNNING", 404, "RUNNING", True),
+    ],
+)
 def test_canceling_backend_gone(
     tasks: Collection[dict[str, Any]],
     client_class: type[FakeClient],
     scheduled: list[dict[str, Any]],
-    polling: Polling,
+    monkeypatch: pytest.MonkeyPatch,
+    state: str,
+    status: int,
+    expected: str,
+    polls_go_on: bool,
 ) -> None:
-    """Tasks don't stay `CANCELING` if their backend stops serving them.
+    """Tasks being canceled are `CANCELED` once their backend deleted them."""
 
-    E.g., if it deleted the task. The final state is stored if it answers
-    again.
-    """
-    polling.attempts = 1
-    tasks.update_one({}, {"$set": {"task.state": "CANCELING"}})
-    client_class.states = [None]
+    def get_task(self: FakeClient, task_id: str, **kwargs: Any) -> tes.Task:
+        """Answer with an error."""
+        response = requests.Response()
+        response.status_code = status
+        raise requests.HTTPError(str(status), response=response)
+
+    monkeypatch.setattr(client_class, "get_task", get_task)
+    tasks.update_one({}, {"$set": {"task.state": state}})
     run()
     document = tasks.find_one({})
     assert document is not None
-    assert document["task"]["state"] == "CANCELED"
-    assert scheduled
+    assert document["task"]["state"] == expected
+    assert bool(scheduled) is polls_go_on
 
 
 def test_cancelation_not_overwritten(tasks: Collection[dict[str, Any]]) -> None:

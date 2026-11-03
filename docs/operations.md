@@ -32,7 +32,8 @@ schedules the next one, so no worker process is held for the runtime of a
 task, and long tasks don't keep the others from being tracked. Once a task has
 finished, its state, logs and outputs are stored (tracking writes no other
 fields of a task, so its tags are kept), and tracking ends; a canceled
-task stays `CANCELING` until its TES instance has finished it. After
+task stays `CANCELING` until its TES instance has finished it, or answers that
+it no longer has it (`404`; then `CANCELED`). After
 `polling.attempts` consecutive failed polls (e.g., while the TES instance or
 the identity provider is down), the state of the task is `UNKNOWN` until the
 TES instance answers again, and polls back off to every `polling.max_wait`
