@@ -13,6 +13,7 @@ import requests
 from pro_tes.config_models import CustomConfig, Tes
 from pro_tes.ga4gh.tes import backends
 from pro_tes.ga4gh.tes.backends import (
+    _Probe,
     backend_version,
     backend_versions,
     reported_version,
@@ -109,7 +110,7 @@ def test_probe_cached(client: type[FakeClient]) -> None:
     assert backend_version(BACKEND) == V11
     assert backend_version(BACKEND) == V11
     assert client.calls == 1
-    backend_versions._cache[URL] = (V10, 0.0)
+    backend_versions._cache[URL] = _Probe(V10, 0.0)
     assert backend_version(BACKEND) == V11
     assert client.calls == 2
 
@@ -121,7 +122,7 @@ def test_probe_failure_retried_later(client: type[FakeClient]) -> None:
     assert backend_version(BACKEND) == V10
     assert backend_version(BACKEND) == V10
     assert client.calls == 1
-    backend_versions._cache[URL] = (None, 0.0)
+    backend_versions._cache[URL] = _Probe(None, 0.0)
     client.served = info(version="1.1")
     assert backend_version(BACKEND) == V11
 
@@ -129,12 +130,28 @@ def test_probe_failure_retried_later(client: type[FakeClient]) -> None:
 @pytest.mark.usefixtures("app_context")
 def test_probe_failure_keeps_known_version(client: type[FakeClient]) -> None:
     """A failed request doesn't make a backend count as another version."""
+    client.served = {
+        **info(version="1.1"),
+        "tesResources_backend_parameters": ["a"],
+    }
     assert backend_version(BACKEND) == V11
-    backend_versions._cache[URL] = (V11, 0.0)
+    backend_versions._cache[URL] = backend_versions._cache[URL]._replace(expires_at=0.0)
     client.served = requests.ConnectionError("down")
     assert backend_version(BACKEND) == V11
     assert client.calls == 2
-    assert backend_versions._cache[URL][1] > 0.0
+    assert backend_versions.parameters() == ["a"]
+    assert backend_versions.confirmed(BACKEND)
+    assert backend_versions._cache[URL].expires_at > 0.0
+
+
+@pytest.mark.usefixtures("app_context")
+def test_probe_without_version_counts_as_oldest(client: type[FakeClient]) -> None:
+    """An answer without a valid version replaces the one read before."""
+    assert backend_version(BACKEND) == V11
+    backend_versions._cache[URL] = backend_versions._cache[URL]._replace(expires_at=0.0)
+    client.served = {"tesResources_backend_parameters": ["a"]}
+    assert backend_version(BACKEND) == V10
+    assert backend_versions.parameters() == ["a"]
 
 
 @pytest.mark.usefixtures("app_context")
@@ -145,20 +162,55 @@ def test_probe_failure_keeps_version_read_meanwhile(
 
     def service_info(self: FakeClient) -> Any:
         """Fail, after another thread has read the version."""
-        backend_versions._cache[URL] = (V11, 0.0)
+        backend_versions._cache[URL] = _Probe(V11, 0.0, ("a",))
         raise requests.ConnectionError("down")
 
     monkeypatch.setattr(client, "service_info", service_info)
     assert backend_version(BACKEND) == V11
+    assert backend_versions.parameters() == ["a"]
 
 
 @pytest.mark.usefixtures("app_context")
-def test_probe_without_version_counts_as_oldest(client: type[FakeClient]) -> None:
-    """An answer without a valid version replaces the one read before."""
-    assert backend_version(BACKEND) == V11
-    backend_versions._cache[URL] = (V11, 0.0)
-    client.served = {}
+def test_eligible_reads_backends_never_read_first(
+    client: type[FakeClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A backend that stays unavailable can't keep others from being read."""
+    needs = {"executors": [{"image": "a", "command": ["b"], "ignore_error": True}]}
+    down = backend_with("https://down.example.org")
+    fine = backend_with(URL)
+    read: list[str] = []
+    now = [0.0]
+
+    def probe(self: Any, backend: Backend) -> _Probe:
+        """Take all the time if the backend is down."""
+        read.append(backend.url)
+        if backend is down:
+            now[0] += backends.PROBE_TIMEOUT
+            return _Probe(None, now[0] + backends.PROBE_RETRY)
+        return _Probe(V11, now[0] + 3600)
+
+    monkeypatch.setattr(backends.BackendVersions, "_probe", probe)
+    monkeypatch.setattr(backends.time, "monotonic", lambda: now[0])
+    backend_versions._cache[down.url] = _Probe(None, 0.0)
+    assert backends.eligible_backends(needs, [down, fine]) == [fine]
+    assert read == [URL, down.url]
+
+
+@pytest.mark.usefixtures("app_context")
+def test_confirmed(client: type[FakeClient]) -> None:
+    """Versions count as confirmed if stated, or if the backend answered."""
+    assert not backend_versions.confirmed(BACKEND)
+    assert backend_versions.confirmed(
+        Backend(id=URL, url=URL, labels={"tes.version": "1.0"})
+    )
+    client.served = requests.ConnectionError("down")
+    backend_version(BACKEND)
+    assert not backend_versions.confirmed(BACKEND)
+    backend_versions.clear()
+    client.served = {"tesResources_backend_parameters": ["a"]}
     assert backend_version(BACKEND) == V10
+    assert backend_versions.confirmed(BACKEND)
+    assert backend_versions.parameters() == ["a"]
 
 
 @pytest.mark.usefixtures("app_context")
@@ -176,7 +228,7 @@ def test_no_probe(client: type[FakeClient]) -> None:
     """Without probing, cached versions count, also expired ones."""
     assert backend_version(BACKEND, probe=False) == V10
     assert client.calls == 0
-    backend_versions._cache[URL] = (V11, 0.0)
+    backend_versions._cache[URL] = _Probe(V11, 0.0)
     assert backend_version(BACKEND, probe=False) == V11
     assert client.calls == 0
 
@@ -216,3 +268,97 @@ def test_label_validated() -> None:
     }
     with pytest.raises(pydantic.ValidationError, match=r"tes\.version"):
         Tes.model_validate({"backends": [{**entry, "labels": {"tes.version": "0.12"}}]})
+
+
+def backend_with(url: str) -> Backend:
+    """Get a backend without a label."""
+    return Backend(id=url, url=url)
+
+
+@pytest.mark.usefixtures("app_context")
+def test_parameters_known(client: type[FakeClient]) -> None:
+    """Parameters come from what was read, without reading service infos."""
+    assert backend_versions.parameters() == []
+    assert client.calls == 0
+    client.served = {
+        **info(version="1.1"),
+        "tesResources_backend_parameters": ["b", "", "a", 1],
+    }
+    backend_version(BACKEND)
+    assert backend_versions.parameters() == ["a", "b"]
+
+
+@pytest.mark.usefixtures("app_context")
+def test_eligible(client: type[FakeClient], monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tasks that need TES 1.1 go to its backends; others need no service info."""
+    new, old = (
+        backend_with(URL),
+        Backend(id="o", url="https://o.example.org", labels={"tes.version": "1.0"}),
+    )
+    plain = {"executors": [{"image": "a", "command": ["b"]}]}
+    assert backends.eligible_backends(plain, [new, old]) == [new, old]
+    assert client.calls == 0
+    needs = {"executors": [{"image": "a", "command": ["b"], "ignore_error": True}]}
+    assert backends.eligible_backends(needs, [new, old]) == [new]
+    assert client.calls == 1
+    assert backends.eligible_backends("no task", [old]) == [old]
+
+
+@pytest.mark.usefixtures("app_context")
+def test_eligible_probes_bounded(
+    client: type[FakeClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Once the time is up, backends count with what is cached."""
+    needs = {"executors": [{"image": "a", "command": ["b"], "ignore_error": True}]}
+    times = iter([0.0, 1.0, 1000.0, 1000.0, 1000.0])
+    monkeypatch.setattr(backends.time, "monotonic", lambda: next(times))
+    first, second = backend_with(URL), backend_with("https://b.example.org")
+    assert backends.eligible_backends(needs, [first, second]) == [first]
+    assert client.calls == 1
+
+
+def test_get_task_upgraded(app: FlaskApp, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tasks of backends are upgraded in the version of the backend."""
+    upgraded: list[TesVersion] = []
+
+    def upgrade(task: dict[str, Any], version: TesVersion) -> dict[str, Any]:
+        """Record the version."""
+        upgraded.append(version)
+        return {**task, "state": "RUNNING"}
+
+    def request(method: str, url: str, timeout: Any, **kwargs: Any) -> Any:
+        """Serve a task."""
+        response = requests.Response()
+        response.status_code = 200
+        response._content = b'{"id": "a", "state": "QUEUED", "executors": []}'
+        return response
+
+    monkeypatch.setattr(requests, "request", request)
+    monkeypatch.setattr(backends, "upgrade_task", upgrade)
+    backend = Backend(id=URL, url=URL, auth="none", labels={"tes.version": "1.0"})
+    with app.app.app_context():
+        get_custom_config(CustomConfig).tes.backends = tes_backends(URL)
+        task = backends.client_for(backend).get_task("a")
+    assert task.state == "RUNNING"
+    assert upgraded == [V10]
+
+
+def test_get_task_reads_no_service_info(
+    app: FlaskApp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reading a task takes one request, also if no version is cached."""
+    urls: list[str] = []
+
+    def request(method: str, url: str, timeout: Any, **kwargs: Any) -> Any:
+        """Serve a task."""
+        urls.append(url)
+        response = requests.Response()
+        response.status_code = 200
+        response._content = b'{"id": "a", "state": "QUEUED", "executors": []}'
+        return response
+
+    monkeypatch.setattr(requests, "request", request)
+    with app.app.app_context():
+        get_custom_config(CustomConfig).tes.backends = tes_backends(URL)
+        backends.client_for(BACKEND).get_task("a")
+    assert len(urls) == 1

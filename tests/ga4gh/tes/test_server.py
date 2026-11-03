@@ -26,9 +26,11 @@ from pro_tes.exceptions import (
     BackendNotConfigured,
     BackendOutcomeUnknown,
     BadRequest,
+    TaskIncompatible,
 )
-from pro_tes.ga4gh.tes import ownership, server, task_runs
+from pro_tes.ga4gh.tes import backends, ownership, server, task_runs
 from pro_tes.ga4gh.tes.models import DbDocument, TesTask
+from pro_tes.ga4gh.tes.versions import TesVersion
 from pro_tes.tasks import track_task_progress
 from pro_tes.utils.db import DbDocumentConnector
 from tests.conftest import DB, MONGODB_TEST_URI, OTHER_USER, USER
@@ -65,6 +67,7 @@ def test_create_task(
         "host": url,
         "base_path": "",
         "task_id": "remote-1",
+        "tes_version": "1.1",
     }
     assert tracked == [
         {
@@ -292,7 +295,11 @@ def test_create_task_outcome_unknown(
     assert not tracked
     (document,) = mongo_client[DB]["tasks"].find()
     assert document["task"]["state"] == "SYSTEM_ERROR"
-    assert document["tes_endpoint"] == {"host": BACKENDS[0], "base_path": ""}
+    assert document["tes_endpoint"] == {
+        "host": BACKENDS[0],
+        "base_path": "",
+        "tes_version": "1.1",
+    }
 
 
 def test_task_original_unchanged(
@@ -1591,6 +1598,7 @@ def test_forward_stored_no_logs(app: FlaskApp) -> None:
             db_connector=connector,  # type: ignore[arg-type]
             tes_url=BACKENDS[0],
             remote_task_id="remote-1",
+            tes_version="1.1",
         )
 
 
@@ -1825,3 +1833,135 @@ def test_list_tasks_tags(
         assert client.post(f"{BASE_PATH}/tasks", json=task).status_code == 200
     listed = list_tasks(client, view="BASIC", **query)["tasks"]
     assert sorted(task["name"] for task in listed) == sorted(names)
+
+
+NEEDS_11 = {
+    "executors": [{"image": "alpine", "command": ["true"], "ignore_error": True}]
+}
+PLAIN_11 = {
+    "inputs": [{"url": "s3://b/a", "path": "/a", "streamable": True}],
+    "outputs": [{"url": "s3://b/c", "path": "/c", "path_prefix": "/"}],
+    "resources": {"backend_parameters": {"VmSize": "small"}},
+    "executors": [{"image": "alpine", "command": ["true"], "ignore_error": False}],
+}
+
+
+def test_task_adapted_for_older_backend(
+    client: FlaskClient,
+    backend: type[FakeBackend],
+    mongo_client: MongoClient[dict[str, Any]],
+) -> None:
+    """Backends of TES 1.0 get no fields of TES 1.1; proTES keeps them."""
+    backend.versions[BACKENDS[0]] = "1.0"
+    backend.versions[BACKENDS[1]] = "1.0"
+    response = client.post(f"{BASE_PATH}/tasks", json=PLAIN_11)
+    assert response.status_code == 200
+    ((_, task),) = relayed(backend)
+    body = task.as_dict()
+    assert "ignore_error" not in body["executors"][0]
+    assert "streamable" not in body["inputs"][0]
+    assert body["inputs"][0]["type"] == "FILE"
+    assert "path_prefix" not in body["outputs"][0]
+    assert "resources" not in body or not body["resources"].get("backend_parameters")
+    document = stored(mongo_client, response.get_json()["id"])
+    assert document["tes_endpoint"]["tes_version"] == "1.0"
+    assert document["task"]["inputs"][0]["streamable"] is True
+    assert document["task"]["outputs"][0]["path_prefix"] == "/"
+
+
+def test_task_unchanged_for_newer_backend(
+    client: FlaskClient, backend: type[FakeBackend]
+) -> None:
+    """Backends of TES 1.1 get the fields of TES 1.1."""
+    assert client.post(f"{BASE_PATH}/tasks", json=PLAIN_11).status_code == 200
+    ((_, task),) = relayed(backend)
+    assert task.executors[0].ignore_error is False
+    assert task.inputs[0].streamable is True
+    assert task.outputs[0].path_prefix == "/"
+    assert task.resources.backend_parameters == {"VmSize": "small"}
+
+
+def test_task_only_for_eligible_backends(
+    client: FlaskClient, backend: type[FakeBackend]
+) -> None:
+    """Tasks that TES 1.0 can't express go to backends of TES 1.1 only."""
+    backend.versions[BACKENDS[0]] = "1.0"
+    for _ in range(5):
+        assert client.post(f"{BASE_PATH}/tasks", json=NEEDS_11).status_code == 200
+    assert {url for url, _ in relayed(backend)} == {BACKENDS[1]}
+
+
+def test_task_no_eligible_backend(
+    client: FlaskClient,
+    backend: type[FakeBackend],
+    mongo_client: MongoClient[dict[str, Any]],
+) -> None:
+    """Tasks that no backend can run are rejected, and not stored."""
+    backend.versions[BACKENDS[0]] = "1.0"
+    backend.versions[BACKENDS[1]] = "1.0"
+    response = client.post(f"{BASE_PATH}/tasks", json=NEEDS_11)
+    assert response.status_code == 400
+    assert "/executors/0/ignore_error" in response.get_json()["detail"]
+    assert not relayed(backend)
+    assert mongo_client[DB]["tasks"].count_documents({}) == 0
+
+
+def test_task_no_answer_from_backends(
+    client: FlaskClient,
+    backend: type[FakeBackend],
+    mongo_client: MongoClient[dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Clients can retry if backends didn't answer: `503`, not `400`."""
+
+    def service_info(self: FakeBackend) -> dict[str, Any]:
+        """Fail as if the backend was down."""
+        raise requests.ConnectionError("down")
+
+    monkeypatch.setattr(backend, "service_info", service_info)
+    response = client.post(f"{BASE_PATH}/tasks", json=NEEDS_11)
+    assert response.status_code == 503
+    assert not relayed(backend)
+    assert mongo_client[DB]["tasks"].count_documents({}) == 0
+
+
+def test_task_only_ineligible_backend_selected(
+    client: FlaskClient,
+    backend: type[FakeBackend],
+    mongo_client: MongoClient[dict[str, Any]],
+) -> None:
+    """Clients that choose only backends that can't run a task get `400`."""
+    backend.versions[BACKENDS[0]] = "1.0"
+    selection = '{"type": "allow", "backends": ["' + BACKENDS[0] + '"]}'
+    response = client.post(
+        f"{BASE_PATH}/tasks",
+        json={**NEEDS_11, "tags": {"gateway.backends": selection}},
+    )
+    assert response.status_code == 400
+    assert "ignore_error" in response.get_json()["detail"]
+    assert not relayed(backend)
+
+
+def test_task_incompatible_after_forward_phase(
+    app: FlaskApp, backend: type[FakeBackend]
+) -> None:
+    """Relaying refuses tasks that the version can't express, e.g., of plugins."""
+    with pytest.raises(TaskIncompatible, match="ignore_error"):
+        gateway.relayed_task(NEEDS_11, prefix="gateway.", version=TesVersion(1, 0))
+    assert backends.forward_reason(TaskIncompatible("x")) == "incompatible"
+
+
+def test_service_info_backend_parameters(
+    client: FlaskClient, backend: type[FakeBackend]
+) -> None:
+    """The service info lists the parameters of the backends read so far."""
+    assert (
+        client.get(f"{BASE_PATH}/service-info").get_json()[
+            "tesResources_backend_parameters"
+        ]
+        == []
+    )
+    assert client.post(f"{BASE_PATH}/tasks", json=NEEDS_11).status_code == 200
+    assert client.get(f"{BASE_PATH}/service-info").get_json()[
+        "tesResources_backend_parameters"
+    ] == ["VmSize"]

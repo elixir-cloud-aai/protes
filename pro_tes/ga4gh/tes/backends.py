@@ -57,7 +57,7 @@ import os
 import ssl
 import threading
 import time
-from typing import Any
+from typing import Any, NamedTuple
 from urllib.parse import quote, quote_plus
 
 from foca import get_config, get_custom_config
@@ -92,8 +92,15 @@ from pro_tes.exceptions import (
     BackendNotConfigured,
     BackendOutcomeUnknown,
     BackendRequestNotSent,
+    TaskIncompatible,
 )
-from pro_tes.ga4gh.tes.versions import OLDEST, SUPPORTED, TesVersion
+from pro_tes.ga4gh.tes.versions import (
+    OLDEST,
+    SUPPORTED,
+    TesVersion,
+    incompatibilities,
+    upgrade_task,
+)
 from pro_tes.gateway import PLUGINS_PATH
 
 logger = logging.getLogger(__name__)
@@ -444,15 +451,19 @@ def service_info_fields() -> dict[str, Any]:
         The TES backends (`backends`): identifier, URL, source, group and
         labels of each, without credentials (cf.
         :py:meth:`foca.plugins.backends.BackendList.describe`), unless
-        `custom.service_info.list_backends` is false; and what clients may
-        choose per task (`gateway`: the path of the plugin listing, whether
-        clients may choose pipelines and backends, and the capabilities of
-        the plugins, without plugin identifiers; cf.
+        `custom.service_info.list_backends` is false; the backend parameters
+        they support, as far as known (cf.
+        :py:meth:`BackendVersions.parameters`; the config of the service info
+        wins); and what clients may choose per task (`gateway`: the path of
+        the plugin listing, whether clients may choose pipelines and backends,
+        and the capabilities of the plugins, without plugin identifiers; cf.
         :py:func:`foca.plugins.api.service_info_fields`), unless the
         plugins can't be loaded (then the app doesn't start, with the
         error of the plugins).
     """
-    fields: dict[str, Any] = {}
+    fields: dict[str, Any] = {
+        "tesResources_backend_parameters": backend_versions.parameters(),
+    }
     if get_custom_config(CustomConfig).service_info.list_backends:
         fields["backends"] = get_backend_list().describe()
     try:
@@ -669,7 +680,11 @@ class TesClient(tes.HTTPClient):
         url = f"{self.url}/{API_PATH}/tasks/{quote_id(task_id)}"
         response = self._request("GET", url, timeout=timeout, **kwargs)
         response.raise_for_status()
-        task: tes.Task = unmarshal(response.json(), tes.Task)
+        body = response.json()
+        if isinstance(body, dict):
+            # also for any other code that gets tasks from backends
+            body = upgrade_task(body, backend_version(self.backend, probe=False))
+        task: tes.Task = unmarshal(body, tes.Task)
         return task
 
     def service_info(self) -> Any:
@@ -1039,6 +1054,21 @@ def reported_version(service_info: Any) -> TesVersion | None:
     return version if version in SUPPORTED else None
 
 
+class _Probe(NamedTuple):
+    """Result of reading the service info of a backend.
+
+    Attributes:
+        version: The TES version; `None` if the backend never answered.
+        expires_at: When to read it again (`time.monotonic()`).
+        parameters: The backend parameters that the backend supports
+            (`tesResources_backend_parameters`), as far as it says.
+    """
+
+    version: TesVersion | None
+    expires_at: float
+    parameters: tuple[str, ...] = ()
+
+
 class BackendVersions:
     """TES versions of backends, from their service info, cached.
 
@@ -1049,7 +1079,7 @@ class BackendVersions:
 
     def __init__(self) -> None:
         """Create an empty cache."""
-        self._cache: dict[str, tuple[TesVersion | None, float]] = {}
+        self._cache: dict[str, _Probe] = {}
 
     def clear(self) -> None:
         """Remove all cached versions."""
@@ -1074,12 +1104,54 @@ class BackendVersions:
         if version is not None and version in SUPPORTED:
             return version
         cached = self._cache.get(backend.url)
-        if probe and (cached is None or time.monotonic() >= cached[1]):
+        if probe and (cached is None or time.monotonic() >= cached.expires_at):
             cached = self._probe(backend)
             self._cache[backend.url] = cached
-        return (cached[0] if cached is not None else None) or OLDEST
+        return (cached.version if cached is not None else None) or OLDEST
 
-    def _probe(self, backend: Backend) -> tuple[TesVersion | None, float]:
+    def was_read(self, backend: Backend) -> bool:
+        """Tell whether reading the service info of a backend was tried.
+
+        Args:
+            backend: Backend.
+
+        Returns:
+            Whether this process has tried to read it (and still knows).
+        """
+        return backend.url in self._cache
+
+    def confirmed(self, backend: Backend) -> bool:
+        """Tell whether a backend stated its TES version or answered at all.
+
+        Doesn't read its service info.
+
+        Args:
+            backend: Backend.
+
+        Returns:
+            Whether the version comes from the label of the backend or an
+            answer of the backend, not from having no answer so far.
+        """
+        version = TesVersion.parse(backend.labels.get(TES_VERSION_LABEL))
+        if version is not None and version in SUPPORTED:
+            return True
+        cached = self._cache.get(backend.url)
+        return cached is not None and cached.version is not None
+
+    def parameters(self) -> list[str]:
+        """Get the backend parameters that backends support, as far as known.
+
+        Reads neither service infos nor registries, as clients without
+        credentials get them through the service info of proTES.
+
+        Returns:
+            The keys that the service infos read so far list, sorted.
+        """
+        return sorted(
+            {key for probe in list(self._cache.values()) for key in probe.parameters}
+        )
+
+    def _probe(self, backend: Backend) -> _Probe:
         """Read the TES version of a backend from its service info.
 
         A failure doesn't change what is known: a version that was read before
@@ -1090,12 +1162,15 @@ class BackendVersions:
             backend: Backend.
 
         Returns:
-            The version, if any, and when to read it again
-            (`time.monotonic()`).
+            What the service info says, and when to read it again.
         """
         try:
-            version = reported_version(
-                client_for(backend, timeout=PROBE_TIMEOUT).service_info()
+            service_info = client_for(backend, timeout=PROBE_TIMEOUT).service_info()
+            version = reported_version(service_info)
+            listed: Any = (
+                service_info.get("tesResources_backend_parameters")
+                if isinstance(service_info, dict)
+                else None
             )
         except Exception as exc:
             logger.warning(
@@ -1105,11 +1180,17 @@ class BackendVersions:
             )
             # as it is now: other threads may have read it meanwhile
             previous = self._cache.get(backend.url)
-            return (
-                previous[0] if previous is not None else None,
+            return _Probe(
+                previous.version if previous is not None else None,
                 time.monotonic() + PROBE_RETRY,
+                previous.parameters if previous is not None else (),
             )
-        now = time.monotonic()
+        # Funnel lists an empty key
+        parameters = tuple(
+            key
+            for key in (listed if isinstance(listed, list) else [])
+            if isinstance(key, str) and key
+        )
         if version is None:
             logger.warning(
                 "TES version of backend %s unknown: taken as %s; set its label"
@@ -1118,8 +1199,12 @@ class BackendVersions:
                 OLDEST,
                 TES_VERSION_LABEL,
             )
-            return OLDEST, now + PROBE_RETRY
-        return version, now + get_custom_config(CustomConfig).tes.version_cache_ttl
+            return _Probe(OLDEST, time.monotonic() + PROBE_RETRY, parameters)
+        return _Probe(
+            version,
+            time.monotonic() + get_custom_config(CustomConfig).tes.version_cache_ttl,
+            parameters,
+        )
 
 
 backend_versions = BackendVersions()
@@ -1138,9 +1223,39 @@ def backend_version(backend: Backend, probe: bool = True) -> TesVersion:
     return backend_versions.get(backend, probe=probe)
 
 
+def eligible_backends(task: Any, backends: list[Backend]) -> list[Backend]:
+    """Get the backends that can run a task unchanged; plugins can use it.
+
+    Tasks that every supported version can express can run anywhere, and need
+    no service info. For other tasks, no further service info is read once
+    `PROBE_TIMEOUT` seconds have passed, so that unavailable backends don't
+    keep the request waiting; the remaining backends count with what is
+    cached (cf. :py:meth:`BackendVersions.confirmed`). Backends never read
+    come first, so that an unavailable one can't keep them from being read.
+
+    Args:
+        task: Task of the canonical TES version (JSON).
+        backends: Backends, in order.
+
+    Returns:
+        The backends that can run the task, in order.
+    """
+    if not isinstance(task, dict) or not incompatibilities(task):
+        return list(backends)
+    deadline = time.monotonic() + PROBE_TIMEOUT
+    for backend in sorted(backends, key=backend_versions.was_read):
+        backend_version(backend, probe=time.monotonic() < deadline)
+    return [
+        backend
+        for backend in backends
+        if not incompatibilities(task, backend_version(backend, probe=False))
+    ]
+
+
 # Reason codes of errors of attempts to relay tasks, by error class; the
 # first match counts
 _REASONS: tuple[tuple[type[Exception], str], ...] = (
+    (TaskIncompatible, "incompatible"),
     (BackendAuthError, "no_credentials"),
     (BackendNotConfigured, "unknown_backend"),
     (ValueError, "invalid_backend"),
