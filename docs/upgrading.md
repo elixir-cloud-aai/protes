@@ -48,6 +48,17 @@ plugins are not affected, except that `tes.routing.distance` is no longer
 available unless you list it: a pipeline that uses it makes the app refuse to
 start, naming the plugin; add the `available` entry above.
 
+**Image (all deployments):** the image installs exactly the dependencies
+locked in `uv.lock`, hash-checked, with uv instead of pip (see
+[Dependencies](development.md#dependencies)); before, pip installed the
+newest versions in the ranges of `pyproject.toml` at build time. So package
+versions in the image may differ from those of an earlier image, and a
+rebuild of the same commit gets the same packages. Images derived from it
+(see [Plugin images](plugin-images.md)) and the build argument `PLUGINS`
+work as before: pip is still in the image. Building the image yourself
+needs BuildKit (the default builder of Docker since version 23, or
+`docker buildx`).
+
 ## To version 0.4.0
 
 Check each item; the sections below have the details.

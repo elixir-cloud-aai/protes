@@ -136,10 +136,45 @@ installed with hash checks (by the pip of the runner's Python,
 `ensurepip`, nothing downloaded), so that no workflow step of a job that
 holds publishing credentials installs a package without hash checks (the
 tests check this). Keep the group and `build-system.requires` the same
-(the tests fail if they differ). The image build, which these jobs run too,
-still installs the runtime dependencies from the ranges of `pyproject.toml`
-(`scripts/image_requirements.py`, to be locked by
-[#365](https://github.com/elixir-cloud-aai/protes/issues/365)).
+(the tests fail if they differ).
+
+The image build (`Dockerfile`) installs the locked packages only, with the
+uv of the same pinned image, mounted into the steps that use it (the image
+doesn't contain uv), so that two builds of the same commit get the same
+packages, and a new release of a dependency gets into the image only
+through a reviewed change of the lock:
+
+- the runtime dependencies: exported from the lock
+  (`uv export --frozen --no-dev --no-emit-project`, which leaves out the
+  extras and the dependency groups), then installed into the Python of the
+  base image with
+  `uv pip install --system --require-hashes --only-binary :all: --no-deps`
+  (exact versions, hash-checked wheels, nothing else resolved);
+- the app: built as a wheel in a build stage of its own, with the
+  `build-system` group installed the same way into a virtual environment,
+  without build isolation and without network (`uv build --wheel --offline
+  --no-build-isolation`), then installed offline without its dependencies;
+  the image doesn't contain the build requirements. As nothing is resolved,
+  `uv pip check` then checks that all installed packages meet each other's
+  requirements.
+
+Packages that the base image already has at the locked version (e.g., FOCA)
+are kept as they are, trusted through the base image's digest, not checked
+against the hashes of the lock again. The build needs BuildKit (the default
+builder of Docker since version 23, or `docker buildx`), for `RUN --mount`
+and `RUN --network=none`.
+
+`scripts/image_requirements.py` leaves a temporary FOCA commit pin (see
+[Versioning and releases](#versioning-and-releases)) out of the export and
+fails the build unless the base image has the locked FOCA release (or FOCA
+of the pinned commit); `tests/test_image_build.py` checks that every install
+of the image build is hash-checked or offline. The only exception is the
+build argument `PLUGINS` for local builds, empty for the published images
+(see [Plugin images](plugin-images.md#local-builds)). The image still
+contains pip (from the FOCA base image), used by `PLUGINS` and by the
+recipe for derived images; it is removed with
+[#336](https://github.com/elixir-cloud-aai/protes/issues/336).
+
 After adding, removing or changing a dependency in `pyproject.toml`, update
 the lock and commit both:
 
@@ -151,7 +186,11 @@ uv lock --check  # what CI checks: the lock matches `pyproject.toml`
 
 Dependabot updates `pyproject.toml` and `uv.lock` together, including the
 `build-system` group (`uv` entry of `.github/dependabot.yml`), and the uv
-image of the `Dockerfile` (`docker` entry).
+image of the `Dockerfile` (`docker` entry). The lock also pins FOCA, and the
+image build fails unless the base image has exactly the locked FOCA, so FOCA
+is updated by hand, in the base image and the lock together
+(`uv lock --upgrade-package foca`); Dependabot ignores new FOCA versions in
+both entries, but still proposes digest updates of the base image's tag.
 
 ## Helm chart
 
@@ -378,11 +417,13 @@ development image of that commit as the base image (tagged by date, e.g.,
 later commits of that day). The `Dockerfile` records the commit as
 `## FOCA commit: <sha>`, which the tests check (`tests/test_build.py`); the
 image build doesn't reinstall FOCA, but fails unless the base image has FOCA
-of that commit (`scripts/image_requirements.py`). Meanwhile, have Dependabot
-ignore the base image (`.github/dependabot.yml`), as updates of its digest
-would change FOCA. Such pins are temporary: the release workflow fails while a
-requirement (also an optional one, a dependency group or a build
-requirement) is a direct reference or names a pre-release or a local version
+of that commit (`scripts/image_requirements.py`; the lock has no hash for
+such a pin, so the image build leaves it out, while FOCA's dependencies stay
+locked). Meanwhile, have Dependabot ignore the base image
+(`.github/dependabot.yml`), as updates of its digest would change FOCA.
+Such pins are temporary: the release workflow fails while a requirement
+(also an optional one, a dependency group or a build requirement) is a
+direct reference or names a pre-release or a local version
 (e.g., `+g<commit>`), a FOCA image (in any stage) has no release tag, or a
 chart dependency has no version, another version than a release or no chart
 repository (`oci://`, `https://`; e.g., a `file://` path to a checkout of
