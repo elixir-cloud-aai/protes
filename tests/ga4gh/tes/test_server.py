@@ -1762,6 +1762,22 @@ def test_list_tasks_invalid_filters(client: FlaskClient, query: dict[str, Any]) 
     assert response.status_code == 400
 
 
+def test_list_tasks_filters_literal(
+    client: FlaskClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Tag filters reach the database as sent, with commas and empty values."""
+    calls: list[tuple[list[str], list[str]]] = []
+
+    def tags_filter(keys: list[str], values: list[str]) -> dict[str, Any]:
+        """Record the arguments."""
+        calls.append((keys, values))
+        return {}
+
+    monkeypatch.setattr(task_runs, "tags_filter", tags_filter)
+    list_tasks(client, tag_key=["a,b", "c"], tag_value=["", "1,2"])
+    assert calls == [(["a,b", "c"], ["", "1,2"])]
+
+
 def test_list_tasks_state(
     client: FlaskClient, task_id: str, mongo_client: MongoClient[dict[str, Any]]
 ) -> None:

@@ -573,10 +573,31 @@ def test_cancelation_kept(
     tasks.update_one({}, {"$set": {"task.state": stored_state}})
     client_class.states = ["RUNNING", None, "CANCELING", final]
     track(scheduled)
-    assert stored_states == ([] if final == stored_state else [final])
+    assert stored_states == ([] if final == "CANCELED" else [final])
     document = tasks.find_one({"worker_id": ARGS["worker_id"]})
     assert document is not None
     assert document["task"]["state"] == final
+
+
+def test_canceling_backend_gone(
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+    scheduled: list[dict[str, Any]],
+    polling: Polling,
+) -> None:
+    """Tasks don't stay `CANCELING` if their backend stops serving them.
+
+    E.g., if it deleted the task. The final state is stored if it answers
+    again.
+    """
+    polling.attempts = 1
+    tasks.update_one({}, {"$set": {"task.state": "CANCELING"}})
+    client_class.states = [None]
+    run()
+    document = tasks.find_one({})
+    assert document is not None
+    assert document["task"]["state"] == "CANCELED"
+    assert scheduled
 
 
 def test_cancelation_not_overwritten(tasks: Collection[dict[str, Any]]) -> None:

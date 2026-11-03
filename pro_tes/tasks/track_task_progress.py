@@ -279,6 +279,13 @@ def _poll(kwargs: dict[str, Any]) -> None:
                 worker_id=worker_id,
                 state=TesState.UNKNOWN.value,
             )
+            # the backend accepted the cancel, and may have deleted the task;
+            # so that clients don't wait for it forever. Polls go on, and
+            # store the final state if the backend answers again
+            collection.update_one(
+                {"worker_id": worker_id, "task.state": TesState.CANCELING.value},
+                {"$set": {"task.state": TesState.CANCELED.value}},
+            )
         _schedule(collection=collection, kwargs=kwargs, failures=failures)
         return
 
@@ -322,8 +329,9 @@ def task__track_task_progress(
     outputs are stored, and tracking ends. Failed polls are retried, also if
     the backend is not (or no longer) configured or discovered; after
     `polling.attempts` consecutive failures, the state is set to `UNKNOWN`
-    (the task may still run at its backend), and polls back off (see
-    :py:func:`backoff`) until the backend answers again. Polls that fail
+    (the task may still run at its backend), or from `CANCELING` to
+    `CANCELED`, and polls back off (see :py:func:`backoff`) until the backend
+    answers again. Polls that fail
     because MongoDB is unavailable are retried, with the same arguments,
     after up to `polling.max_wait` seconds, until it is available again;
     polls that fail because the broker is unavailable go back to it.

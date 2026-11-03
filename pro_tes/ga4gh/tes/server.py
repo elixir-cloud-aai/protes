@@ -122,6 +122,9 @@ def ListTasks(*args: Any, **kwargs: Any) -> dict[str, Any]:
     # request has no filter; no filter means all states (TES 1.1)
     if "state" not in request.args:
         kwargs.pop("state", None)
+    # as sent: Connexion splits values at commas, which tags may contain
+    for name in ("tag_key", "tag_value"):
+        kwargs[name] = request.args.getlist(name)
     tasks_run = TaskRuns()
     response = tasks_run.list_tasks(collection=request.path, **kwargs)
     return response

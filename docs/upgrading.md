@@ -69,7 +69,8 @@ of TES 1.0 (e.g., py-tes before 1.1) need an update, as tasks may now be
 until its TES instance reports its final state, where it was `CANCELED` right
 away before. No data changes: stored tasks are valid as they are, and tasks
 stored as `CANCELED` by earlier versions stay so until their TES instance has
-finished them.
+finished them. The filters `tag_key` and `tag_value` need MongoDB 5.0 or later
+(the chart and Compose use 7.0); other requests are not affected.
 
 ## To version 0.4.0
 
