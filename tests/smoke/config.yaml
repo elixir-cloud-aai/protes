@@ -1,7 +1,8 @@
 # Config overlay for the Compose smoke test (`tests/smoke/compose.yaml`):
-# tasks go to the fake TES backend only (no public TES instances), with an
-# explicit plugin pipeline (ordered failover); the fake backend is also the
-# identity provider (`fake_tes.py`)
+# tasks go to the fake TES backends only (no public TES instances), with an
+# explicit plugin pipeline (ordered failover), so to the one of TES 1.0 first,
+# unless they need TES 1.1; the fake backend of TES 1.1 is also the identity
+# provider (`fake_tes.py`)
 security:
   auth:
     issuers:
@@ -21,6 +22,11 @@ custom:
   # plain HTTP inside the Compose network
   tes:
     backends:
+      - type: ga4gh-tes
+        url: http://fake-tes-10:8080
+        url_schemes:
+          - http
+        auth: none
       - type: ga4gh-tes
         url: http://fake-tes:8080
         url_schemes:

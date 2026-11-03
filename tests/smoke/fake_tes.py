@@ -2,7 +2,8 @@
 
 Serves the parts of the TES API that proTES uses (service info, task
 creation, retrieval and cancellation) from memory: created tasks are
-complete right away. Also serves an OpenID Connect identity provider for
+complete right away, unless held (see below). Also serves an OpenID Connect
+identity provider for
 proTES (issuer `ISSUER`; discovery, keys and user info), which issues access
 tokens of the users of `GROUPS` at `GET /oidc/token?sub=<user>` (no login),
 and access tokens of proTES itself at `POST /oidc/token` (client credentials
@@ -11,6 +12,12 @@ service info, the TES API requires access tokens of proTES, as TES backends
 of proTES may.
 Run it with `python fake_tes.py [port]` (default 8080); it depends on the
 standard library, PyJWT and cryptography (dependencies of FOCA).
+
+With the environment variable `FAKE_TES_VERSION=1.0`, it serves TES 1.0 as TESK
+does: it reports the version so (artifact `TES`, version `1.0` as a number),
+rejects tasks with fields of TES 1.1 (`400`), and requires no access tokens, as
+those of the identity provider of another instance can't be checked. Tasks with
+the tag `fake.hold` run until they are canceled.
 """
 
 import base64
@@ -18,6 +25,7 @@ import binascii
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import os
 import sys
 import threading
 import time
@@ -43,15 +51,45 @@ GROUPS = {
     "eve": ["other-group"],
 }
 KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+# TES version of this instance
+TES_10 = os.environ.get("FAKE_TES_VERSION") == "1.0"
 SERVICE_INFO = {
     "id": "org.example.fake-tes",
     "name": "Fake TES",
-    "type": {"group": "org.ga4gh", "artifact": "tes", "version": "1.1.0"},
+    "type": {
+        "group": "org.ga4gh",
+        "artifact": "TES" if TES_10 else "tes",
+        "version": 1.0 if TES_10 else "1.1.0",
+    },
     "organization": {"name": "Example Organization", "url": "https://example.org"},
     "version": "1.0.0",
 }
 TASKS: dict[str, dict[str, Any]] = {}
 LOCK = threading.Lock()
+
+
+def fields_of_tes_11(task: dict[str, Any]) -> list[str]:
+    """Get the fields of a task that TES 1.0 doesn't know.
+
+    Args:
+        task: Task.
+
+    Returns:
+        The names of the fields, as TESK rejects them.
+    """
+    items = [(item, ("ignore_error",)) for item in task.get("executors") or []]
+    items += [(item, ("streamable",)) for item in task.get("inputs") or []]
+    items += [(item, ("path_prefix",)) for item in task.get("outputs") or []]
+    items += [
+        (
+            task.get("resources") or {},
+            ("backend_parameters", "backend_parameters_strict"),
+        )
+    ]
+    found = [name for item, names in items for name in names if name in item]
+    # required in TES 1.0
+    files = (task.get("inputs") or []) + (task.get("outputs") or [])
+    return found + ["no type" for item in files if "type" not in item]
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -172,6 +210,8 @@ class Handler(BaseHTTPRequestHandler):
         Returns:
             Whether the request has a valid access token of proTES.
         """
+        if TES_10:
+            return True
         token = (self.headers.get("Authorization") or "").removeprefix("Bearer ")
         try:
             claims = jwt.decode(
@@ -229,17 +269,27 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 self._send(HTTPStatus.BAD_REQUEST, {"msg": "invalid JSON"})
                 return
+            unknown = fields_of_tes_11(task) if TES_10 else []
+            if unknown:
+                self._send(HTTPStatus.BAD_REQUEST, {"msg": f"unknown: {unknown}"})
+                return
+            hold = "fake.hold" in (task.get("tags") or {})
             with LOCK:
                 task_id = f"fake-{len(TASKS) + 1}"
                 TASKS[task_id] = {
                     **task,
                     "id": task_id,
-                    "state": "COMPLETE",
+                    "state": "RUNNING" if hold else "COMPLETE",
                     "logs": [{"logs": [], "outputs": []}],
                 }
             self._send(HTTPStatus.OK, {"id": task_id})
             return
         if path.startswith(f"{BASE_PATH}/tasks/") and path.endswith(":cancel"):
+            task_id = path.removeprefix(f"{BASE_PATH}/tasks/").removesuffix(":cancel")
+            with LOCK:
+                task = TASKS.get(task_id)
+                if task is not None and task["state"] == "RUNNING":
+                    task["state"] = "CANCELED"
             self._send(HTTPStatus.OK, {})
             return
         self._send(HTTPStatus.NOT_FOUND, {"msg": "not found"})

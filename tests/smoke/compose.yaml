@@ -20,6 +20,8 @@ services:
         depends_on:
             fake-tes:
                 condition: service_healthy
+            fake-tes-10:
+                condition: service_healthy
 
     protes-worker:
         environment:
@@ -31,6 +33,8 @@ services:
         depends_on:
             fake-tes:
                 condition: service_healthy
+            fake-tes-10:
+                condition: service_healthy
 
     # The fake TES backend runs in the app's image (which is built for the
     # other services), with the image's health check probing its service info
@@ -40,6 +44,21 @@ services:
         pull_policy: never
         command: ["python", "/smoke/fake_tes.py"]
         environment:
+            HEALTHCHECK_URL: http://localhost:8080/ga4gh/tes/v1/service-info
+        volumes:
+            - ./tests/smoke:/smoke:ro
+        healthcheck:
+            interval: 5s
+            start_period: 5s
+
+    # A fake TES backend of TES 1.0, which rejects fields of TES 1.1, as TESK
+    # does
+    fake-tes-10:
+        image: protes:local
+        pull_policy: never
+        command: ["python", "/smoke/fake_tes.py"]
+        environment:
+            FAKE_TES_VERSION: "1.0"
             HEALTHCHECK_URL: http://localhost:8080/ga4gh/tes/v1/service-info
         volumes:
             - ./tests/smoke:/smoke:ro
