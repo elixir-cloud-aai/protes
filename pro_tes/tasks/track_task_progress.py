@@ -237,16 +237,20 @@ def _deleted_after_cancel(
         exc: Error of the poll.
 
     Returns:
-        Whether the task was set to `CANCELED`, which ends its tracking.
+        Whether the task is `CANCELED` now (also if another delivery of the poll
+        has set it), which ends its tracking.
     """
     response = exc.response if isinstance(exc, requests.HTTPError) else None
     if response is None or response.status_code != HTTPStatus.NOT_FOUND:
         return False
     result = collection.update_one(
-        {"worker_id": worker_id, "task.state": TesState.CANCELING.value},
+        {
+            "worker_id": worker_id,
+            "task.state": {"$in": [TesState.CANCELING.value, TesState.CANCELED.value]},
+        },
         {"$set": {"task.state": TesState.CANCELED.value}},
     )
-    if not result.modified_count:
+    if not result.matched_count:
         return False
     logger.info("[%s] %s: deleted by its backend", worker_id, TesState.CANCELED.value)
     return True

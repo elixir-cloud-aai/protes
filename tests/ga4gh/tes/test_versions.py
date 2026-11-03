@@ -208,6 +208,8 @@ def test_incompatibilities_canonical() -> None:
         ("/data/a*", True),
         ("/data/a?", True),
         ("/data/a[bc]", True),
+        ("/data/a[]]", True),
+        ("/data/a[]b]", True),
         ("/data/a[b", False),
         ("/data/a]", False),
         ("/data/a[]", False),

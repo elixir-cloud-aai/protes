@@ -24,7 +24,7 @@ from typing import Any, Self
 
 _VERSION = re.compile(r"v?(\d+)\.(\d+)(?:[.\-+].*)?", re.IGNORECASE)
 # Wildcards of output paths in TES 1.1 (POSIX, IEEE Std 1003.1-2017, 2.13)
-_WILDCARDS = re.compile(r"[*?]|\[[^\]]+\]")
+_WILDCARDS = re.compile(r"[*?]|\[(?:\][^\]]*|[^\]]+)\]")
 
 
 @dataclass(frozen=True, order=True)

@@ -13,6 +13,7 @@ from foca.models.config import Config
 from foca.plugins import Backend
 from foca.plugins.backends import BackendListConfig, RegistryEntry, ServiceEntry
 from kombu.exceptions import OperationalError
+import mongomock
 from pydantic import ValidationError
 from pymongo import MongoClient
 from pymongo.collection import Collection
@@ -1232,3 +1233,13 @@ def test_document_missing(app: FlaskApp) -> None:
         )
         with pytest.raises(ValueError, match="No database document"):
             connector.upsert_fields_in_root_object(root="task", state="QUEUED")
+
+
+def test_deleted_after_cancel_set_by_other_delivery() -> None:
+    """Tracking ends if another delivery of a poll has set `CANCELED`."""
+    collection: Any = mongomock.MongoClient().db.tasks
+    collection.insert_one({"worker_id": "w", "task": {"state": "CANCELED"}})
+    response = requests.Response()
+    response.status_code = 404
+    error = requests.HTTPError(response=response)
+    assert track_task_progress._deleted_after_cancel(collection, "w", error)
