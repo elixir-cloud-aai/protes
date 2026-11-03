@@ -195,8 +195,9 @@ jobs:
 # `storage`, the storage locations of their TES backends); `id` and
 # `organization` are placeholders with reserved example domains (RFC 2606),
 # which the app warns of on startup. `backends` lists the URLs of the TES
-# backends that tasks may be forwarded to, configured and discovered
-# (`runtime_fields`; set it to null to hide them)
+# backends that tasks may be forwarded to, configured and discovered, unless
+# `custom.service_info.list_backends` is false (`runtime_fields`, which also
+# adds `gateway`; set it to null to hide both)
 # Cf. https://foca.readthedocs.io/en/latest/configuration/service-info/
 service_info:
   package: pro-tes
@@ -328,6 +329,10 @@ custom:
     # backends) below the read timeout of a reverse proxy in front of proTES
     # (see `docs/configuration.md`)
     timeout: 15
+  # Whether the service info, which anyone can read, lists the TES backends
+  # (`backends`); its field `gateway` stays either way
+  service_info:
+    list_backends: true
 
 # Plugins (FOCA's gateway plugins, `foca.plugins`) process each new task
 # (`POST /tasks`): they may change the task, choose and order the TES backends

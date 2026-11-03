@@ -86,10 +86,10 @@ decide which of the TES instances are tried, and in which order (see
 TES instances (`backends`: identifier, URL, source, group and labels of
 each, without credentials; the group of discovered TES instances is the
 identifier of their registry entry, by default its URL, so set `id` for
-registries at internal URLs). TES instances at or below the public URL of
-proTES (`server.public_url`, if set; the Helm chart sets it from `hostName`)
-are never used, so that proTES never forwards tasks to itself: proTES
-refuses to start if a configured one is.
+registries at internal URLs), unless you [hide them](#service-info). TES
+instances at or below the public URL of proTES (`server.public_url`, if set;
+the Helm chart sets it from `hostName`) are never used, so that proTES never
+forwards tasks to itself: proTES refuses to start if a configured one is.
 
 Requests to configured TES instances time out after `custom.tes.timeout`
 seconds without data (default: 15), and after 5 seconds while connecting.
@@ -417,13 +417,37 @@ discovered (`backends`, from `service_info.runtime_fields`), and what
 clients may choose per task (`gateway`: `plugins_url`, the path of
 `GET /plugins`, whether clients may choose pipelines and TES instances,
 and the capabilities of the plugins, without their identifiers or
-versions; see [Choices of clients](plugins.md#choices-of-clients)); set
-`runtime_fields` to `null` in an overlay to hide them.
+versions; see [Choices of clients](plugins.md#choices-of-clients)).
 
-!!! warning "The service info lists the TES instances publicly"
+!!! warning "By default, the service info lists the TES instances publicly"
 
     `GET /service-info` needs no token, so anyone can read the identifier,
     URL, source, group and labels of each TES instance, also of those at
-    internal URLs and of those discovered in registries. Setting
-    `runtime_fields` to `null` hides `backends` and `gateway` together;
-    there is no setting to hide only `backends` yet.
+    internal URLs and of those discovered in registries.
+
+To leave out `backends` and keep `gateway`, set this in an overlay (or under
+`config` in the values of the Helm chart):
+
+```yaml
+custom:
+  service_info:
+    list_backends: false
+```
+
+This hides the TES instances from anonymous callers only:
+
+- Any user who can create tasks still gets the identifiers of all TES
+  instances (by default, their URLs) from the provenance of one task
+  (`route.candidates_in` and `route.candidates_out`, see
+  [Provenance](api.md#provenance)), and the URLs of those tried from its tags
+  (`gateway.backend` and `gateway.route`, see [Gateway
+  tags](api.md#gateway-tags)). Setting `plugins.client_backends.enabled` to
+  `false` doesn't change this. For configured TES instances, setting `id`
+  keeps the URL out of the candidates, not out of the tags.
+- Clients that choose TES instances with the tag `gateway.backends` (see
+  [Choices of clients](plugins.md#choices-of-clients)) no longer find their
+  identifiers in the service info.
+- Registries that proTES discovers TES instances in may publish them anyway.
+
+To hide `backends` and `gateway` together, set `service_info.runtime_fields`
+to `null` in an overlay.

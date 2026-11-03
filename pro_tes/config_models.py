@@ -370,20 +370,38 @@ class Tes(ConfigModel):
         return self
 
 
+class ServiceInfo(ConfigModel):
+    """What the service info tells about the TES backends.
+
+    Args:
+        list_backends: Whether the service info, which anyone can read, lists
+            the TES backends (`backends`); its field `gateway` stays either
+            way.
+
+    Attributes:
+        list_backends: Whether the service info lists the TES backends.
+    """
+
+    list_backends: bool = True
+
+
 class CustomConfig(ConfigModel):
     """Custom app configuration.
 
     Args:
         controllers: All controller-related config.
         tes: TES backends and how proTES calls them.
+        service_info: What the service info tells about the TES backends.
 
     Attributes:
         controllers: All controller-related config.
         tes: TES backends and how proTES calls them.
+        service_info: What the service info tells about the TES backends.
     """
 
     controllers: Controllers = Controllers()
     tes: Tes = Tes()
+    service_info: ServiceInfo = ServiceInfo()
 
     @model_validator(mode="before")
     @classmethod
