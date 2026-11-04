@@ -4,6 +4,7 @@ from collections.abc import Callable, Iterator
 from copy import deepcopy
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
 import socket
 import ssl
 import threading
@@ -915,6 +916,55 @@ def test_post_redirect_not_followed(
         server.shutdown()
         server.server_close()
     assert RedirectingHandler.methods == ["POST", "POST"]
+
+
+class TaskHandler(BaseHTTPRequestHandler):
+    """Handler of a local server that serves a large task."""
+
+    def do_GET(self) -> None:
+        """Serve the task."""
+        body = json.dumps(
+            {"id": "remote-1", "state": "COMPLETE", "name": "x" * 5000}
+        ).encode()
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format: str, *args: Any) -> None:
+        """Log nothing."""
+
+
+@pytest.fixture
+def task_server(configured: None, loopback: None) -> Iterator[str]:
+    """URL of a local server with a large task, configured as a backend."""
+    server = ThreadingHTTPServer(("127.0.0.1", 0), TaskHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    url = f"http://127.0.0.1:{server.server_address[1]}"
+    conf = get_custom_config(CustomConfig).tes
+    conf.backends = BackendListConfig(
+        [
+            *conf.backends.root,
+            ServiceEntry(type="ga4gh-tes", url=url, url_schemes=["http"], auth="none"),
+        ]
+    )
+    yield url
+    server.shutdown()
+    server.server_close()
+
+
+def test_full_view_size_limit(
+    task_server: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Tasks in the view `FULL` hold logs of any size, which are not read whole."""
+    client = backends.create_client(host=task_server)
+    assert client.get_task("remote-1", view="FULL").name == "x" * 5000
+    monkeypatch.setattr(backends, "MAX_RESPONSE_SIZE", 1000)
+    with pytest.raises(requests.RequestException, match="larger than 1000 bytes"):
+        client.get_task("remote-1", view="FULL")
+    # other requests aren't affected
+    assert client.get_task("remote-1").name == "x" * 5000
 
 
 def test_get_task_once(

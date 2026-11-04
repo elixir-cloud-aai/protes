@@ -399,10 +399,13 @@ plugins:
   received and as forwarded). Small logs are kept; what they leave is shared
   among the longer ones, which keep their end, where errors usually are. proTES
   gets them once when a task has finished (`GET /tasks/{id}?view=FULL` at the TES
-  instance), and holds them in memory in the Celery worker meanwhile (those of
-  discovered TES instances up to 64 MiB). Their owners can read them in the view
-  `FULL`, so TES instances should keep secrets out of them. With `0`, proTES
-  neither gets nor stores them;
+  instance), and holds them in memory in the Celery worker meanwhile: a task
+  whose response is larger than 64 MiB stays without them. If a task would still
+  exceed the limit of MongoDB (e.g., with very many short logs), proTES stores it
+  without these logs, or if need be also without the executors' logs and the
+  outputs, and logs an error. Their owners can read them in the view `FULL`, so
+  TES instances should keep secrets out of them. With `0`, proTES neither gets
+  nor stores them;
 - `post_task.max_create_time`: the number of seconds (default 3600, at
   most 31536000, i.e., a year) after which tasks that are still being
   created, i.e., in state `UNKNOWN` without identifier at a TES instance

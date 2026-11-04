@@ -29,7 +29,8 @@ change between checks (DNS rebinding) can't lead requests to private
 addresses (unless allowed, `allow_private_addresses` of the registry entry);
 their redirects are not followed, and their responses are limited to
 `MAX_RESPONSE_SIZE` bytes (not those of redirects yet, which FOCA 0.19
-reads whole). Requests to configured backends time out after
+reads whole). Tasks in the view `FULL` are limited to that size for configured
+backends, too. Requests to configured backends time out after
 `custom.tes.timeout` seconds without data, and after `CONNECT_TIMEOUT`
 seconds while connecting; requests to discovered backends must end within
 `custom.tes.timeout` seconds as a whole, and connecting within FOCA's
@@ -121,9 +122,11 @@ DEFAULT_TOKEN_LIFETIME = 60
 # requests, `custom.tes.timeout`); short, as requests that time out while
 # connecting are sent to the next backend
 CONNECT_TIMEOUT = 5
-# Maximum size of responses of discovered backends, in bytes (e.g., tasks
-# with their logs)
+# Maximum size of responses of discovered backends, and of tasks in the view
+# `FULL` of all backends, whose logs can be of any size, in bytes
 MAX_RESPONSE_SIZE = 64 * 1024 * 1024
+# Size of the parts in which responses limited to it are read, in bytes
+RESPONSE_CHUNK_SIZE = 64 * 1024
 # Label of a backend with its TES version, which wins over its service info
 TES_VERSION_LABEL = "tes.version"
 # Timeout of reading the service info of a backend, in seconds; short, as
@@ -743,7 +746,9 @@ class TesClient(tes.HTTPClient):
         kwargs = self._request_params(params={"view": view})
         timeout = kwargs.pop("timeout")
         url = f"{self.url}{self.api_path}/tasks/{quote_id(task_id)}"
-        response = self._request("GET", url, timeout=timeout, **kwargs)
+        response = self._request(
+            "GET", url, timeout=timeout, limited=view == "FULL", **kwargs
+        )
         response.raise_for_status()
         body = response.json()
         if isinstance(body, dict):
@@ -879,7 +884,12 @@ class TesClient(tes.HTTPClient):
         )
 
     def _request(
-        self, method: str, url: str, timeout: tuple[float, float], **kwargs: Any
+        self,
+        method: str,
+        url: str,
+        timeout: tuple[float, float],
+        limited: bool = False,
+        **kwargs: Any,
     ) -> requests.Response:
         """Send a request, through the guarded client for discovered backends.
 
@@ -892,6 +902,8 @@ class TesClient(tes.HTTPClient):
             url: URL of the request.
             timeout: Timeouts of connecting and of reading, in seconds
                 (configured backends only).
+            limited: Whether the response of a configured backend is limited to
+                `MAX_RESPONSE_SIZE` bytes, like all of discovered backends.
             **kwargs: Other arguments of `requests.request()`; for discovered
                 backends, only `params`, `headers`, `data` and `auth`.
 
@@ -906,6 +918,12 @@ class TesClient(tes.HTTPClient):
                 `requests.ConnectionError` if it may have been.
         """
         if self.guarded is None:
+            if limited:
+                return read_limited(
+                    requests.request(
+                        method, url, timeout=timeout, stream=True, **kwargs
+                    )
+                )
             return requests.request(method, url, timeout=timeout, **kwargs)
         unsupported = set(kwargs) - {
             "params",
@@ -1019,6 +1037,31 @@ def response_headers(response: requests.Response) -> Headers:
         except (TypeError, ValueError):
             logger.warning("Header %r of the response of a backend left out", name)
     return headers
+
+
+def read_limited(response: requests.Response) -> requests.Response:
+    """Read the body of a streamed response, up to `MAX_RESPONSE_SIZE` bytes.
+
+    Args:
+        response: Streamed response.
+
+    Returns:
+        The response, with its body.
+
+    Raises:
+        requests.RequestException: The body is larger.
+    """
+    content = bytearray()
+    with response:
+        for chunk in response.iter_content(chunk_size=RESPONSE_CHUNK_SIZE):
+            content += chunk
+            if len(content) > MAX_RESPONSE_SIZE:
+                raise requests.RequestException(
+                    f"Response larger than {MAX_RESPONSE_SIZE} bytes",
+                    response=response,
+                )
+    response._content = bytes(content)
+    return response
 
 
 def as_response(guarded: HttpResponse, url: str) -> requests.Response:
