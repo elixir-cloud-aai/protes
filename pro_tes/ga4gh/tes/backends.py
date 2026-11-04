@@ -308,8 +308,9 @@ class TokenProvider:
                 scheme = split_server_url(endpoint, "token endpoint").scheme
         if not isinstance(endpoint, str) or scheme not in config.url_schemes:
             raise BackendAuthError(
-                f"OpenID Connect discovery document of {issuer!r} has no token"
-                f" endpoint with an allowed URL scheme ({config.url_schemes})"
+                f"OpenID Connect discovery document of {issuer!r} has no valid token"
+                f" endpoint with an allowed URL scheme ({config.url_schemes}), without"
+                " user info"
             )
         self._token_endpoints[issuer] = endpoint
         return endpoint
