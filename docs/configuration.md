@@ -428,17 +428,20 @@ plugins:
   `page_size`s are reduced to it (default and upper limit 2047: the TES
   specification requires fewer than 2048);
 - `list_tasks.max_page_size_full`: the maximum number of tasks per page of
-  the view `FULL` (default 64), whose tasks may be large (e.g., with inline
+  the view `FULL` (default 64; 6 in the [Helm chart](deployment.md), with its
+  memory limit of 256 MiB), whose tasks may be large (e.g., with inline
   contents of inputs and logs); larger `page_size`s, and the default page
   size, are reduced to it. Only the number of tasks is limited, not the
   size of a page: a task may be as large as the [request size
-  limit](#request-size-limit) (1 MiB by default), plus the logs that its
-  TES instance reports, so a page of the view `FULL` may be about
-  `max_page_size_full` times that size (64 MiB with the defaults), which a
-  Gunicorn worker holds in memory while serving it (for each request that
-  it serves at once). For small memory limits (e.g., the 256 MiB of the
-  [Helm chart](deployment.md)), lower `max_page_size_full` (e.g., to 8) or
-  raise the memory, if users may store large tasks.
+  limit](#request-size-limit) (1 MiB by default), plus its logs
+  (`post_task.max_log_size`, 1 MiB by default), so a page of the view `FULL`
+  may be about `max_page_size_full` times that size (128 MiB with the app's
+  defaults). A Gunicorn worker holds about 3 times the size of a page in
+  memory while serving it, as the documents, their JSON and the encoded body
+  exist at the same time, for each request that it serves at once (one per
+  thread). Set it and the memory limit together: about 36 MiB per request with
+  6, and about 384 MiB with 64, on top of about 90 MiB of the app; more if logs
+  hold text that JSON escapes (up to 6 times its size, e.g., control characters).
 
 ## Security
 

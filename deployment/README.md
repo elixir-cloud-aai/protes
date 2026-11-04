@@ -27,7 +27,11 @@ config on startup (via `FOCA_CONFIG_OVERLAY`), for the app and the worker:
   `server.host` and `server.port` have no effect, as they apply to the
   development server only (see [Server](#server)); the broker is set via its
   Secret, not `jobs` (see [Celery worker and
-  broker](#celery-worker-and-broker)).
+  broker](#celery-worker-and-broker)). By default, the chart sets
+  `config.custom.controllers.list_tasks.max_page_size_full` to 6 (the app's
+  default is 64), so that pages of the view `FULL` fit its memory limit; to
+  raise it, also raise `protes.resources` (see
+  [Tasks](https://protes.readthedocs.io/en/latest/configuration/#tasks)).
 
 The identity provider is deployment configuration, without defaults (see
 [Access control](https://protes.readthedocs.io/en/latest/access-control/)).
