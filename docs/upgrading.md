@@ -161,6 +161,20 @@ before keep what they have.
 `[...]` literally (e.g., `/data/sample[1].txt`): as TES 1.1 has no way to escape
 them, set `path_prefix` for them.
 
+**Paths in tasks:** proTES now rejects tasks with a path over 4096 bytes (`400
+Bad Request`; `path` of inputs and outputs, `path_prefix`, `volumes`, and
+`workdir`, `stdin`, `stdout` and `stderr` of executors; see
+[API](api.md)).
+
+**API paths:** TES instances that serve the TES API elsewhere than at
+`/ga4gh/tes/v1`, such as TESP-API at `/v1`, can now set `api_path` (`apiPath` in
+the chart; see [API paths](configuration.md#api-paths)). No change is needed
+otherwise.
+
+**Tested TES implementations:** this version ran against real instances of Funnel
+0.11.14 and TESP-API 0.2.0 in CI, but not against TESK or on Rahti (see [Notes on
+TES implementations](configuration.md#notes-on-tes-implementations)).
+
 **Rolling upgrades:** Celery workers of 0.4.0 can turn `CANCELING` back to
 `RUNNING` until they stop, which corrects itself once the task is final. If its
 TES instance deletes it instead, the task ends up `UNKNOWN`, until it is canceled
