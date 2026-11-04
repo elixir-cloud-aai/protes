@@ -111,6 +111,17 @@ turns it off, see [Tasks](configuration.md#tasks)). Their owners can read them,
 and stored tasks and pages of the view `FULL` get larger. Tasks that finished
 before keep what they have.
 
+**Outputs with wildcards:** proTES now rejects outputs with wildcards in their
+`path` and without `path_prefix` (`400 Bad Request`), as TES 1.1 requires it (see
+[TES versions](tes-versions.md)). That includes paths that mean `*`, `?` or
+`[...]` literally (e.g., `/data/sample[1].txt`): as TES 1.1 has no way to escape
+them, set `path_prefix` for them.
+
+**Rolling upgrades:** Celery workers of 0.4.0 can turn `CANCELING` back to
+`RUNNING` until they stop, which corrects itself once the task is final. If its
+TES instance deletes it instead, the task ends up `UNKNOWN`, until it is canceled
+again. If that matters, scale the old worker Deployment to 0 first.
+
 **Chart:** the chart now sets
 `config.custom.controllers.list_tasks.max_page_size_full` to 6 instead of the
 app's 64, as one page of the view `FULL` could exceed its memory limit of 256 MiB; clients

@@ -47,6 +47,7 @@ from pro_tes.ga4gh.tes.versions import (
     CANONICAL,
     TesVersion,
     downgrade_task,
+    has_wildcards,
     incompatibilities,
 )
 from pro_tes.utils.misc import has_credentials, strip_auth
@@ -200,7 +201,8 @@ def tes_task(payload: Any) -> tes.Task:
     Raises:
         TypeError: The task is not a JSON object, or has fields or values
             that py-tes doesn't accept.
-        ValueError: The task has values that py-tes doesn't accept.
+        ValueError: The task has values that py-tes doesn't accept, or an output
+            with wildcards without the `path_prefix` that TES 1.1 requires.
     """
     if not isinstance(payload, dict):
         raise TypeError("Tasks are JSON objects")
@@ -213,6 +215,9 @@ def tes_task(payload: Any) -> tes.Task:
         task["inputs"] = [tes.models.Input(**item) for item in task["inputs"]]
     if task.get("outputs") is not None:
         task["outputs"] = [tes.models.Output(**item) for item in task["outputs"]]
+        for output in task["outputs"]:
+            if not output.path_prefix and has_wildcards(str(output.path)):
+                raise ValueError("Output with wildcards in its path has no path_prefix")
     if task.get("resources") is not None:
         task["resources"] = tes.models.Resources(**task["resources"])
     if task.get("executors") is not None:

@@ -415,6 +415,24 @@ Gateway API, OpenShift and cloud load balancers):
   reachable within the cluster, and Helm prints a warning after
   installing.
 
+On OpenShift (e.g., CSC's Rahti), disable the Ingress, which is enabled by
+default and has no TLS unless you configure it: the chart then creates the
+Route. Also set the timeout of the router, usually 30 seconds, above the
+longest duration of a request to create a task (see
+[Configuration](https://protes.readthedocs.io/en/latest/configuration/)):
+
+```yaml
+protes:
+  ingress:
+    enabled: false
+  route:
+    annotations:
+      haproxy.router.openshift.io/timeout: 70s
+```
+
+A TES instance that serves the TES API at another path, such as TESP, needs
+`apiPath` in `tes.backends` (see [Configuration](#configuration)).
+
 The chart sets no defaults for a particular ingress controller or Gateway
 implementation: their annotations, policies and NetworkPolicy peers go
 into the values (see the library chart's documentation, linked above, for

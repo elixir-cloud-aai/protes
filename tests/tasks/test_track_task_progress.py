@@ -596,6 +596,43 @@ def test_too_many_logs(
         assert not log.get("system_logs")
 
 
+def test_more_logs_than_stored(tasks: Collection[dict[str, Any]]) -> None:
+    """Further log entries of a backend (e.g., of retries) are added."""
+    db_client = DbDocumentConnector(collection=tasks, worker_id=str(ARGS["worker_id"]))
+    response = tes.Task(
+        id="remote-1",
+        state="COMPLETE",
+        logs=[
+            tes.TaskLog(logs=[], outputs=[]),
+            tes.TaskLog(
+                logs=[tes.ExecutorLog(exit_code=1)],
+                outputs=[
+                    tes.OutputFileLog(
+                        url="s3://user:secret@bucket/out", path="/out", size_bytes=1
+                    )
+                ],
+                system_logs=["retried"],
+                start_time="2026-11-04T10:00:00Z",
+                end_time="2026-11-04T11:00:00Z",
+                metadata={"remote": "value"},
+            ),
+        ],
+    )
+    track_task_progress._store_final(
+        db_client=db_client, worker_id=str(ARGS["worker_id"]), response=response
+    )
+    document = tasks.find_one({"worker_id": ARGS["worker_id"]})
+    assert document is not None
+    assert len(document["task"]["logs"]) == 2
+    log = document["task"]["logs"][1]
+    assert log["logs"] == [{"exit_code": 1}]
+    assert log["outputs"][0]["url"] == "s3://bucket/out"
+    assert log["system_logs"] == ["retried"]
+    assert log["start_time"] == "2026-11-04T10:00:00+00:00"
+    assert log["end_time"] == "2026-11-04T11:00:00+00:00"
+    assert "metadata" not in log
+
+
 def test_no_log_texts_without_limit() -> None:
     """With a limit of 0, logs that a backend sends anyway aren't stored."""
     logs = [

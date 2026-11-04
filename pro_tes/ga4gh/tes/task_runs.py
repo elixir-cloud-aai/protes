@@ -5,6 +5,7 @@ from contextlib import suppress
 from copy import deepcopy
 from dataclasses import replace
 from functools import cached_property
+from http import HTTPStatus
 from itertools import zip_longest
 import logging
 import re
@@ -37,6 +38,7 @@ from pro_tes.config_models import CustomConfig
 from pro_tes.exceptions import (
     BackendAuthError,
     BackendOutcomeUnknown,
+    BackendRefused,
     BadRequest,
     NoEligibleBackend,
     ProvenanceNotFound,
@@ -164,6 +166,94 @@ class _Accepted(NamedTuple):
     response: BackendResponse
     remote_task_id: str
     tes_version: str
+
+
+# Answers of backends to the cancel of a task that they no longer have
+GONE = (HTTPStatus.NOT_FOUND, HTTPStatus.GONE)
+REFUSED = "TES instance refused to cancel a task"
+
+
+def _cancel_at_backend(cli: Any, task_id: str, tracked: bool) -> bool:
+    """Cancel a task at its backend.
+
+    A refusal may mean that the task has finished, or that the backend no longer
+    has it, or not (e.g., a `404` of a proxy), so the task is read once, unless
+    nothing tracks it, which would have to store the result.
+
+    Args:
+        cli: Client of the backend.
+        task_id: Identifier of the task at the backend.
+        tracked: Whether polls track the task (not those of early versions).
+
+    Returns:
+        Whether the task is being canceled: also if the backend is doing so
+        already, or no longer has it, which tracking handles; not if it has
+        finished, whose final state is left to tracking.
+
+    Raises:
+        pro_tes.exceptions.BackendOutcomeUnknown: The backend wasn't reached, or
+            may have canceled the task, but did not confirm it.
+        pro_tes.exceptions.BackendRefused: The backend refused the request, and
+            the task hasn't finished.
+    """
+    try:
+        cli.cancel_task(task_id=task_id)
+    except requests.HTTPError as exc:
+        status = exc.response.status_code if exc.response is not None else None
+        if status is None or status >= HTTPStatus.INTERNAL_SERVER_ERROR:
+            raise BackendOutcomeUnknown(
+                f"TES instance failed to cancel a task: {status}",
+                reason=f"http_{status}",
+            ) from exc
+        return _after_refusal(cli=cli, task_id=task_id, tracked=tracked, cause=exc)
+    except requests.RequestException as exc:
+        raise BackendOutcomeUnknown(
+            f"TES instance not reached to cancel a task: {type(exc).__name__}"
+        ) from exc
+    return True
+
+
+def _after_refusal(
+    cli: Any, task_id: str, tracked: bool, cause: requests.HTTPError
+) -> bool:
+    """Check what a backend's refusal to cancel a task means.
+
+    Args:
+        cli: Client of the backend.
+        task_id: Identifier of the task at the backend.
+        tracked: Whether polls track the task.
+        cause: The refusal.
+
+    Returns:
+        Whether the task is being canceled (cf. :py:func:`_cancel_at_backend`).
+
+    Raises:
+        pro_tes.exceptions.BackendRefused: The task hasn't finished, or nothing
+            tracks it.
+    """
+    if not tracked:
+        raise BackendRefused(REFUSED) from cause
+    try:
+        state = cli.get_task(task_id=task_id).state
+    except Exception as exc:
+        # only if the refusal said so as well: a backend may also hide tasks
+        response = getattr(exc, "response", None)
+        if (
+            getattr(response, "status_code", None) == HTTPStatus.NOT_FOUND
+            and cause.response is not None
+            and cause.response.status_code in GONE
+        ):
+            return True
+        logger.warning(
+            "State of a task to cancel not available from its TES instance: %s",
+            type(exc).__name__,
+        )
+        raise BackendRefused(REFUSED) from cause
+    if state in States.FINISHED:
+        return False
+    if state == TesState.CANCELING.value:
+        return True
+    raise BackendRefused(REFUSED) from cause
 
 
 class TaskRuns:
@@ -855,13 +945,13 @@ class TaskRuns:
                 task is no longer configured.
             pro_tes.exceptions.BackendOutcomeUnknown: The TES instance may
                 have canceled the task, but did not confirm it.
+            pro_tes.exceptions.BackendRefused: The TES instance refused to
+                cancel the task, which has not finished.
             pro_tes.exceptions.TaskNotCancelable: The task has not
                 finished, but its identifier at its TES instance is unknown
                 (e.g., it was not forwarded yet).
             pro_tes.exceptions.TaskNotFound: The requested task is not
                 available.
-            requests.RequestException: The TES instance was not reached, or
-                rejected the request.
         """
         document, db_document = self._find_task(id=id)
         task_id = self._remote_task_id(document=document, db_document=db_document)
@@ -899,7 +989,17 @@ class TaskRuns:
                 host=db_document.tes_endpoint.host,
                 base_path=db_document.tes_endpoint.base_path,
             )
-            cli.cancel_task(task_id=task_id)
+            if not _cancel_at_backend(
+                cli=cli,
+                task_id=task_id,
+                tracked=isinstance(db_document.tes_endpoint.task_id, str),
+            ):
+                logger.info(
+                    "Task '%s' with worker ID '%s' has finished at its TES instance.",
+                    id,
+                    db_document.worker_id,
+                )
+                return {}
             # unless tracking stored another state meanwhile: the backend
             # may accept cancels of finished tasks (as no-ops); tracking keeps
             # `CANCELING` until the task is final
