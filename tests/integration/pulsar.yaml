@@ -1,0 +1,5 @@
+# Pulsar for the integration test (`compose.yaml`), as in TESP-API's own Compose
+# file, with a staging directory that has the same path on the host
+conda_auto_init: false
+conda_auto_install: false
+staging_directory: /tmp/protes-integration/pulsar
