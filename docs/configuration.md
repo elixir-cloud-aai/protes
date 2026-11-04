@@ -217,7 +217,9 @@ To tell the versions in a registry apart, use one entry per version, with its
 ### Notes on TES implementations
 
 What was seen when running these versions through proTES; other versions may
-behave differently.
+behave differently. CI runs tasks on real instances of Funnel 0.11.14 and
+TESP-API 0.2.0 with Pulsar (see [Testing](development.md)). TESK and a deployment
+on Rahti, CSC's OpenShift, were not tested.
 
 [TESP-API](https://github.com/CESNET/tesp-api) 0.2.0:
 

@@ -140,7 +140,7 @@ resolved pipeline (`pipeline.resolved`), e.g., shortened:
 ```json
 {
   "engine": {"foca": "0.20.0", "plugin_api": 1,
-             "app": {"name": "proTES", "version": "0.4.0"}},
+             "app": {"name": "proTES", "version": "{{ version }}"}},
   "request_id": "4f3c...",
   "pipeline": {"source": "default", "preset": null, "requested": null,
                "resolved": [{"id": "route", "alternatives": ["..."]}],
