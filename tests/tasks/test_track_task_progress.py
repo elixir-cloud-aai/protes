@@ -386,11 +386,29 @@ def test_logs_limited(
 
 
 @pytest.mark.parametrize(
+    ("sizes", "limit", "share"),
+    [
+        ([], 10, 10),
+        ([3, 3], 10, 10),
+        ([5, 5], 10, 10),
+        ([1, 100], 10, 9),
+        ([100, 100], 10, 5),
+        ([1, 2, 100, 100], 11, 4),
+        ([100], 0, 0),
+    ],
+)
+def test_log_share(sizes: list[int], limit: int, share: int) -> None:
+    """Short logs are kept; what they leave is shared among the long ones."""
+    assert track_task_progress._log_share(sizes, limit) == share
+
+
+@pytest.mark.parametrize(
     ("value", "size", "expected"),
     [
         ("abc", 3, "abc"),
         ("abcd", 3, "bcd"),
         ("abcd", 0, ""),
+        ("x" * 100, 50, f"{track_task_progress.TRUNCATED}{'x' * 22}"),
         ("é", 1, ""),
         ("a\ud800", 10, "a?"),
     ],

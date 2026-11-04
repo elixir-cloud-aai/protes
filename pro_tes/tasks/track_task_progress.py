@@ -245,6 +245,26 @@ def _cut(value: str, size: int) -> str:
     return note + data[len(data) - size + len(note) :].decode(errors="ignore")
 
 
+def _log_share(sizes: list[int], limit: int) -> int:
+    """Get the size of each log that keeps a set of logs within a limit.
+
+    Args:
+        sizes: Sizes of the logs.
+        limit: Maximum size of the logs together.
+
+    Returns:
+        The size to cut longer logs to: what the shorter ones leave of the
+        limit, shared equally; the limit if all logs fit.
+    """
+    left = limit
+    for position, size in enumerate(sorted(sizes)):
+        share = left // (len(sizes) - position)
+        if size > share:
+            return share
+        left -= size
+    return limit
+
+
 def _limit_logs(logs: list[TesTaskLog], limit: int) -> None:
     """Limit the size of the logs of a task.
 
@@ -263,17 +283,9 @@ def _limit_logs(logs: list[TesTaskLog], limit: int) -> None:
         for text in (executor_log.stdout, executor_log.stderr)
         if text is not None
     ] + [text for log in logs for text in log.system_logs or []]
-    sizes = sorted(len(text.encode("utf-8", errors="replace")) for text in texts)
-    # the size of each log that keeps all of them within the limit
-    left = limit
-    size = limit
-    for position, current in enumerate(sizes):
-        size = left // (len(sizes) - position)
-        if current > size:
-            break
-        left -= current
-    else:
-        size = limit
+    size = _log_share(
+        [len(text.encode("utf-8", errors="replace")) for text in texts], limit
+    )
     for log in logs:
         for executor_log in log.logs or []:
             if executor_log.stdout is not None:

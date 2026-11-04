@@ -31,9 +31,9 @@ identifier and state), `BASIC` (without the contents of inputs, the system
 logs and the executors' standard output and error) and `FULL` (`view`), as
 the TES specification describes. The view `FULL` has the logs of the TES
 instance once the task has finished, as proTES gets them once then: earlier, it
-has none, and if they can't be got, the task finishes without them. proTES stores
-at most `max_log_size` of them per task, and cuts longer ones at their start (see
-[Tasks](configuration.md#tasks)). Times (`creation_time`, and `start_time`
+has none, and if that one request fails, the task stays without them. proTES
+stores at most `max_log_size` of them per task, and keeps the end of longer ones
+(see [Tasks](configuration.md#tasks)). Times (`creation_time`, and `start_time`
 and `end_time` of proTES's log of a task) are in UTC, in RFC 3339 format.
 
 ## Tasks
