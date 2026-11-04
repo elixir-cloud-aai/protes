@@ -102,6 +102,11 @@ held_v1="$(jq -r .id "${body}")"
 await_state "${held_v1}" RUNNING
 check POST "/tasks/${held_v1}:cancel" 200 '. == {}'
 await_state "${held_v1}" CANCELED
+# The logs of TES instances, in the view `FULL` only
+check GET "/tasks/${id_11}?view=FULL" 200 \
+  '.logs[0].logs[0].stdout == "fake stdout" and .logs[0].logs[0].stderr == "fake stderr" and .logs[0].system_logs == ["fake system log"]'
+check GET "/tasks/${id_11}?view=BASIC" 200 \
+  '(.logs[0].logs[0] | has("stdout") | not) and (.logs[0] | has("system_logs") | not)'
 # List filters
 check GET '/tasks?view=MINIMAL' 200 "any(.tasks[]; .id == \"${id}\")"
 check GET '/tasks?view=MINIMAL&state=COMPLETE' 200 "any(.tasks[]; .id == \"${id}\")"

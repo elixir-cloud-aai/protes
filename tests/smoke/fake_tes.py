@@ -71,6 +71,14 @@ SERVICE_INFO = {
     "organization": {"name": "Example Organization", "url": "https://example.org"},
     "version": "1.0.0",
 }
+# Logs of tasks in the view `FULL` only, as the TES specification has it
+FULL_LOGS = [
+    {
+        "logs": [{"exit_code": 0, "stdout": "fake stdout", "stderr": "fake stderr"}],
+        "outputs": [],
+        "system_logs": ["fake system log"],
+    }
+]
 TASKS: dict[str, dict[str, Any]] = {}
 LOCK = threading.Lock()
 
@@ -259,6 +267,9 @@ class Handler(BaseHTTPRequestHandler):
         if task is None or task_id == path:
             self._send(HTTPStatus.NOT_FOUND, {"msg": "not found"})
             return
+        view = parse_qs(urlsplit(self.path).query).get("view", ["MINIMAL"])[0]
+        if view == "FULL":
+            task = {**task, "logs": FULL_LOGS}
         self._send(HTTPStatus.OK, task)
 
     def do_POST(self) -> None:

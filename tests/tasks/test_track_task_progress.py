@@ -54,6 +54,12 @@ class FakeClient:
 
     states: ClassVar[list[str | None]] = ["COMPLETE"]
     outputs: ClassVar[list[tes.OutputFileLog]] = [OUTPUT]
+    # Views of the requests; logs of the view `FULL`, and whether it fails or
+    # serves another state
+    views: ClassVar[list[str]] = []
+    full_logs: ClassVar[dict[str, Any]] = {}
+    full_error: ClassVar[Exception | None] = None
+    full_state: ClassVar[str | None] = None
     # Clients created, and requested task identifiers
     clients: ClassVar[list["FakeClient"]] = []
     requested: ClassVar[list[str]] = []
@@ -67,12 +73,24 @@ class FakeClient:
         self.entry = entry
         self.clients.append(self)
 
-    def get_task(self, task_id: str, **kwargs: Any) -> tes.Task:
+    def get_task(self, task_id: str, view: str = "BASIC") -> tes.Task:
         """Get the task, in its next state, with one log.
 
+        The view `FULL` is served the last state, with the logs of `full_logs`.
+
         Raises:
+            Exception: The view is `FULL`, and `full_error` is set.
             requests.HTTPError: The state is `None`.
         """
+        self.views.append(view)
+        if view == "FULL":
+            if self.full_error is not None:
+                raise self.full_error
+            return tes.Task(
+                id=task_id,
+                state=self.full_state or self.states[-1],
+                logs=[tes.TaskLog(outputs=self.outputs, **self.full_logs)],
+            )
         self.requested.append(task_id)
         state = self.states[0]
         if len(self.states) > 1:
@@ -93,6 +111,10 @@ def client_class(monkeypatch: pytest.MonkeyPatch) -> type[FakeClient]:
     monkeypatch.setattr(FakeClient, "outputs", [OUTPUT])
     monkeypatch.setattr(FakeClient, "clients", [])
     monkeypatch.setattr(FakeClient, "requested", [])
+    monkeypatch.setattr(FakeClient, "views", [])
+    monkeypatch.setattr(FakeClient, "full_logs", {})
+    monkeypatch.setattr(FakeClient, "full_error", None)
+    monkeypatch.setattr(FakeClient, "full_state", None)
     monkeypatch.setattr(backends, "TesClient", FakeClient)
     return FakeClient
 
@@ -250,6 +272,132 @@ def test_task_tracked(
         {"url": "s3://bucket/out", "path": "/out", "size_bytes": "10"}
     ]
     assert not scheduled
+
+
+def stored_log(collection: Collection[dict[str, Any]]) -> dict[str, Any]:
+    """Get the first log of the stored task.
+
+    Args:
+        collection: Database collection of the tasks.
+
+    Returns:
+        The log, as stored.
+    """
+    document = collection.find_one({"worker_id": ARGS["worker_id"]})
+    assert document is not None
+    log: dict[str, Any] = document["task"]["logs"][0]
+    return log
+
+
+def test_full_logs_stored(
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+    scheduled: list[dict[str, Any]],
+) -> None:
+    """A finished task is got once in the view `FULL`, for its logs."""
+    client_class.states = ["RUNNING", "COMPLETE"]
+    client_class.full_logs = {
+        "logs": [tes.ExecutorLog(exit_code=1, stdout="out", stderr="err")],
+        "system_logs": ["node failed"],
+    }
+    run()
+    assert client_class.views == ["BASIC"]
+    track(scheduled)
+    assert client_class.views == ["BASIC", "BASIC", "FULL"]
+    log = stored_log(tasks)
+    assert log["logs"][0]["stdout"] == "out"
+    assert log["logs"][0]["stderr"] == "err"
+    assert log["system_logs"] == ["node failed"]
+
+
+@pytest.mark.parametrize(
+    "error", [requests.ReadTimeout("slow"), ValueError("no JSON"), KeyError("x")]
+)
+def test_full_logs_unavailable(
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+    scheduled: list[dict[str, Any]],
+    error: Exception,
+) -> None:
+    """A failure to get the logs doesn't lose the final state and the outputs."""
+    client_class.full_error = error
+    run()
+    document = tasks.find_one({"worker_id": ARGS["worker_id"]})
+    assert document is not None
+    assert document["task"]["state"] == "COMPLETE"
+    assert document["task"]["logs"][0]["outputs"][0]["url"] == OUTPUT.url
+    assert not scheduled
+
+
+def test_full_logs_other_state(
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+) -> None:
+    """A view `FULL` in another state than the final one isn't used."""
+    client_class.full_state = "RUNNING"
+    client_class.full_logs = {"system_logs": ["log"]}
+    run()
+    log = stored_log(tasks)
+    assert not log.get("system_logs")
+    document = tasks.find_one({"worker_id": ARGS["worker_id"]})
+    assert document is not None
+    assert document["task"]["state"] == "COMPLETE"
+
+
+def test_full_logs_turned_off(
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With `max_log_size: 0`, logs are neither got nor stored."""
+    post_task = get_custom_config(CustomConfig).controllers.post_task
+    monkeypatch.setattr(post_task, "max_log_size", 0)
+    client_class.outputs = [OUTPUT]
+    run()
+    assert client_class.views == ["BASIC"]
+    assert stored_log(tasks)["outputs"]
+
+
+def test_logs_limited(
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Small logs are kept, and long ones keep their end, within the limit."""
+    post_task = get_custom_config(CustomConfig).controllers.post_task
+    monkeypatch.setattr(post_task, "max_log_size", 1000)
+    client_class.full_logs = {
+        "logs": [
+            tes.ExecutorLog(exit_code=1, stdout="o" * 5000 + "END", stderr="small"),
+        ],
+        "system_logs": ["é" * 5000 + "END"],
+    }
+    run()
+    log = stored_log(tasks)
+    stdout = log["logs"][0]["stdout"]
+    system_log = log["system_logs"][0]
+    assert log["logs"][0]["stderr"] == "small"
+    assert stdout.startswith(track_task_progress.TRUNCATED)
+    assert stdout.endswith("END")
+    assert system_log.startswith(track_task_progress.TRUNCATED)
+    assert system_log.endswith("éEND")
+    total = len(stdout.encode()) + len(system_log.encode()) + len("small")
+    assert 900 < total <= 1000
+
+
+@pytest.mark.parametrize(
+    ("value", "size", "expected"),
+    [
+        ("abc", 3, "abc"),
+        ("abcd", 3, "bcd"),
+        ("abcd", 0, ""),
+        ("é", 1, ""),
+        ("a\ud800", 10, "a?"),
+    ],
+)
+def test_cut(value: str, size: int, expected: str) -> None:
+    """Logs are cut in bytes, to whole characters, and can be stored."""
+    assert track_task_progress._cut(value, size) == expected
 
 
 def test_output_credentials_removed(

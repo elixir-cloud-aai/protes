@@ -104,6 +104,13 @@ TES 1.0 otherwise (see [TES versions](configuration.md#tes-versions)). Plugins
 get tasks in TES 1.1, as before, and route only among TES instances that can run
 them.
 
+**Logs in the view `FULL`:** proTES now gets a finished task once more from its
+TES instance in the view `FULL`, and stores its standard output and error and
+system logs, at most `post_task.max_log_size` per task (1 MiB by default; `0`
+turns it off, see [Tasks](configuration.md#tasks)). Their owners can read them,
+and stored tasks and pages of the view `FULL` get larger. Tasks that finished
+before keep what they have.
+
 ## To version 0.4.0
 
 Check each item; the sections below have the details.
