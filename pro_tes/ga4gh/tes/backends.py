@@ -576,7 +576,11 @@ def known_fields(value: Any, model: type = tes.Task) -> Any:
         The value, without the unknown fields; not changed in place.
     """
     if isinstance(value, list):
-        return [known_fields(item, model) for item in value]
+        # only objects: lists of lists are invalid, however deep they are
+        return [
+            known_fields(item, model) if isinstance(item, dict) else item
+            for item in value
+        ]
     if not isinstance(value, dict):
         return value
     fields = signature(model).parameters

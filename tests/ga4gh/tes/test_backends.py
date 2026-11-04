@@ -880,6 +880,14 @@ def test_known_fields_no_object(value: Any) -> None:
     assert backends.known_fields(value) == value
 
 
+def test_known_fields_nested_lists() -> None:
+    """Lists of lists, which are invalid, are not searched, however deep."""
+    nested: list[Any] = []
+    for _ in range(100_000):
+        nested = [nested]
+    assert backends.known_fields({"inputs": nested}) == {"inputs": nested}
+
+
 def test_known_fields_not_changed() -> None:
     """The task as served is not changed."""
     body = {"id": "remote-1", "author": None, "logs": [{"extra": 1}]}
