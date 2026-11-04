@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.13"
 resolution-markers = [
     "python_full_version >= '3.15'",
@@ -912,7 +912,7 @@ wheels = [
 
 [[package]]
 name = "foca"
-version = "0.19.0"
+version = "0.20.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "addict" },
@@ -935,48 +935,48 @@ dependencies = [
     { name = "urllib3" },
     { name = "werkzeug" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7f/0b/d0c7025f907e227fb501d7f247e3df89a01f52ea596079d33da8be9d5b54/foca-0.19.0.tar.gz", hash = "sha256:b3f3e87f3107231998060ed0d894af2743afa1189af158eeaacae760cc292adf", size = 496552, upload-time = "2026-10-31T16:30:25.197Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f2/42/548c07b887f37e11ef6ecfc4c37e8950172f841e09dc3abef44295eacc53/foca-0.20.0.tar.gz", hash = "sha256:f5b1f46c91a2e2a015d74f85db67f1979f301490d8db48470fb431ebbc64fce9", size = 516650, upload-time = "2026-11-03T21:05:52.657Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/18/b8/cd781dfc69b4769085661f843748f272e8aa6f46800f9b9699f71892409d/foca-0.19.0-py3-none-any.whl", hash = "sha256:518137e392d746e9b3432cfb558a0680ac6cbe518c6e09a3a06c9a27aa9f569e", size = 277463, upload-time = "2026-10-31T16:30:23.622Z" },
+    { url = "https://files.pythonhosted.org/packages/b1/c4/66899bb8e7ca86953ad711845bea2c9d5b12da1eea3729dd282e0d7335ca/foca-0.20.0-py3-none-any.whl", hash = "sha256:b08c3e8303883e1b5985fb8c04571e46fde3c3d67548af0d55cb293530a07dd4", size = 282811, upload-time = "2026-11-03T21:05:50.891Z" },
 ]
 
 [[package]]
 name = "foca-plugin-generic-routing-random"
-version = "0.1.1"
+version = "0.1.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "foca" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/50/e5/8bae0b52c81bc683d7283ef853b602da77c7f10bf95e7937c9d9c29255eb/foca_plugin_generic_routing_random-0.1.1.tar.gz", hash = "sha256:13755fdf9d69aaf861820d8aa11f52fcaa7ae1b38c5d7f3f62cc104758077aad", size = 12118, upload-time = "2026-11-01T13:42:55.501Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/33/21/eedb2af8736ba80518403b75a1a2d566e9bedd3eb08c20b88d314d14b54b/foca_plugin_generic_routing_random-0.1.2.tar.gz", hash = "sha256:2b76e06a8c883b06584775696015cad9e33ebf516f5438f7b0c6de05262139ba", size = 12126, upload-time = "2026-11-04T20:56:21.392Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/92/a8/a6169a34243208ad3bfae405152d8a8e3f2ca1d395503faaf8b5691a20ad/foca_plugin_generic_routing_random-0.1.1-py3-none-any.whl", hash = "sha256:fdb27ead4789efb54eab95ee1c6aa8fd0f45999204593628ada4a32a35e6bf95", size = 9755, upload-time = "2026-11-01T13:42:53.967Z" },
+    { url = "https://files.pythonhosted.org/packages/80/68/1d9c287f8ecd3692805d8231bd008d51172594dc203f6f900e97179df802/foca_plugin_generic_routing_random-0.1.2-py3-none-any.whl", hash = "sha256:6a86b4dd2ad8f495ac3eb67e03773ee3081fc6425661da852083883821098f79", size = 9758, upload-time = "2026-11-04T20:56:19.946Z" },
 ]
 
 [[package]]
 name = "foca-plugin-tes-routing-distance"
-version = "0.1.1"
+version = "0.1.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "foca" },
     { name = "maxminddb" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/37/55/4e5948dc94d5679a2e88e4a62c339ada1aecef22c358116b84a31110ff6e/foca_plugin_tes_routing_distance-0.1.1.tar.gz", hash = "sha256:6cc8267bb6f8f27dbf4057464116f6ce7993bca2fcc068470bd83db7c310e03d", size = 37566, upload-time = "2026-11-01T13:43:15.667Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/34/99/22521a38e62fc88c76f93892e205e0572f1a5313356270c6b785f5b8ab60/foca_plugin_tes_routing_distance-0.1.2.tar.gz", hash = "sha256:08a7505e18e70b677ce343a7e2a1bc34593709067e168fde71e78ce55b1a149d", size = 37742, upload-time = "2026-11-04T20:56:12.305Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/73/ae/7ae99d6c2070d4b51e2293f3516ab636849479ccc1818333b65fe67db122/foca_plugin_tes_routing_distance-0.1.1-py3-none-any.whl", hash = "sha256:1ff31efc9c34882a3a9306dd2c841c8a30376a539458d04d44e15795fe923247", size = 25589, upload-time = "2026-11-01T13:43:14.428Z" },
+    { url = "https://files.pythonhosted.org/packages/07/66/80488e0552c1b621d6413941e244cf9421478fd9fbef961706efa8a2fc7a/foca_plugin_tes_routing_distance-0.1.2-py3-none-any.whl", hash = "sha256:aa161f3cf80e6b6a7c2afcbc5dabfbb6572a503bc93223b17c0ab518bdf12c6d", size = 25736, upload-time = "2026-11-04T20:56:11.188Z" },
 ]
 
 [[package]]
 name = "foca-plugins"
-version = "0.1.0"
+version = "0.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "foca" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/47/d1/3732949340df1b574aeedee4d51cd20aa718b80a16c077f14bca5780aaee/foca_plugins-0.1.0.tar.gz", hash = "sha256:4d82a7930ec1002df8b3b2dfb7792ea2163317435288094dbe5ba47cd645f735", size = 6783, upload-time = "2026-11-01T13:45:23.676Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/fb/27/43641a66bb34d865577893bd5f302e6cf59c4146bae11027be4714629e74/foca_plugins-0.2.0.tar.gz", hash = "sha256:3fd851802976eedbb10bd24d50229c1ee9a07b626b871dc2f4e13141ba4f1bec", size = 6834, upload-time = "2026-11-04T21:01:21.932Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/fc/9d/19469d9ef53d2d1fc468412f726feb065d0e5dd90d830fed0352af2c12d2/foca_plugins-0.1.0-py3-none-any.whl", hash = "sha256:7eae3f5c53208c815a4ce7b4aadc0f105afe93fd53f8ad247e10469afd931ac6", size = 6180, upload-time = "2026-11-01T13:45:22.556Z" },
+    { url = "https://files.pythonhosted.org/packages/02/cf/2d0a0c187f060810a8ba5935f9b830910604ac98588f499b8db279e8a0d5/foca_plugins-0.2.0-py3-none-any.whl", hash = "sha256:539989ae50c202de9712e87ddd6e20dc9be60fcfc2e5824429f102265552b767", size = 6179, upload-time = "2026-11-04T21:01:20.705Z" },
 ]
 
 [package.optional-dependencies]
@@ -1895,8 +1895,8 @@ requires-dist = [
     { name = "celery-types", marker = "extra == 'dev'", specifier = ">=0.20.0" },
     { name = "connexion", specifier = ">=2.15.1,<3.0.0" },
     { name = "coverage", marker = "extra == 'dev'", specifier = ">=7.16" },
-    { name = "foca", specifier = ">=0.19.0,<0.20" },
-    { name = "foca-plugins", extras = ["generic-routing", "tes-routing"], specifier = "==0.1.0" },
+    { name = "foca", specifier = ">=0.20.0,<0.21" },
+    { name = "foca-plugins", extras = ["generic-routing", "tes-routing"], specifier = "==0.2.0" },
     { name = "griffelib", marker = "extra == 'docs'", specifier = ">=2.4,<3" },
     { name = "gunicorn", specifier = ">=26.2.0,<27" },
     { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.6.1,<2" },
@@ -1915,7 +1915,7 @@ requires-dist = [
     { name = "setuptools-scm", marker = "extra == 'dev'", specifier = ">=10.3" },
     { name = "types-pyyaml", marker = "extra == 'dev'", specifier = ">=6.0.12" },
     { name = "types-requests", marker = "extra == 'dev'", specifier = ">=2.28.5" },
-    { name = "urllib3", specifier = ">=2,<3" },
+    { name = "urllib3", specifier = ">=2.2,<3" },
     { name = "uv", marker = "extra == 'dev'", specifier = ">=0.13" },
 ]
 provides-extras = ["dev", "docs"]
