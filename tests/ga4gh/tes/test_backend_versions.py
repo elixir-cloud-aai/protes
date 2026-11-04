@@ -74,7 +74,9 @@ def client(monkeypatch: pytest.MonkeyPatch) -> type[FakeClient]:
         ({"type": {"group": "org.ga4gh", "artifact": "TES", "version": 1.0}}, V10),
         (info(version="v1.1.0"), V11),
         (info(version="1.1.0"), V11),
-        # Funnel: its own version
+        # as served by Funnel 0.11.14
+        (info(version=""), None),
+        # not a version of TES, e.g., of the implementation
         (info(version="0.12.0"), None),
         (info(version="2.0.0"), None),
         ({"type": {"group": "org.ga4gh", "artifact": "wes", "version": "1.1"}}, None),
