@@ -111,6 +111,13 @@ turns it off, see [Tasks](configuration.md#tasks)). Their owners can read them,
 and stored tasks and pages of the view `FULL` get larger. Tasks that finished
 before keep what they have.
 
+**Chart:** the chart now sets
+`config.custom.controllers.list_tasks.max_page_size_full` to 6 instead of the
+app's 64, as one page of the view `FULL` could exceed its memory limit of 256 MiB; clients
+get smaller pages, and follow `next_page_token`. To keep 64, also raise
+`protes.resources` (see [Tasks](configuration.md#tasks)). `config.custom: null`
+and `helm upgrade --reuse-values` leave the app's 64.
+
 ## To version 0.4.0
 
 Check each item; the sections below have the details.

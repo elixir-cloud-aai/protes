@@ -36,9 +36,22 @@ publicUrl: ""
 # (unless `security.access_control.require_admin` is false), with the claim
 # with the groups of users (`security.access_control.claim_groups`, or that
 # of an issuer), and must not disable access control; rendering fails
-# otherwise (see deployment/README.md, Configuration).
+# otherwise (see deployment/README.md, Configuration). The default keeps
+# pages of `view=FULL` within the memory limit (see `protes.resources`): the
+# app's own default is 64 tasks per page.
+config:
+  custom:
+    controllers:
+      list_tasks:
+        max_page_size_full: 6
+    # Examples:
+    # tes:
+    #   # Identity provider of the client of proTES (credentials from
+    #   # `PROTES_CLIENT_ID` and `PROTES_CLIENT_SECRET`, see
+    #   # deployment/README.md, Secrets)
+    #   client_credentials:
+    #     issuer: "https://login.example.org/oidc/"
 # Examples:
-config: {}
 #   security:
 #     auth:
 #       # Trusted token issuers (`iss` claim), or maps of the issuer
@@ -56,13 +69,6 @@ config: {}
 #       group_mapping:
 #         compute-users: user
 #         compute-admins: admin
-#   custom:
-#     tes:
-#       # Identity provider of the client of proTES (credentials from
-#       # `PROTES_CLIENT_ID` and `PROTES_CLIENT_SECRET`, see
-#       # deployment/README.md, Secrets)
-#       client_credentials:
-#         issuer: "https://login.example.org/oidc/"
 #   # Service info (GA4GH `Service` schema); mappings are merged with the
 #   # defaults, which describe the app with placeholders, so set all fields
 #   # of the deployment
@@ -301,11 +307,13 @@ protes:
     capabilities:
       drop: ["ALL"]
     readOnlyRootFilesystem: true
-  # Each request of a page of tasks with `view=FULL` may hold about
-  # `max_page_size_full` times the request size limit in memory (64 MiB
-  # with the app's defaults), once per thread; lower
-  # `config.custom.controllers.list_tasks.max_page_size_full`, or raise the
-  # memory, if users store large tasks (see docs/configuration.md, Tasks)
+  # Each request of a page of tasks with `view=FULL` holds about 3 times the
+  # size of the page in memory, and each thread serves one (a task may be as
+  # large as the request size limit, 1 MiB, plus its logs, 1 MiB: with
+  # `config.custom.controllers.list_tasks.max_page_size_full` at 6, about 36
+  # MiB per request, and 144 MiB with 4 threads, on top of about 90 MiB of the
+  # app; more if logs hold text that JSON escapes). Set `max_page_size_full`
+  # and the memory together (see docs/configuration.md, Tasks)
   resources:
     limits:
       cpu: 200m
