@@ -102,8 +102,8 @@ Requests to discovered TES instances must end within `custom.tes.timeout`
 seconds as a whole (resolving, connecting, sending and reading), and
 connecting within 10 seconds (FOCA's guarded HTTP client). proTES creates, gets
 and cancels tasks with a single request each, to the API path of the URL
-(`<url>/ga4gh/tes/v1`, see [API paths](#api-paths)), and never sends a request to create or cancel a
-task again, so that no TES instance gets a task twice; these requests don't
+(`<url>/ga4gh/tes/v1`, see [API paths](#api-paths)), and never sends a request
+to create or cancel a task again, so that no TES instance gets a task twice; these requests don't
 follow redirects. It tries the next TES instance only if a TES instance
 certainly did not accept the task: it was not reached (connection refused,
 host not resolved, connection timed out, certificate not accepted), there

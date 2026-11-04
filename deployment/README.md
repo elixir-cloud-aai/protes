@@ -63,9 +63,8 @@ refuses; the app checks the other settings of issuers on startup.
 The TES instances that tasks are forwarded to are listed in `tes.backends`,
 in order, with the keys of the app's `custom.tes.backends` in camelCase
 (e.g., `apiPath`, `urlSchemes`, `refreshInterval`, `maxStale`,
-`allowPrivateAddresses`,
-`registryAllowPrivateAddresses`, `basic.usernameEnv` and
-`basic.passwordEnv`; the keys of `labels` are kept), which the chart renders
+`allowPrivateAddresses`, `registryAllowPrivateAddresses`,
+`basic.usernameEnv` and `basic.passwordEnv`; the keys of `labels` are kept), which the chart renders
 into the config (see [TES
 instances](https://protes.readthedocs.io/en/latest/configuration/#tes-instances)):
 TES instances (`type: ga4gh-tes`) and service registries whose verified TES
