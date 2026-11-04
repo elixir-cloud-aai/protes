@@ -70,6 +70,27 @@ plugins](plugin-images.md) from the app's image, with a test plugin
 (`tests/smoke/plugin/`, built with `python3 -m pip wheel`), restarts proTES
 and the Celery worker with it, and checks that the plugin tags new tasks.
 
+CI's `Integration` job runs the app against real TES implementations in Docker
+Compose (`tests/integration/`): it creates, tracks and cancels tasks on Funnel
+and on TESP-API with Pulsar, in pinned versions (see [Notes on TES
+implementations](configuration.md#notes-on-tes-implementations)). Their
+containers run through the Docker socket of the host, and the images come from
+third parties' registries, so the gate doesn't need this job until it has
+proven reliable. Access to the Docker socket amounts to control of the host, so
+run the stack locally only on a disposable machine or VM. To run it locally (with curl and jq), follow the steps of the
+job in `.github/workflows/ci.yml`, including the pin of TESP-API's stage image:
+
+```bash
+export COMPOSE_FILE=docker-compose.yaml:tests/integration/compose.yaml
+export SETUPTOOLS_SCM_PRETEND_VERSION=0.0.0+compose
+docker compose up -d --build --wait --wait-timeout 300
+# Pin the stage image here, as in the job's step
+API=http://localhost:8080/ga4gh/tes/v1
+tests/integration/check.sh "${API}" http://funnel:8000 ""
+tests/integration/check.sh "${API}" http://tesp-api:8080 /v1
+docker compose down
+```
+
 To try changes in the running app, rebuild it with
 `docker compose up --build -d`. `python -m pro_tes.app` runs the app with
 Flask's development server instead of Gunicorn (see

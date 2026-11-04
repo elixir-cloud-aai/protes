@@ -403,6 +403,48 @@ jobs:
       - name: Show app logs
         if: failure()
         run: docker compose logs
+  # Runs the app against real TES implementations in Docker Compose
+  # (`tests/integration/`): creates, tracks and cancels tasks on Funnel and
+  # TESP-API with Pulsar, as the smoke test only knows a fake backend. Pinned
+  # images, which run containers through the Docker socket of the runner. Not
+  # needed by the gate, until it has proven reliable: third parties' registries
+  # and packages must not block pull requests. Also not for edits of a pull
+  # request, which change nothing that it tests
+  integration:
+    name: Integration
+    if: ${{ github.event.action != 'edited' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      COMPOSE_FILE: docker-compose.yaml:tests/integration/compose.yaml
+      API: http://localhost:8080/ga4gh/tes/v1
+      # Passed to the image build by Docker Compose, as for published images
+      SETUPTOOLS_SCM_PRETEND_VERSION: 0.0.0+compose
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Start app and backends
+        run: docker compose up -d --build --wait --wait-timeout 300
+      # TESP-API hard-codes this image by a moving tag, and runs it without
+      # pulling if it exists locally
+      - name: Pin stage image of TESP-API
+        env:
+          STAGE_IMAGE: willdockerhub/curl-wget
+          STAGE_DIGEST: sha256:ec42c505643b123b0a9589b636f671111e525d7b3ec15571b8ed411424a64001
+        run: |
+          docker pull "${STAGE_IMAGE}@${STAGE_DIGEST}"
+          docker tag "${STAGE_IMAGE}@${STAGE_DIGEST}" "${STAGE_IMAGE}:latest"
+      - name: Check Funnel
+        run: tests/integration/check.sh "${API}" http://funnel:8000 ""
+      # Also if Funnel failed, to see whether the failure is specific to it
+      - name: Check TESP-API
+        if: ${{ !cancelled() }}
+        run: tests/integration/check.sh "${API}" http://tesp-api:8080 /v1
+      - name: Show logs
+        if: failure()
+        run: docker compose logs
   # On pushes that publish (`PUBLISH`), builds the image once and pushes it
   # by digest only (untagged, with SBOM and provenance attestations,
   # `mode=max`), for `scan` to scan and `publish` to sign and tag, as in
