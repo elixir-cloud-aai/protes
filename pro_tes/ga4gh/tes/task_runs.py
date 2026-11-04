@@ -239,7 +239,7 @@ def _after_refusal(
         # only if the refusal said so as well: a backend may also hide tasks
         response = getattr(exc, "response", None)
         if (
-            getattr(response, "status_code", None) == HTTPStatus.NOT_FOUND
+            getattr(response, "status_code", None) in GONE
             and cause.response is not None
             and cause.response.status_code in GONE
         ):

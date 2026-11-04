@@ -99,17 +99,30 @@ def test_wildcards_without_prefix(path: str) -> None:
     )
 
 
-def test_wildcards_without_prefix_outbound() -> None:
+def test_wildcards_without_prefix_outbound(app: FlaskApp) -> None:
     """Plugins can't send outputs with wildcards without a prefix either."""
-    output = {"url": "s3://a/b", "path": "/data/*"}
+    entry = ServiceEntry(type="ga4gh-tes", url="https://tes.example.org")
     outbound = OutboundRequest(
-        backend=ServiceEntry(type="ga4gh-tes", url="https://tes.example.org").backend(),
+        backend=entry.backend(),
         method="POST",
         path=gateway.TASKS_PATH,
-        payload={"executors": [EXECUTOR], "outputs": [output]},
+        payload={
+            "executors": [EXECUTOR],
+            "outputs": [{"url": "s3://a/b", "path": "/data/*"}],
+        },
     )
-    with pytest.raises(ValueError, match="path_prefix"):
+    with app.app.app_context(), pytest.raises(ValueError, match="path_prefix"):
         gateway.check_outbound(outbound)
+
+
+def test_wildcards_with_empty_prefix() -> None:
+    """An empty prefix is a prefix."""
+    gateway.validate_task(
+        {
+            "executors": [EXECUTOR],
+            "outputs": [{"url": "s3://a/b", "path": "/d/*", "path_prefix": ""}],
+        }
+    )
 
 
 def test_no_wildcards_without_prefix() -> None:

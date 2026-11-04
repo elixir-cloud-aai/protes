@@ -441,7 +441,10 @@ def _deleted_after_cancel(
         has set it), which ends its tracking.
     """
     response = exc.response if isinstance(exc, requests.HTTPError) else None
-    if response is None or response.status_code != HTTPStatus.NOT_FOUND:
+    if response is None or response.status_code not in (
+        HTTPStatus.NOT_FOUND,
+        HTTPStatus.GONE,
+    ):
         return False
     result = collection.update_one(
         {

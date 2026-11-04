@@ -216,7 +216,7 @@ def tes_task(payload: Any) -> tes.Task:
     if task.get("outputs") is not None:
         task["outputs"] = [tes.models.Output(**item) for item in task["outputs"]]
         for output in task["outputs"]:
-            if not output.path_prefix and has_wildcards(str(output.path)):
+            if output.path_prefix is None and has_wildcards(str(output.path)):
                 raise ValueError("Output with wildcards in its path has no path_prefix")
     if task.get("resources") is not None:
         task["resources"] = tes.models.Resources(**task["resources"])

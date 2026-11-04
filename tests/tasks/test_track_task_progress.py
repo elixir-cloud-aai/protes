@@ -1069,6 +1069,7 @@ def test_cancelation_kept(
     ("state", "status", "expected", "polls_go_on"),
     [
         ("CANCELING", 404, "CANCELED", False),
+        ("CANCELING", 410, "CANCELED", False),
         # may still run
         ("CANCELING", 503, "CANCELING", True),
         ("RUNNING", 404, "RUNNING", True),

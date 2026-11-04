@@ -1356,7 +1356,7 @@ def test_cancel_task_gone_at_backend(
     status: int,
 ) -> None:
     """A task that its backend no longer has is canceled: tracking ends it."""
-    cancel_refused(status, http_error(404))
+    cancel_refused(status, http_error(status))
     set_state(mongo_client, task_id, "RUNNING")
     assert client.post(f"{BASE_PATH}/tasks/{task_id}:cancel").status_code == 200
     assert stored(mongo_client, task_id)["task"]["state"] == "CANCELING"
