@@ -392,6 +392,24 @@ plugins:
   per input; all contents together are limited by the [request size
   limit](#request-size-limit)); tasks with larger contents are rejected
   with `413 Content Too Large`, also if plugins added the contents;
+- `post_task.max_log_size`: the maximum size of the logs of a TES instance
+  that are stored per task, i.e., of the standard output and error of executors
+  and the system logs together, in bytes of UTF-8 (default 1048576, i.e., 1 MiB;
+  at most 8 MiB, as documents in MongoDB have at most 16 MB, with the task as
+  received and as forwarded). Small logs are kept; what they leave is shared
+  among the longer ones, which keep their end, where errors usually are. proTES
+  gets them once when a task has finished (`GET /tasks/{id}?view=FULL` at the TES
+  instance), and holds them in memory in the Celery worker meanwhile: a task
+  whose response is larger than 64 MiB, or takes longer than `custom.tes.timeout`
+  as a whole, stays without them. Such a response takes a worker process up to
+  about 420 MiB, so that two at once can exceed the 512 MiB of the [Helm
+  chart](deployment.md)'s worker: the broker then delivers the poll again, and
+  proTES finishes the task without its logs. If a task would still exceed the
+  limit of MongoDB (e.g., with very many short logs), proTES stores it without
+  these logs, or if need be also without the executors' logs and the outputs, and
+  logs an error. Their owners can read them in the view `FULL`, so
+  TES instances should keep secrets out of them. With `0`, proTES neither gets
+  nor stores them;
 - `post_task.max_create_time`: the number of seconds (default 3600, at
   most 31536000, i.e., a year) after which tasks that are still being
   created, i.e., in state `UNKNOWN` without identifier at a TES instance

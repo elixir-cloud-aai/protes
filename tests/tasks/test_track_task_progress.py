@@ -1,10 +1,11 @@
 """Tests of the Celery tasks tracking tasks at TES backends."""
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 import time
 from typing import Any, ClassVar
 
+from bson.errors import InvalidDocument
 from bson.objectid import ObjectId
 from celery.exceptions import Reject
 from connexion import FlaskApp
@@ -17,7 +18,11 @@ import mongomock
 from pydantic import ValidationError
 from pymongo import MongoClient
 from pymongo.collection import Collection
-from pymongo.errors import ServerSelectionTimeoutError
+from pymongo.errors import (
+    DocumentTooLarge,
+    OperationFailure,
+    ServerSelectionTimeoutError,
+)
 import pytest
 import requests
 import tes
@@ -26,9 +31,10 @@ from pro_tes.app import init_app
 from pro_tes.celery_worker import celery
 from pro_tes.config_models import CustomConfig, Polling
 from pro_tes.ga4gh.tes import backends
+from pro_tes.ga4gh.tes.models import TesExecutorLog, TesTaskLog
 from pro_tes.tasks import track_task_progress
 from pro_tes.utils.db import DbDocumentConnector
-from tests.conftest import DB, OTHER_DB
+from tests.conftest import DB, MONGODB_TEST_URI, OTHER_DB
 
 # Arguments of the Celery task
 ARGS: dict[str, Any] = {
@@ -54,6 +60,14 @@ class FakeClient:
 
     states: ClassVar[list[str | None]] = ["COMPLETE"]
     outputs: ClassVar[list[tes.OutputFileLog]] = [OUTPUT]
+    # Views of the requests; logs of the view `FULL`, and whether it fails or
+    # serves another state
+    views: ClassVar[list[str]] = []
+    full_logs: ClassVar[dict[str, Any]] = {}
+    full_error: ClassVar[Exception | None] = None
+    full_state: ClassVar[str | None] = None
+    # Called when the view `FULL` is requested
+    on_full: ClassVar[Callable[[], None] | None] = None
     # Clients created, and requested task identifiers
     clients: ClassVar[list["FakeClient"]] = []
     requested: ClassVar[list[str]] = []
@@ -67,12 +81,26 @@ class FakeClient:
         self.entry = entry
         self.clients.append(self)
 
-    def get_task(self, task_id: str, **kwargs: Any) -> tes.Task:
+    def get_task(self, task_id: str, view: str = "BASIC") -> tes.Task:
         """Get the task, in its next state, with one log.
 
+        The view `FULL` is served the last state, with the logs of `full_logs`.
+
         Raises:
+            Exception: The view is `FULL`, and `full_error` is set.
             requests.HTTPError: The state is `None`.
         """
+        self.views.append(view)
+        if view == "FULL":
+            if FakeClient.on_full is not None:
+                FakeClient.on_full()
+            if self.full_error is not None:
+                raise self.full_error
+            return tes.Task(
+                id=task_id,
+                state=self.full_state or self.states[-1],
+                logs=[tes.TaskLog(outputs=self.outputs, **self.full_logs)],
+            )
         self.requested.append(task_id)
         state = self.states[0]
         if len(self.states) > 1:
@@ -93,6 +121,11 @@ def client_class(monkeypatch: pytest.MonkeyPatch) -> type[FakeClient]:
     monkeypatch.setattr(FakeClient, "outputs", [OUTPUT])
     monkeypatch.setattr(FakeClient, "clients", [])
     monkeypatch.setattr(FakeClient, "requested", [])
+    monkeypatch.setattr(FakeClient, "views", [])
+    monkeypatch.setattr(FakeClient, "full_logs", {})
+    monkeypatch.setattr(FakeClient, "full_error", None)
+    monkeypatch.setattr(FakeClient, "full_state", None)
+    monkeypatch.setattr(FakeClient, "on_full", None)
     monkeypatch.setattr(backends, "TesClient", FakeClient)
     return FakeClient
 
@@ -167,7 +200,21 @@ def stored_states(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         if after["task"]["state"] != before["task"]["state"]:
             calls.append(after["task"]["state"])
 
+    store_final = track_task_progress._store_final
+
+    def record_final(
+        db_client: DbDocumentConnector, worker_id: str, **kwargs: Any
+    ) -> None:
+        """Store the final state, and record it if it was stored."""
+        before = db_client.collection.find_one({"worker_id": worker_id})
+        store_final(db_client=db_client, worker_id=worker_id, **kwargs)
+        after = db_client.collection.find_one({"worker_id": worker_id})
+        assert before is not None and after is not None
+        if after["task"]["state"] != before["task"]["state"]:
+            calls.append(after["task"]["state"])
+
     monkeypatch.setattr(track_task_progress, "_store_state", record)
+    monkeypatch.setattr(track_task_progress, "_store_final", record_final)
     return calls
 
 
@@ -250,6 +297,407 @@ def test_task_tracked(
         {"url": "s3://bucket/out", "path": "/out", "size_bytes": "10"}
     ]
     assert not scheduled
+
+
+def stored_log(collection: Collection[dict[str, Any]]) -> dict[str, Any]:
+    """Get the first log of the stored task.
+
+    Args:
+        collection: Database collection of the tasks.
+
+    Returns:
+        The log, as stored.
+    """
+    document = collection.find_one({"worker_id": ARGS["worker_id"]})
+    assert document is not None
+    log: dict[str, Any] = document["task"]["logs"][0]
+    return log
+
+
+def test_full_logs_stored(
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+    scheduled: list[dict[str, Any]],
+) -> None:
+    """A finished task is got once in the view `FULL`, for its logs."""
+    client_class.states = ["RUNNING", "COMPLETE"]
+    client_class.full_logs = {
+        "logs": [tes.ExecutorLog(exit_code=1, stdout="out", stderr="err")],
+        "system_logs": ["node failed"],
+    }
+    run()
+    assert client_class.views == ["BASIC"]
+    track(scheduled)
+    assert client_class.views == ["BASIC", "BASIC", "FULL"]
+    log = stored_log(tasks)
+    assert log["logs"][0]["stdout"] == "out"
+    assert log["logs"][0]["stderr"] == "err"
+    assert log["system_logs"] == ["node failed"]
+
+
+@pytest.mark.parametrize(
+    "error", [requests.ReadTimeout("slow"), ValueError("no JSON"), KeyError("x")]
+)
+def test_full_logs_unavailable(
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+    scheduled: list[dict[str, Any]],
+    error: Exception,
+) -> None:
+    """A failure to get the logs doesn't lose the final state and the outputs."""
+    client_class.full_error = error
+    run()
+    assert "FULL" in client_class.views
+    document = tasks.find_one({"worker_id": ARGS["worker_id"]})
+    assert document is not None
+    assert document["task"]["state"] == "COMPLETE"
+    assert document["task"]["logs"][0]["outputs"][0]["url"] == OUTPUT.url
+    assert not scheduled
+
+
+def test_full_logs_with_final_state(
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The final state appears only together with the logs.
+
+    Clients that wait for it may read the logs once, right after it.
+    """
+    seen: list[str] = []
+    upsert = DbDocumentConnector.upsert_fields_in_root_object
+
+    def writes(self: DbDocumentConnector, **kwargs: Any) -> Any:
+        """Check the state before the write, which has it and the logs."""
+        document = tasks.find_one({"worker_id": ARGS["worker_id"]})
+        assert document is not None
+        assert document["task"]["state"] == "QUEUED"
+        assert kwargs["state"] == "COMPLETE"
+        assert kwargs["logs"][0]["logs"][0]["stdout"] == "out"
+        assert kwargs["logs"][0]["system_logs"] == ["node failed"]
+        return upsert(self, **kwargs)
+
+    monkeypatch.setattr(DbDocumentConnector, "upsert_fields_in_root_object", writes)
+
+    def record() -> None:
+        """Record the stored state when the logs are requested."""
+        document = tasks.find_one({"worker_id": ARGS["worker_id"]})
+        assert document is not None
+        seen.append(document["task"]["state"])
+
+    client_class.on_full = record
+    client_class.full_logs = {
+        "logs": [tes.ExecutorLog(exit_code=1, stdout="out")],
+        "system_logs": ["node failed"],
+    }
+    run()
+    assert seen == ["QUEUED"]
+    document = tasks.find_one({"worker_id": ARGS["worker_id"]})
+    assert document is not None
+    assert document["task"]["state"] == "COMPLETE"
+
+
+TOO_LARGE = [
+    DocumentTooLarge("too large"),
+    OperationFailure("too large", code=10334),
+    OperationFailure("too large", code=17419),
+    # e.g., of output URLs with lone surrogates
+    UnicodeEncodeError("utf-8", "\ud800", 0, 1, "surrogates not allowed"),
+    InvalidDocument("can't be encoded"),
+]
+
+
+@pytest.fixture
+def too_large(monkeypatch: pytest.MonkeyPatch) -> Callable[[Exception, int], None]:
+    """Make the first attempts to store a final task fail.
+
+    Returns:
+        Function to set the error, and the number of attempts that fail.
+    """
+    upsert = DbDocumentConnector.upsert_fields_in_root_object
+
+    def setup(error: Exception, failures: int) -> None:
+        """Set the error, and the number of attempts that fail."""
+        left = [error] * failures
+
+        def fail(self: DbDocumentConnector, **kwargs: Any) -> Any:
+            """Fail while errors are left, otherwise store."""
+            if left:
+                raise left.pop()
+            return upsert(self, **kwargs)
+
+        monkeypatch.setattr(DbDocumentConnector, "upsert_fields_in_root_object", fail)
+
+    return setup
+
+
+@pytest.mark.parametrize("error", TOO_LARGE)
+def test_too_large_without_log_texts(
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+    scheduled: list[dict[str, Any]],
+    too_large: Callable[[Exception, int], None],
+    error: Exception,
+) -> None:
+    """A document that is too large is stored without the text of the logs."""
+    client_class.full_logs = {
+        "logs": [tes.ExecutorLog(exit_code=1, stdout="out", stderr="err")],
+        "system_logs": ["node failed"],
+    }
+    too_large(error, 1)
+    run()
+    log = stored_log(tasks)
+    assert log["logs"] == [{"exit_code": 1}]
+    assert not log.get("system_logs")
+    assert log["outputs"][0]["url"] == OUTPUT.url
+    assert not scheduled
+
+
+@pytest.mark.parametrize("error", TOO_LARGE)
+def test_too_large_without_logs(
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+    scheduled: list[dict[str, Any]],
+    too_large: Callable[[Exception, int], None],
+    error: Exception,
+) -> None:
+    """If that doesn't help, outputs and executor logs are left out as well."""
+    client_class.full_logs = {"logs": [tes.ExecutorLog(exit_code=1, stdout="out")]}
+    too_large(error, 2)
+    run()
+    log = stored_log(tasks)
+    assert log["logs"] == []
+    assert log["outputs"] == []
+    assert not scheduled
+    document = tasks.find_one({"worker_id": ARGS["worker_id"]})
+    assert document is not None
+    assert document["task"]["state"] == "COMPLETE"
+
+
+def test_too_large_state_kept(
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+    scheduled: list[dict[str, Any]],
+    too_large: Callable[[Exception, int], None],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """If nothing can be stored, the state stays, and tracking ends."""
+    too_large(DocumentTooLarge("too large"), 3)
+    run()
+    document = tasks.find_one({"worker_id": ARGS["worker_id"]})
+    assert document is not None
+    assert document["task"]["state"] == "COMPLETE"
+    assert not scheduled
+    assert "not stored" in caplog.text
+
+
+def test_redelivered_poll_without_full_logs(
+    tasks: Collection[dict[str, Any]], client_class: type[FakeClient]
+) -> None:
+    """A poll delivered again skips the logs, which may have cost its worker."""
+    TRACK.push_request(delivery_info={"redelivered": True})
+    try:
+        run()
+    finally:
+        TRACK.pop_request()
+    assert client_class.views == ["BASIC"]
+    document = tasks.find_one({"worker_id": ARGS["worker_id"]})
+    assert document is not None
+    assert document["task"]["state"] == "COMPLETE"
+
+
+def test_redelivered_poll_keeps_logs(
+    tasks: Collection[dict[str, Any]], client_class: type[FakeClient]
+) -> None:
+    """A poll delivered again after the task was stored doesn't replace its logs."""
+    client_class.full_logs = {"system_logs": ["node failed"]}
+    run()
+    TRACK.push_request(delivery_info={"redelivered": True})
+    try:
+        run()
+    finally:
+        TRACK.pop_request()
+    assert stored_log(tasks)["system_logs"] == ["node failed"]
+
+
+def test_full_logs_empty(
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A view `FULL` without logs doesn't lose the outputs of the last poll."""
+    get_task = client_class.get_task
+
+    def without_logs(self: FakeClient, task_id: str, view: str = "BASIC") -> tes.Task:
+        """Get the task, without logs in the view `FULL`."""
+        task = get_task(self, task_id=task_id, view=view)
+        if view == "FULL":
+            task.logs = []
+        return task
+
+    monkeypatch.setattr(client_class, "get_task", without_logs)
+    run()
+    assert client_class.views == ["BASIC", "FULL"]
+    assert stored_log(tasks)["outputs"][0]["url"] == OUTPUT.url
+
+
+def test_final_state_kept_on_failure(
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If storing the logs fails, the final state is stored without them."""
+
+    def fail(**kwargs: Any) -> None:
+        """Fail."""
+        raise ValueError("invalid")
+
+    monkeypatch.setattr(track_task_progress, "_store_final", fail)
+    with pytest.raises(ValueError, match="invalid"):
+        run()
+    document = tasks.find_one({"worker_id": ARGS["worker_id"]})
+    assert document is not None
+    assert document["task"]["state"] == "COMPLETE"
+
+
+def test_other_database_errors_not_too_large(
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+    too_large: Callable[[Exception, int], None],
+) -> None:
+    """Other errors of MongoDB are left to the retries of the Celery task."""
+    too_large(OperationFailure("not primary", code=10107), 1)
+    db_client = DbDocumentConnector(collection=tasks, worker_id=str(ARGS["worker_id"]))
+    response = tes.Task(id="remote-1", state="COMPLETE", logs=[tes.TaskLog(logs=[])])
+    with pytest.raises(OperationFailure):
+        track_task_progress._store_final(
+            db_client=db_client, worker_id=ARGS["worker_id"], response=response
+        )
+
+
+def test_too_many_logs(
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+    scheduled: list[dict[str, Any]],
+) -> None:
+    """Tracking ends with many short logs, which the size limit doesn't cover.
+
+    The document exceeds the limit of MongoDB; mongomock has no such limit.
+    """
+    client_class.full_logs = {"system_logs": ["x"] * 1_500_000}
+    run()
+    document = tasks.find_one({"worker_id": ARGS["worker_id"]})
+    assert document is not None
+    assert document["task"]["state"] == "COMPLETE"
+    assert not scheduled
+    log = document["task"]["logs"][0]
+    assert log["outputs"][0]["url"] == OUTPUT.url
+    if MONGODB_TEST_URI:
+        assert not log.get("system_logs")
+
+
+def test_no_log_texts_without_limit() -> None:
+    """With a limit of 0, logs that a backend sends anyway aren't stored."""
+    logs = [
+        TesTaskLog(
+            logs=[TesExecutorLog(exit_code=0, stdout="out", stderr="err")],
+            outputs=[],
+            system_logs=["node failed"],
+        )
+    ]
+    track_task_progress._limit_logs(logs, 0)
+    assert logs[0].logs[0].stdout is None
+    assert logs[0].logs[0].stderr is None
+    assert logs[0].system_logs is None
+
+
+def test_full_logs_other_state(
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+) -> None:
+    """A view `FULL` in another state than the final one isn't used."""
+    client_class.full_state = "RUNNING"
+    client_class.full_logs = {"system_logs": ["log"]}
+    run()
+    log = stored_log(tasks)
+    assert not log.get("system_logs")
+    document = tasks.find_one({"worker_id": ARGS["worker_id"]})
+    assert document is not None
+    assert document["task"]["state"] == "COMPLETE"
+
+
+def test_full_logs_turned_off(
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With `max_log_size: 0`, logs are neither got nor stored."""
+    post_task = get_custom_config(CustomConfig).controllers.post_task
+    monkeypatch.setattr(post_task, "max_log_size", 0)
+    client_class.outputs = [OUTPUT]
+    run()
+    assert client_class.views == ["BASIC"]
+    assert stored_log(tasks)["outputs"]
+
+
+def test_logs_limited(
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Small logs are kept, and long ones keep their end, within the limit."""
+    post_task = get_custom_config(CustomConfig).controllers.post_task
+    monkeypatch.setattr(post_task, "max_log_size", 1000)
+    client_class.full_logs = {
+        "logs": [
+            tes.ExecutorLog(exit_code=1, stdout="o" * 5000 + "END", stderr="small"),
+        ],
+        "system_logs": ["é" * 5000 + "END"],
+    }
+    run()
+    log = stored_log(tasks)
+    stdout = log["logs"][0]["stdout"]
+    system_log = log["system_logs"][0]
+    assert log["logs"][0]["stderr"] == "small"
+    assert stdout.startswith(track_task_progress.TRUNCATED)
+    assert stdout.endswith("END")
+    assert system_log.startswith(track_task_progress.TRUNCATED)
+    assert system_log.endswith("éEND")
+    total = len(stdout.encode()) + len(system_log.encode()) + len("small")
+    assert 900 < total <= 1000
+
+
+@pytest.mark.parametrize(
+    ("sizes", "limit", "share"),
+    [
+        ([], 10, 10),
+        ([3, 3], 10, 10),
+        ([5, 5], 10, 10),
+        ([1, 100], 10, 9),
+        ([100, 100], 10, 5),
+        ([1, 2, 100, 100], 11, 4),
+        ([100], 0, 0),
+    ],
+)
+def test_log_share(sizes: list[int], limit: int, share: int) -> None:
+    """Short logs are kept; what they leave is shared among the long ones."""
+    assert track_task_progress._log_share(sizes, limit) == share
+
+
+@pytest.mark.parametrize(
+    ("value", "size", "expected"),
+    [
+        ("abc", 3, "abc"),
+        ("abcd", 3, "bcd"),
+        ("abcd", 0, ""),
+        ("x" * 100, 50, f"{track_task_progress.TRUNCATED}{'x' * 22}"),
+        ("é", 1, ""),
+        ("a\ud800", 10, "a?"),
+    ],
+)
+def test_cut(value: str, size: int, expected: str) -> None:
+    """Logs are cut in bytes, to whole characters, and can be stored."""
+    assert track_task_progress._cut(value, size) == expected
 
 
 def test_output_credentials_removed(

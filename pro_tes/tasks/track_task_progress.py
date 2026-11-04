@@ -28,19 +28,20 @@ import time
 from typing import Any
 from uuid import uuid4
 
+from bson.errors import InvalidDocument
 from bson.objectid import ObjectId
 from celery.exceptions import Reject
 from celery.signals import worker_ready
 from foca import get_collection, get_custom_config
 from kombu.exceptions import OperationalError
 from pymongo.collection import Collection
-from pymongo.errors import PyMongoError
+from pymongo.errors import OperationFailure, PyMongoError
 import requests
 
 from pro_tes.celery_worker import celery
 from pro_tes.config_models import CustomConfig
 from pro_tes.ga4gh.tes.backends import create_client
-from pro_tes.ga4gh.tes.models import TesState, TesTask
+from pro_tes.ga4gh.tes.models import TesState, TesTask, TesTaskLog
 from pro_tes.ga4gh.tes.states import States
 from pro_tes.utils.db import TASK_COLLECTION, TASK_DB, DbDocumentConnector
 from pro_tes.utils.misc import has_credentials, strip_auth
@@ -61,6 +62,10 @@ STALE_FACTOR = 3
 INFRASTRUCTURE_ERRORS = (PyMongoError, OperationalError)
 # Doublings of intervals between polls considered (more don't change them)
 MAX_DOUBLINGS = 32
+# Error codes of MongoDB for documents above its size limit
+TOO_LARGE_CODES = frozenset({10334, 17419})
+# Start of logs that were cut to the size limit, which keeps their end
+TRUNCATED = "[start truncated by proTES]\n"
 
 
 def backoff(failures: int) -> int:
@@ -185,8 +190,196 @@ def _store_state(
         logger.info("[%s] %s", worker_id, state)
 
 
+def _full_task(cli: Any, worker_id: str, remote_task_id: str, basic: Any) -> Any:
+    """Get a finished task with all its logs, in the view `FULL`.
+
+    A failure must not lose the final state and the rest of the logs: it is
+    logged, and the task of the last poll is used instead.
+
+    Args:
+        cli: Client of the backend.
+        worker_id: Worker identifier of the task.
+        remote_task_id: Identifier of the task at the backend.
+        basic: Task as served in the view of the polls.
+
+    Returns:
+        The task in the view `FULL`; `basic` if it can't be got, is in another
+        state, has no logs, or backend logs are not stored
+        (`post_task.max_log_size`).
+    """
+    post_task = get_custom_config(CustomConfig).controllers.post_task
+    if not post_task.max_log_size:
+        return basic
+    try:
+        full = cli.get_task(task_id=remote_task_id, view="FULL")
+        TaskModelConverter(task=full).convert_task()
+    except Exception as exc:
+        logger.warning(
+            "[%s] Logs of the finished task not available from its backend: %s",
+            worker_id,
+            type(exc).__name__,
+        )
+        return basic
+    if full.state != basic.state or not full.logs:
+        logger.warning(
+            "[%s] Logs of the finished task not used: its backend reports another"
+            " state, or no logs",
+            worker_id,
+        )
+        return basic
+    return full
+
+
+def _cut(value: str, size: int) -> str:
+    """Cut a log to a size, keeping its end, where errors usually are.
+
+    Args:
+        value: Log.
+        size: Maximum size, in bytes of UTF-8.
+
+    Returns:
+        The log, with a note at its start if it was cut, and without what can't
+        be encoded (e.g., lone surrogates), which MongoDB can't store.
+    """
+    data = value.encode("utf-8", errors="replace")
+    if len(data) <= size:
+        return data.decode()
+    note = TRUNCATED if size > len(TRUNCATED) else ""
+    # without characters of which the cut leaves only a part
+    return note + data[len(data) - size + len(note) :].decode(errors="ignore")
+
+
+def _log_share(sizes: list[int], limit: int) -> int:
+    """Get the size of each log that keeps a set of logs within a limit.
+
+    Args:
+        sizes: Sizes of the logs.
+        limit: Maximum size of the logs together.
+
+    Returns:
+        The size to cut longer logs to: what the shorter ones leave of the
+        limit, shared equally; the limit if all logs fit.
+    """
+    left = limit
+    for position, size in enumerate(sorted(sizes)):
+        share = left // (len(sizes) - position)
+        if size > share:
+            return share
+        left -= size
+    return limit
+
+
+def _drop_log_texts(logs: list[TesTaskLog]) -> None:
+    """Remove the standard output and error and system logs of a task.
+
+    Args:
+        logs: Logs of a task; changed in place.
+    """
+    for log in logs:
+        for executor_log in log.logs or []:
+            executor_log.stdout = None
+            executor_log.stderr = None
+        log.system_logs = None
+
+
+def _drop_logs(logs: list[TesTaskLog]) -> None:
+    """Remove all that a backend logged for a task, its outputs included.
+
+    Args:
+        logs: Logs of a task; changed in place.
+    """
+    _drop_log_texts(logs)
+    for log in logs:
+        log.logs = []
+        log.outputs = []
+
+
+def _store_within_limit(
+    db_client: DbDocumentConnector, worker_id: str, task: TesTask
+) -> None:
+    """Store the state and logs of a task, with less if they can't be stored.
+
+    The size of logs is limited, but not their number, and the limits of
+    logs and requests are configured separately, so that documents can
+    exceed the limit of MongoDB; values of backends may also not be encodable
+    (e.g., lone surrogates in URLs). Trying again wouldn't help, and would keep
+    a finished task from ending its tracking. All at once, as clients may read
+    the logs once, right after the final state.
+
+    Args:
+        db_client: Database connector of the task.
+        worker_id: Worker identifier of the task.
+        task: Task with the state and logs to store; its logs may be changed.
+
+    Raises:
+        pymongo.errors.PyMongoError: MongoDB failed for another reason.
+    """
+    for reduce in (None, _drop_log_texts, _drop_logs):
+        if reduce is not None:
+            reduce(task.logs or [])
+        try:
+            # only the fields tracked, so that fields written meanwhile (e.g.,
+            # the gateway tags of a task still being created) are kept
+            db_client.upsert_fields_in_root_object(
+                root="task",
+                **task.model_dump(
+                    mode="json", exclude_none=True, include={"state", "logs"}
+                ),
+            )
+        except (InvalidDocument, UnicodeEncodeError, OperationFailure) as exc:
+            if isinstance(exc, OperationFailure) and exc.code not in TOO_LARGE_CODES:
+                raise
+            logger.error(
+                "[%s] Logs of the finished task can't be stored: %s",
+                worker_id,
+                type(exc).__name__,
+            )
+        else:
+            return
+    logger.error("[%s] Logs and outputs of the finished task not stored", worker_id)
+    db_client.upsert_fields_in_root_object(root="task", state=task.state)
+
+
+def _limit_logs(logs: list[TesTaskLog], limit: int) -> None:
+    """Limit the size of the logs of a task.
+
+    Small logs are kept as they are; what they leave of the limit is shared
+    equally among the larger ones.
+
+    Args:
+        logs: Logs of a task; changed in place.
+        limit: Maximum size of its standard output and error and system logs
+            together, in bytes of UTF-8; none of them are kept with `0`.
+    """
+    if not limit:
+        _drop_log_texts(logs)
+        return
+    texts = [
+        text
+        for log in logs
+        for executor_log in log.logs or []
+        for text in (executor_log.stdout, executor_log.stderr)
+        if text is not None
+    ] + [text for log in logs for text in log.system_logs or []]
+    size = _log_share(
+        [len(text.encode("utf-8", errors="replace")) for text in texts], limit
+    )
+    for log in logs:
+        for executor_log in log.logs or []:
+            if executor_log.stdout is not None:
+                executor_log.stdout = _cut(executor_log.stdout, size)
+            if executor_log.stderr is not None:
+                executor_log.stderr = _cut(executor_log.stderr, size)
+        if log.system_logs is not None:
+            log.system_logs = [_cut(text, size) for text in log.system_logs]
+
+
 def _store_final(db_client: DbDocumentConnector, worker_id: str, response: Any) -> None:
     """Store the final state, logs and outputs of a finished task.
+
+    Standard output and error of executors and system logs are limited to
+    `post_task.max_log_size` bytes together, as the size of documents in MongoDB
+    is limited (cf. :py:func:`_store_within_limit`).
 
     Args:
         db_client: Database connector of the task.
@@ -197,12 +390,15 @@ def _store_final(db_client: DbDocumentConnector, worker_id: str, response: Any) 
         ValueError: The task has no logs.
     """
     task_converted: TesTask = TaskModelConverter(task=response).convert_task()
+    limit = get_custom_config(CustomConfig).controllers.post_task.max_log_size
+    _limit_logs(task_converted.logs or [], limit)
     document = db_client.get_document()
     document.task.state = task_converted.state
     if task_converted.logs is None or document.task.logs is None:
         raise ValueError(f"[{worker_id}] Task has no logs")
     for index, logs in enumerate(task_converted.logs):
         document.task.logs[index].logs = logs.logs
+        document.task.logs[index].system_logs = logs.system_logs
         # backends may log output URLs with credentials, e.g., of tasks that
         # earlier versions forwarded with them
         for output in logs.outputs or []:
@@ -213,14 +409,7 @@ def _store_final(db_client: DbDocumentConnector, worker_id: str, response: Any) 
             if found:
                 output.url = strip_auth(output.url)
         document.task.logs[index].outputs = logs.outputs
-    # only the fields tracked, so that fields written meanwhile (e.g., the
-    # gateway tags of a task still being created) are kept
-    db_client.upsert_fields_in_root_object(
-        root="task",
-        **document.task.model_dump(
-            mode="json", exclude_none=True, include={"state", "logs"}
-        ),
-    )
+    _store_within_limit(db_client, worker_id, document.task)
 
 
 def _deleted_after_cancel(
@@ -256,12 +445,13 @@ def _deleted_after_cancel(
     return True
 
 
-def _poll(kwargs: dict[str, Any]) -> None:
+def _poll(kwargs: dict[str, Any], redelivered: bool = False) -> None:
     """Poll a task at its backend once, and schedule the next poll.
 
     Args:
         kwargs: Arguments of the poll (cf.
             :py:func:`task__track_task_progress`).
+        redelivered: Whether the broker delivers the poll again.
 
     Raises:
         ValueError: The task finished, but has no logs.
@@ -320,18 +510,39 @@ def _poll(kwargs: dict[str, Any]) -> None:
         return
 
     stored = db_client.get_document(projection={"_id": False, "task.state": True})
-    finished = response.state in States.FINISHED
-    if response.state != stored.task.state:
+    if response.state not in States.FINISHED:
+        if response.state != stored.task.state:
+            _store_state(
+                collection=collection,
+                worker_id=worker_id,
+                state=str(response.state),
+            )
+        _schedule(collection=collection, kwargs=kwargs, failures=0)
+        return
+    # the worker was lost after storing it, before the message was acknowledged:
+    # the view of this poll would replace the logs
+    if redelivered and response.state == stored.task.state:
+        return
+    # not if the message is delivered again: getting the logs may have cost its
+    # worker (e.g., out of memory), which must not keep the task from finishing
+    if not redelivered:
+        response = _full_task(
+            cli=cli,
+            worker_id=worker_id,
+            remote_task_id=kwargs["remote_task_id"],
+            basic=response,
+        )
+    try:
+        _store_final(db_client=db_client, worker_id=worker_id, response=response)
+    except Exception:
         _store_state(
             collection=collection,
             worker_id=worker_id,
             state=str(response.state),
-            keep_canceled=not finished,
+            keep_canceled=False,
         )
-    if not finished:
-        _schedule(collection=collection, kwargs=kwargs, failures=0)
-        return
-    _store_final(db_client=db_client, worker_id=worker_id, response=response)
+        raise
+    logger.info("[%s] %s", worker_id, response.state)
 
 
 @celery.task(
@@ -355,8 +566,9 @@ def task__track_task_progress(
     """Poll a task at its TES backend once, and schedule the next poll.
 
     The state is stored if it changed (a stored cancelation only once the
-    backend has finished the task); once the task is finished, its logs and
-    outputs are stored, and tracking ends. Failed polls are retried, also if
+    backend has finished the task); a finished task is got once more in the view
+    `FULL`, unless the poll is delivered again, its final state, logs and outputs
+    are stored together, and tracking ends. Failed polls are retried, also if
     the backend is not (or no longer) configured or discovered; after
     `polling.attempts` consecutive failures, the state is set to `UNKNOWN`
     (the task may still run at its backend), and polls back off (see
@@ -399,8 +611,9 @@ def task__track_task_progress(
         "previous": previous,
         "failures": failures,
     }
+    delivery_info = self.request.delivery_info or {}
     try:
-        _poll(kwargs)
+        _poll(kwargs, redelivered=bool(delivery_info.get("redelivered")))
     except OperationalError as exc:
         # the retry couldn't be published either: the broker delivers the
         # poll again

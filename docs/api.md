@@ -29,7 +29,12 @@ control](access-control.md#permissions-api)).
 `GET /tasks` and `GET /tasks/{id}` return the views `MINIMAL` (the default;
 identifier and state), `BASIC` (without the contents of inputs, the system
 logs and the executors' standard output and error) and `FULL` (`view`), as
-the TES specification describes. Times (`creation_time`, and `start_time`
+the TES specification describes. The view `FULL` has the logs of the TES
+instance once the task has finished, as proTES gets them once then: earlier, it
+has none, and if that one request fails (also for responses over 64 MiB), the task
+stays without them. The final state appears together with them. proTES
+stores at most `max_log_size` of them per task, and keeps the end of longer ones
+(see [Tasks](configuration.md#tasks)). Times (`creation_time`, and `start_time`
 and `end_time` of proTES's log of a task) are in UTC, in RFC 3339 format.
 
 ## Tasks
@@ -82,7 +87,8 @@ For `POST /tasks`, proTES:
    be got);
 4. tracks the task at the TES instance in the background (a Celery worker
    polls its state until it has finished; see [Tasks](configuration.md#tasks)),
-   and updates its state and logs.
+   and updates its state and logs; it gets the finished task once in the view
+   `FULL`, for the logs of the TES instance.
 
 proTES keeps the task as received (`task_original`) as well as the task as
 forwarded; the TES instance and the remote identifier of the task are in its
