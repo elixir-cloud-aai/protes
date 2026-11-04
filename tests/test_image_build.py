@@ -385,5 +385,17 @@ def test_trivyignore_without_pip_entries() -> None:
         "pkg:pypi/urllib3@2.7.0",
         "pkg:pypi/msgpack@1.1.2",
     }
+    # Without `purls`, an entry applies to all packages
+    vulnerabilities = {
+        "CVE-2025-47273",
+        "CVE-2026-59890",
+        "GHSA-xmj3-9gf7-h52w",
+        "CVE-2026-97687",
+        "CVE-2026-97689",
+        "CVE-2026-97688",
+        "GHSA-6v7p-g79w-8964",
+        "CVE-2026-114613",
+    }
     for entry in ignored["vulnerabilities"] or []:
         assert not vendored & set(entry.get("purls", [])), entry
+        assert entry["id"] not in vulnerabilities, entry

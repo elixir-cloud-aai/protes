@@ -99,7 +99,11 @@ def test_resolve_pins(tmp_path: Path) -> None:
     """Each distribution that the image lacks gets a line, with all its hashes."""
     _docker(tmp_path, COMPILED)
     assert _resolve(tmp_path).returncode == 0
-    assert "rm --force container" in _calls(tmp_path)
+    calls = _calls(tmp_path)
+    assert "rm --force container" in calls
+    (compile_call,) = [call for call in calls if "pip compile" in call]
+    assert "--constraint /work/image.txt" in compile_call
+    assert compile_call.endswith(" /work/plugins.in")
     assert (tmp_path / "plugins.txt").read_text().splitlines() == [
         "maxminddb==3.1.1 --hash=sha256:aaa --hash=sha256:bbb",
         "requests-toolbelt==1.0.0 --hash=sha256:ddd",
@@ -138,6 +142,6 @@ def test_download(tmp_path: Path) -> None:
     assert "rm --force container" in calls
     (download,) = [call for call in calls if "pip download" in call]
     assert re.search(r"--from pip==\d+(\.\d+)+ pip download", download)
-    assert "--require-hashes" in download
+    assert "--require-hashes --requirement /work/plugins.txt" in download
     assert "--only-binary :all:" in download
     assert (tmp_path / "wheels").is_dir()
