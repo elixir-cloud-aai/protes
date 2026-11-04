@@ -9,6 +9,7 @@ import json
 import socket
 import ssl
 import threading
+import time
 from typing import Any, ClassVar, get_args, get_type_hints
 
 from connexion import FlaskApp
@@ -968,19 +969,57 @@ def test_full_view_size_limit(
     assert client.get_task("remote-1").name == "x" * 5000
 
 
-def test_read_limited_deadline() -> None:
+class DrippingHandler(BaseHTTPRequestHandler):
+    """Handler of a local server that sends its answer slowly."""
+
+    def do_GET(self) -> None:
+        """Send a byte at a time, within the timeout of reading."""
+        self.send_response(200)
+        self.send_header("Content-Length", "1000000")
+        self.end_headers()
+        try:
+            for _ in range(1000):
+                self.wfile.write(b"x")
+                self.wfile.flush()
+                time.sleep(0.01)
+        except OSError:
+            return
+
+    def log_message(self, format: str, *args: Any) -> None:
+        """Log nothing."""
+
+
+def test_read_limited_deadline(loopback: None) -> None:
     """Responses that take too long as a whole are not read to their end."""
-    response = requests.Response()
-    response.raw = io.BytesIO(b"x" * 100)
-    with pytest.raises(requests.Timeout, match="0 seconds"):
-        backends.read_limited(response, timeout=0)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), DrippingHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        response = requests.get(
+            f"http://127.0.0.1:{server.server_address[1]}", stream=True, timeout=5
+        )
+        started = time.monotonic()
+        with pytest.raises(requests.Timeout, match="0.1 seconds"):
+            backends.read_limited(response, timeout=0.1)
+        assert time.monotonic() - started < 2
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
-def test_read_limited() -> None:
-    """Bodies are read within the limits."""
-    response = requests.Response()
-    response.raw = io.BytesIO(b'{"id": "x"}')
-    assert backends.read_limited(response, timeout=60).json() == {"id": "x"}
+def test_read_limited_connection_lost(
+    task_server: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Errors while reading are those of `requests`, as for other requests."""
+    response = requests.request("GET", task_server, stream=True, timeout=5)
+
+    def fail(*args: Any, **kwargs: Any) -> bytes:
+        """Fail."""
+        raise ProtocolError("lost")
+
+    monkeypatch.setattr(response.raw, "read1", fail)
+    with pytest.raises(requests.ConnectionError, match="lost"):
+        backends.read_limited(response, timeout=5)
 
 
 def test_get_task_once(

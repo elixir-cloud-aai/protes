@@ -81,7 +81,7 @@ import requests
 from requests.structures import CaseInsensitiveDict
 import tes
 from tes.utils import camel_to_snake, unmarshal
-from urllib3.exceptions import ConnectTimeoutError, NewConnectionError
+from urllib3.exceptions import ConnectTimeoutError, HTTPError, NewConnectionError
 
 from pro_tes.config_models import (
     DEFAULT_API_PATH,
@@ -125,7 +125,7 @@ CONNECT_TIMEOUT = 5
 # Maximum size of responses of discovered backends, and of tasks in the view
 # `FULL` of all backends, whose logs can be of any size, in bytes
 MAX_RESPONSE_SIZE = 64 * 1024 * 1024
-# Size of the parts in which responses limited to it are read, in bytes
+# Maximum size of the parts in which responses limited to it are read, in bytes
 RESPONSE_CHUNK_SIZE = 64 * 1024
 # Label of a backend with its TES version, which wins over its service info
 TES_VERSION_LABEL = "tes.version"
@@ -1054,22 +1054,30 @@ def read_limited(response: requests.Response, timeout: float) -> requests.Respon
 
     Raises:
         requests.RequestException: The body is larger.
+        requests.ConnectionError: The body can't be read.
         requests.Timeout: Reading the body takes longer.
     """
     content = bytearray()
     deadline = time.monotonic() + timeout
     with response:
-        for chunk in response.iter_content(chunk_size=RESPONSE_CHUNK_SIZE):
-            content += chunk
-            if len(content) > MAX_RESPONSE_SIZE:
-                raise requests.RequestException(
-                    f"Response larger than {MAX_RESPONSE_SIZE} bytes",
-                    response=response,
-                )
-            if time.monotonic() >= deadline:
-                raise requests.Timeout(
-                    f"Response not read within {timeout} seconds", response=response
-                )
+        # not `iter_content`, which waits for whole chunks, however long they take
+        try:
+            while chunk := response.raw.read1(
+                RESPONSE_CHUNK_SIZE, decode_content=True
+            ):
+                content += chunk
+                if len(content) > MAX_RESPONSE_SIZE:
+                    raise requests.RequestException(
+                        f"Response larger than {MAX_RESPONSE_SIZE} bytes",
+                        response=response,
+                    )
+                if time.monotonic() >= deadline:
+                    raise requests.Timeout(
+                        f"Response not read within {timeout} seconds",
+                        response=response,
+                    )
+        except HTTPError as exc:
+            raise requests.ConnectionError(str(exc), response=response) from exc
     response._content = bytes(content)
     return response
 

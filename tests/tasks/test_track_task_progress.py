@@ -347,6 +347,7 @@ def test_full_logs_unavailable(
     """A failure to get the logs doesn't lose the final state and the outputs."""
     client_class.full_error = error
     run()
+    assert "FULL" in client_class.views
     document = tasks.find_one({"worker_id": ARGS["worker_id"]})
     assert document is not None
     assert document["task"]["state"] == "COMPLETE"
@@ -372,7 +373,8 @@ def test_full_logs_with_final_state(
         assert document is not None
         assert document["task"]["state"] == "QUEUED"
         assert kwargs["state"] == "COMPLETE"
-        assert kwargs["logs"]
+        assert kwargs["logs"][0]["logs"][0]["stdout"] == "out"
+        assert kwargs["logs"][0]["system_logs"] == ["node failed"]
         return upsert(self, **kwargs)
 
     monkeypatch.setattr(DbDocumentConnector, "upsert_fields_in_root_object", writes)
@@ -384,6 +386,10 @@ def test_full_logs_with_final_state(
         seen.append(document["task"]["state"])
 
     client_class.on_full = record
+    client_class.full_logs = {
+        "logs": [tes.ExecutorLog(exit_code=1, stdout="out")],
+        "system_logs": ["node failed"],
+    }
     run()
     assert seen == ["QUEUED"]
     document = tasks.find_one({"worker_id": ARGS["worker_id"]})
@@ -498,6 +504,41 @@ def test_redelivered_poll_without_full_logs(
     document = tasks.find_one({"worker_id": ARGS["worker_id"]})
     assert document is not None
     assert document["task"]["state"] == "COMPLETE"
+
+
+def test_redelivered_poll_keeps_logs(
+    tasks: Collection[dict[str, Any]], client_class: type[FakeClient]
+) -> None:
+    """A poll delivered again after the task was stored doesn't replace its logs."""
+    client_class.full_logs = {"system_logs": ["node failed"]}
+    run()
+    TRACK.push_request(delivery_info={"redelivered": True})
+    try:
+        run()
+    finally:
+        TRACK.pop_request()
+    assert stored_log(tasks)["system_logs"] == ["node failed"]
+
+
+def test_full_logs_empty(
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A view `FULL` without logs doesn't lose the outputs of the last poll."""
+    get_task = client_class.get_task
+
+    def without_logs(self: FakeClient, task_id: str, view: str = "BASIC") -> tes.Task:
+        """Get the task, without logs in the view `FULL`."""
+        task = get_task(self, task_id=task_id, view=view)
+        if view == "FULL":
+            task.logs = []
+        return task
+
+    monkeypatch.setattr(client_class, "get_task", without_logs)
+    run()
+    assert client_class.views == ["BASIC", "FULL"]
+    assert stored_log(tasks)["outputs"][0]["url"] == OUTPUT.url
 
 
 def test_final_state_kept_on_failure(

@@ -204,7 +204,8 @@ def _full_task(cli: Any, worker_id: str, remote_task_id: str, basic: Any) -> Any
 
     Returns:
         The task in the view `FULL`; `basic` if it can't be got, is in another
-        state, or backend logs are not stored (`post_task.max_log_size`).
+        state, has no logs, or backend logs are not stored
+        (`post_task.max_log_size`).
     """
     post_task = get_custom_config(CustomConfig).controllers.post_task
     if not post_task.max_log_size:
@@ -219,10 +220,10 @@ def _full_task(cli: Any, worker_id: str, remote_task_id: str, basic: Any) -> Any
             type(exc).__name__,
         )
         return basic
-    if full.state != basic.state:
+    if full.state != basic.state or not full.logs:
         logger.warning(
             "[%s] Logs of the finished task not used: its backend reports another"
-            " state",
+            " state, or no logs",
             worker_id,
         )
         return basic
@@ -517,6 +518,10 @@ def _poll(kwargs: dict[str, Any], redelivered: bool = False) -> None:
                 state=str(response.state),
             )
         _schedule(collection=collection, kwargs=kwargs, failures=0)
+        return
+    # the worker was lost after storing it, before the message was acknowledged:
+    # the view of this poll would replace the logs
+    if redelivered and response.state == stored.task.state:
         return
     # not if the message is delivered again: getting the logs may have cost its
     # worker (e.g., out of memory), which must not keep the task from finishing
