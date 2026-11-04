@@ -194,8 +194,8 @@ reports no version that proTES supports, or never answered, counts as TES 1.0
 (with a warning in the logs); one that stops answering keeps the version read
 before.
 
-**Set the label for Funnel:** Funnel implements TES 1.1, but reports its own
-version as `type.version`:
+**Set the label for Funnel:** Funnel implements TES 1.1, but version 0.11.14
+reports an empty `type.version` (`""`), so it would count as TES 1.0:
 
 ```yaml
 custom:
@@ -211,6 +211,34 @@ custom:
 The label of a registry entry applies to all TES instances that it discovers.
 To tell the versions in a registry apart, use one entry per version, with its
 `versions` and label (`versions: ["1.1"]` and `tes.version: "1.1"`).
+
+### Notes on TES implementations
+
+What was seen when running these versions through proTES; other versions may
+behave differently.
+
+[TESP-API](https://github.com/CESNET/tesp-api) 0.2.0:
+
+- It serves the TES API at `/v1`, so set `api_path: /v1`, unless a proxy in
+  front of it rewrites the path (see [API paths](#api-paths)).
+- It reports TES 1.0.0, so don't set the label `tes.version` to `"1.1"`. A task
+  with fields of TES 1.1 only gets `400 Bad Request` if no allowed TES instance
+  implements TES 1.1, e.g., if TESP-API is the only one.
+- With Pulsar 0.15 or later, it was seen returning empty stdout and stderr;
+  Pulsar 0.14.16 works.
+- It reports a task as `CANCELED` while its container kept running for minutes;
+  check on the Pulsar side whether it has stopped.
+- It writes one executor log for all executors of a task.
+
+[Funnel](https://github.com/ohsu-comp-bio/funnel) 0.11.14:
+
+- The executor log of a canceled task shows `exit_code: 0`.
+
+[TESK](https://github.com/elixir-cloud-aai/TESK): not tested against a real
+instance yet.
+
+In general, if no selected TES instance accepts a task, clients get a generic
+`503 Service Unavailable`, without the reason of the refusal.
 
 ### Discovery in a service registry
 
