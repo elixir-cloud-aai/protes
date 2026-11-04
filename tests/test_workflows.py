@@ -18,6 +18,9 @@ import yaml
 ROOT = Path(__file__).parents[1]
 WORKFLOWS = ROOT / ".github" / "workflows"
 GATE = "passed"
+# Jobs that don't block pull requests, until they have proven reliable: they
+# depend on the registries and packages of third parties
+NOT_IN_GATE = {"integration"}
 # The last release signed by the release workflow before its file was renamed
 # from `release.yaml` to `release.yml`
 LAST_RELEASE_YAML = Version("0.3.0")
@@ -59,12 +62,15 @@ def test_job_names_unique() -> None:
 
 
 def test_gate_needs_all_jobs() -> None:
-    """The gate of `ci.yml` (the required check) needs every other job."""
+    """The gate of `ci.yml` (the required check) needs every other job.
+
+    The exceptions, `NOT_IN_GATE`, are listed on purpose.
+    """
     jobs = _load(WORKFLOWS / "ci.yml")["jobs"]
     gate = jobs[GATE]
     assert gate["name"] == "CI passed"
     assert gate["if"] == "always()"
-    assert sorted(gate["needs"]) == sorted(set(jobs) - {GATE})
+    assert sorted(gate["needs"]) == sorted(set(jobs) - {GATE} - NOT_IN_GATE)
 
 
 def test_verification_signer_workflow() -> None:

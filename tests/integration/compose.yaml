@@ -1,0 +1,126 @@
+# Compose override for the integration test (job `integration` of
+# `.github/workflows/ci.yml`): proTES relays tasks to real TES implementations.
+# Use it with `docker compose -f docker-compose.yaml -f
+# tests/integration/compose.yaml up -d --build --wait`; relative paths are
+# resolved against the directory of the first file, i.e., the repository root.
+# Funnel and Pulsar start containers on the host, through the Docker socket.
+# TESP-API stages inputs with `willdockerhub/curl-wget:latest`, a name that it
+# hard-codes: the job in CI pulls that image by digest, and tags it so
+
+services:
+
+    protes:
+        environment:
+            FOCA_CONFIG_OVERLAY: /integration/config.yaml
+        volumes:
+            - ./tests/integration:/integration:ro
+        depends_on:
+            fake-tes:
+                condition: service_healthy
+
+    protes-worker:
+        environment:
+            FOCA_CONFIG_OVERLAY: /integration/config.yaml
+        volumes:
+            - ./tests/integration:/integration:ro
+        depends_on:
+            fake-tes:
+                condition: service_healthy
+
+    # Only the identity provider of the fake TES backend (the name is its
+    # issuer), in the app's image
+    fake-tes:
+        image: protes:local
+        pull_policy: never
+        command: ["python", "/smoke/fake_tes.py"]
+        environment:
+            HEALTHCHECK_URL: http://localhost:8080/oidc/.well-known/openid-configuration
+        volumes:
+            - ./tests/smoke:/smoke:ro
+        healthcheck:
+            interval: 5s
+            start_period: 5s
+
+    # The official image of Funnel (0.11.14) has no Docker CLI
+    funnel:
+        image: protes-integration-funnel:local
+        pull_policy: build
+        build:
+            context: ./tests/integration
+            dockerfile_inline: |
+                FROM docker:28.3.3-cli@sha256:0135662b510037ea581d99c2e5929c5e01185139c0b86986a418bd4da0b98a44 AS cli
+                FROM quay.io/ohsu-comp-bio/funnel:0.11.14@sha256:8e10ba4de436b058bed95427110d9fe947142162078274a6a91cfe3b3eb8d15a
+                COPY --from=cli /usr/local/bin/docker /usr/local/bin/docker
+        command: ["server", "run", "--config", "/etc/funnel.yaml"]
+        # Root for the Docker socket
+        user: "0:0"
+        volumes:
+            - ./tests/integration/funnel.yaml:/etc/funnel.yaml:ro
+            - /tmp/protes-integration/funnel:/tmp/protes-integration/funnel
+            - /var/run/docker.sock:/var/run/docker.sock
+        healthcheck:
+            test: ["CMD", "/app/funnel", "task", "list", "--server", "http://localhost:8000"]
+            interval: 5s
+            timeout: 5s
+            retries: 20
+            start_period: 5s
+
+    # TESP-API, the published image, at its release's default settings (profile
+    # `dev-docker`, with the service names below), without the option `--reload`
+    # of its default command; the image's Python probes its service info
+    tesp-api:
+        image: cerit.io/tesp-api/tesp-api:0.2.0@sha256:0de7dec6fdb0557d61f3b5b202aaab9280da6c4d79945773aa29034970f0de53
+        command: ["uvicorn", "--host=0.0.0.0", "--port=8080", "tesp_api.tesp_api:app"]
+        environment:
+            CONTAINER_TYPE: docker
+        depends_on:
+            tesp-db:
+                condition: service_healthy
+            pulsar_rest:
+                condition: service_healthy
+        healthcheck:
+            test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8080/v1/service-info')"]
+            interval: 5s
+            timeout: 5s
+            retries: 20
+            start_period: 5s
+
+    tesp-db:
+        image: mongo:7.0.25@sha256:82db6c6c8103eee46ca820c190742b7c280d02d6f993903a603cec9d56be374b
+        healthcheck:
+            test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+            interval: 5s
+            timeout: 5s
+            retries: 12
+            start_period: 10s
+
+    # Pulsar has no current published image; as in TESP-API's own Compose file,
+    # with the Docker CLI only. Runs jobs, with containers on the host through
+    # the Docker socket, so its staging directory has the same path there. 0.14,
+    # as TESP-API's documentation has it: with 0.15 and later, TESP-API 0.2.0
+    # serves empty standard output and error, as Pulsar reports the output of
+    # jobs in other fields. The last Python of its Dockerfile, for this version
+    pulsar_rest:
+        image: protes-integration-pulsar:local
+        pull_policy: build
+        build:
+            context: ./tests/integration
+            dockerfile_inline: |
+                FROM docker:28.3.3-cli@sha256:0135662b510037ea581d99c2e5929c5e01185139c0b86986a418bd4da0b98a44 AS cli
+                FROM python:3.9-slim-bullseye@sha256:b9e06687fbfc57f6fe563e94e4c8751e39513dde89afc120dc6f56afe5ffc761
+                COPY --from=cli /usr/local/bin/docker /usr/local/bin/docker
+                RUN pip install --no-cache-dir 'pulsar-app[web]==0.14.16' 'setuptools==69.5.1'
+                WORKDIR /pulsar
+                RUN pulsar-config --host 0.0.0.0
+                COPY pulsar.yaml /pulsar/app.yml
+                CMD ["pulsar"]
+        user: "0:0"
+        volumes:
+            - /tmp/protes-integration/pulsar:/tmp/protes-integration/pulsar
+            - /var/run/docker.sock:/var/run/docker.sock
+        healthcheck:
+            test: ["CMD", "python", "-c", "import socket; socket.create_connection(('localhost', 8913), 3)"]
+            interval: 5s
+            timeout: 5s
+            retries: 20
+            start_period: 5s
