@@ -15,6 +15,7 @@ from connexion import FlaskApp
 from foca import get_custom_config
 from foca.plugins import Backend, Headers, OutboundRequest
 from foca.plugins.backends import BackendListConfig, ServiceEntry
+from foca.utils.misc import describe_validation_error
 import pydantic
 import pytest
 import requests
@@ -332,16 +333,23 @@ def test_token_endpoint_unreachable(
         (None, "unavailable"),
         (["document"], "invalid"),
         ({"issuer": "https://other.example.org/"}, "invalid"),
-        ({"issuer": ISSUER}, "no token endpoint"),
-        ({"issuer": ISSUER, "token_endpoint": 1}, "no token endpoint"),
+        ({"issuer": ISSUER}, "no valid token endpoint"),
+        ({"issuer": ISSUER, "token_endpoint": 1}, "no valid token endpoint"),
         (
             {"issuer": ISSUER, "token_endpoint": "http://idp.example.org/token"},
-            "no token endpoint with an allowed URL scheme",
+            "no valid token endpoint with an allowed URL scheme",
         ),
-        ({"issuer": ISSUER, "token_endpoint": "https:///token"}, "no token endpoint"),
+        (
+            {"issuer": ISSUER, "token_endpoint": "https:///token"},
+            "no valid token endpoint",
+        ),
+        (
+            {"issuer": ISSUER, "token_endpoint": "https://u:hunter2@idp.example.org/t"},
+            "no valid token endpoint",
+        ),
         (
             {"issuer": ISSUER, "token_endpoint": "https://[idp.example.org/token"},
-            "no token endpoint",
+            "no valid token endpoint",
         ),
     ],
 )
@@ -350,8 +358,9 @@ def test_discovery_invalid(idp: FakeIdp, discovery: Any, match: str) -> None:
     idp.discovery = discovery
     with pytest.raises(BackendAuthError, match=match):
         get_token()
-    with pytest.raises(BackendAuthError, match=match):
+    with pytest.raises(BackendAuthError, match=match) as exc_info:
         get_token()
+    assert "hunter2" not in str(exc_info.value)
     assert idp.discoveries == 2
     assert not idp.requests
 
@@ -801,6 +810,46 @@ def test_api_path_invalid(path: str) -> None:
     entry = {"type": "ga4gh-tes", "url": NONE_URL, "auth": "none", "api_path": path}
     with pytest.raises(pydantic.ValidationError):
         Tes.model_validate({"backends": [entry]})
+
+
+@pytest.mark.parametrize(
+    ("path", "reason"),
+    [
+        ("api/v1", "must be absolute"),
+        ("/v1?a=b", "unreserved characters"),
+        ("/v1/../tasks", "unreserved characters"),
+    ],
+)
+def test_api_path_reason_survives_foca(path: str, reason: str) -> None:
+    """FOCA hides messages that quote the input, so these must not."""
+    entry = {"type": "ga4gh-tes", "url": NONE_URL, "auth": "none", "api_path": path}
+    with pytest.raises(pydantic.ValidationError) as exc_info:
+        Tes.model_validate({"backends": [entry]})
+    assert reason in describe_validation_error(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    ("client_credentials", "reason"),
+    [
+        ({"issuer": "http://hunter2.example.org/"}, "not allowed"),
+        ({"issuer": "https://user:hunter2@idp.example.org:x/"}, "Invalid URL"),
+        ({"token_endpoint": "http://hunter2.example.org/t"}, "not allowed"),
+        ({"token_endpoint": "hunter2"}, "without scheme or host"),
+        ({"issuer": "https://user:hunter2@idp.example.org/"}, "user info"),
+        ({"issuer": "http://user:hunter2@idp.example.org/"}, "user info"),
+        ({"issuer": "https://@idp.example.org/"}, "user info"),
+        ({"token_endpoint": "https://user:hunter2@idp.example.org/t"}, "user info"),
+    ],
+)
+def test_identity_provider_errors_hide_urls(
+    client_credentials: dict[str, str], reason: str
+) -> None:
+    """Messages of the model's validators, which FOCA shows, have no URLs."""
+    with pytest.raises(pydantic.ValidationError) as exc_info:
+        Tes.model_validate({"client_credentials": client_credentials})
+    message = describe_validation_error(exc_info.value)
+    assert reason in message
+    assert "hunter2" not in message
 
 
 def test_api_path_only_of_tes_instances() -> None:

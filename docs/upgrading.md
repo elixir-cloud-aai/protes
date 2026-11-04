@@ -58,11 +58,55 @@ locked in `uv.lock`, hash-checked, with uv instead of pip (see
 [Dependencies](development.md#dependencies)); before, pip installed the
 newest versions in the ranges of `pyproject.toml` at build time. So package
 versions in the image may differ from those of an earlier image, and a
-rebuild of the same commit gets the same packages. Images derived from it
-(see [Plugin images](plugin-images.md)) and the build argument `PLUGINS`
-work as before: pip is still in the image. Building the image yourself
-needs BuildKit (the default builder of Docker since version 23, or
+rebuild of the same commit gets the same packages. Building the image
+yourself needs BuildKit (the default builder of Docker since version 23, or
 `docker buildx`).
+
+**FOCA 0.20 (all deployments):** proTES now requires FOCA 0.20.0 and
+`foca-plugins` 0.2.0, on the FOCA 0.20.0 image (see [FOCA's migration
+guide](https://foca.readthedocs.io/en/v0.20.0/migration-0.20/)). What this
+changes:
+
+- **No pip in the image:** `pip install` in an image derived from that of
+  proTES, and any init script that runs pip in a container of it, now fail.
+  Install with uv, mounted in the build, as the updated recipe does (see
+  [Plugin images](plugin-images.md)); take `resolve.sh`, `download.sh`,
+  `common.sh`, the `Dockerfile` and its `.dockerignore` from the release that
+  you build on, and re-resolve `plugins.in`. For another index, `resolve.sh`
+  now takes uv's variable (e.g., `UV_DEFAULT_INDEX`), which must also serve
+  the dependencies that the image has, and `download.sh` both pip's
+  (`PIP_INDEX_URL`) and uv's. The build argument `PLUGINS` works as before,
+  with uv.
+- **Your scans:** remove what you accepted for packages vendored by pip
+  (setuptools 70.3.0, urllib3 2.7.0, msgpack 1.1.2) from your own
+  `.trivyignore.yaml`, as the image no longer has them.
+- **Plugins:** resolving plugins that cap `foca<0.20` against this image
+  fails; foca-plugins allows FOCA 0.20 from its plugins' versions 0.1.2 and
+  its release train 0.2.0 on. Ask the authors of other plugins for a release.
+- **Provenance:** packages installed with uv record `uv` as their installer,
+  so the `RECORD` digests in plugin provenance change once, for the same
+  plugin versions.
+- **Failed runs:** records in `failed_runs` (with
+  `plugins.provenance.record_failed`) are now keyed by `run-<run ID>`, so a
+  client's `X-Request-ID` can no longer overwrite one; look them up by the
+  field `request_id`. Records written by earlier versions keep their keys
+  until they expire, so cover both `_id` and `request_id` until then.
+- **Failover on errors before sending:** with discovered TES instances, proTES
+  now tries others when a TLS handshake fails or a request is invalid, as
+  nothing was sent; before, this counted as outcome unknown. Redirect bodies
+  above the size limit now fail without being read whole.
+- **Validation errors:** startup errors of the config no longer show the
+  invalid input, only the setting and the reason. Their `__cause__` is now a
+  plain `ValueError`, for code that reads it.
+- **Identity provider:** `client_credentials.issuer` and `token_endpoint` with
+  user info (e.g., `https://user:password@idp.example.org/`) now stop the app
+  at startup, as they would end up in the logs, and token endpoints with user
+  info in a discovery document are refused. Authenticating at the identity
+  provider uses `PROTES_CLIENT_ID` and `PROTES_CLIENT_SECRET`.
+- **Plugin store:** `pluginStore.existingSecret` (see **Helm chart** below) and
+  `plugins.defaults.store.key_secret` are available from this version on.
+- **Dependencies:** FOCA requires `urllib3>=2.8` and `pymongo>=4.18.3`, which
+  matters only if you pin older versions in a derived image.
 
 **TES 1.1 (clients):** proTES serves [TES
 1.1.0](api.md), so its service info reports `type.version: 1.1.0`, and it

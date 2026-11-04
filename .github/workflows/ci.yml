@@ -385,6 +385,16 @@ jobs:
             echo "::error::App reports version '${actual}', expected '${SETUPTOOLS_SCM_PRETEND_VERSION}'"
             exit 1
           fi
+      # No pip (whose vendored packages image scans report) and no uv in
+      # the image, which installs packages in its build stages only
+      - name: Check that image has no installer
+        run: |
+          docker compose exec -T --user 0 protes sh -c '
+            if command -v pip || command -v pip3 || command -v uv ||
+              python -c "import pip" 2>/dev/null ||
+              find / -xdev -name "pip-*.dist-info" | grep .; then
+              exit 1
+            fi'
       # Builds the image of the derived-image recipe for plugins
       # (`examples/plugin-image/`) with a test plugin, restarts the app with
       # it and checks that the plugin ran (see the script)

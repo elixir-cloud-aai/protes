@@ -19,7 +19,7 @@ security:
 custom:
   tes:
     backends:
-      # Reports its own version as `type.version`, so it needs the label
+      # Reports an empty `type.version`, so it needs the label
       - type: ga4gh-tes
         url: http://funnel:8000
         url_schemes:

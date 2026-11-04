@@ -193,13 +193,11 @@ accepted by no TES instance) leave no task. With
 `plugins.provenance.record_failed: true` (off by default, so that no record
 of rejected input is kept; see [Plugins](configuration.md#plugins)), their
 records go to the collection `failed_runs`, with the time (`failed_at`) and
-the error (`type`, `status`, `slug`), keyed by request identifier (the
-client's `X-Request-ID`, if valid; a request with the same identifier
-replaces the record). As clients choose these identifiers, any user can
-replace the record of a request whose identifier they know, and add a
-record with each rejected request; with `record_failed`, have the reverse
-proxy in front of proTES set `X-Request-ID` itself, replacing that of the
-client. Requests refused before the pipeline started (e.g.,
+the error (`type`, `status`, `slug`), keyed by the run's random identifier
+(`run-<run ID>`), with the request identifier in the field `request_id` (the
+client's `X-Request-ID`, if valid). Clients can't replace records, but each
+rejected request adds one. Look up a request by `request_id`, and add an
+index on it if you do that often. Requests refused before the pipeline started (e.g.,
 invalid tasks, loops, or invalid tags under `gateway.`) have no record, nor
 have tasks whose response a plugin failed: they are kept, and run at their
 TES instance.

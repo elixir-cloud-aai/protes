@@ -191,10 +191,10 @@ fails the build unless the base image has the locked FOCA release (or FOCA
 of the pinned commit); `tests/test_image_build.py` checks that every install
 of the image build is hash-checked or offline. The only exception is the
 build argument `PLUGINS` for local builds, empty for the published images
-(see [Plugin images](plugin-images.md#local-builds)). The image still
-contains pip (from the FOCA base image), used by `PLUGINS` and by the
-recipe for derived images; it is removed with
-[#336](https://github.com/elixir-cloud-aai/protes/issues/336).
+(see [Plugin images](plugin-images.md#local-builds)). The image contains
+no pip and no uv: the FOCA base image has no pip, and uv is mounted from a
+stage pinned by digest into the steps that use it, which the smoke test of
+CI checks.
 
 After adding, removing or changing a dependency in `pyproject.toml`, update
 the lock and commit both:

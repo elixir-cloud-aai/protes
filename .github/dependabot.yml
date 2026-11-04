@@ -46,7 +46,8 @@ updates:
         patterns: ["*"]
   # Base image and uv image in the `Dockerfile` (tag and digest)
   - package-ecosystem: docker
-    directory: /
+    # The image, and the uv stage of the recipe for plugin images
+    directories: ["/", "/examples/plugin-image"]
     schedule:
       interval: monthly
     target-branch: dev

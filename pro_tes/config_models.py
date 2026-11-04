@@ -208,6 +208,10 @@ class Controllers(ConfigModel):
 def split_server_url(url: str, name: str) -> SplitResult:
     """Split the URL of a server, checking its scheme, host and port.
 
+    Refuses user info, as FOCA does for backends, since URLs are logged. Error
+    messages leave out the URL, as it may contain credentials, and FOCA shows
+    them.
+
     Args:
         url: URL, e.g., of a TES backend or an identity provider.
         name: What the URL is of, for error messages.
@@ -216,17 +220,19 @@ def split_server_url(url: str, name: str) -> SplitResult:
         Parts of the URL.
 
     Raises:
-        ValueError: The URL is malformed, has no scheme or host, or has an
-            invalid port.
+        ValueError: The URL is malformed, has no scheme or host, has an
+            invalid port, or has user info.
     """
     try:
         parts = urlsplit(url)
         # `port` raises for ports that are not numbers in the valid range
         _ = parts.port
     except ValueError as exc:
-        raise ValueError(f"Invalid {name}: {url!r}") from exc
+        raise ValueError(f"Invalid {name}") from exc
     if not (parts.scheme and parts.hostname):
-        raise ValueError(f"{name} without scheme or host: {url!r}")
+        raise ValueError(f"{name} without scheme or host")
+    if parts.username is not None or parts.password is not None:
+        raise ValueError(f"{name} must not contain user info")
     return parts
 
 
@@ -326,14 +332,14 @@ class TesServiceEntry(ServiceEntry):
                 unreserved ones (e.g., a query), or segments `.` or `..`.
         """
         if not value.startswith("/"):
-            raise ValueError(f"API path must be absolute: {value!r}")
+            raise ValueError("API path must be absolute")
         path = value.removesuffix("/")
         if path and (
             not _API_PATH.fullmatch(path) or {".", ".."} & set(path.split("/"))
         ):
             raise ValueError(
-                f"API path must have unreserved characters only, and no segments"
-                f" `.` or `..`: {value!r}"
+                "API path must have unreserved characters only, and no segments"
+                " `.` or `..`"
             )
         return path
 
@@ -469,12 +475,11 @@ class Tes(ConfigModel):
         ):
             if value is None:
                 continue
-            parts = split_server_url(
-                value, f"URL of the {name} of `client_credentials`"
-            )
+            setting = f"URL of the {name} of `client_credentials`"
+            parts = split_server_url(value, setting)
             if parts.scheme not in self.url_schemes:
                 raise ValueError(
-                    f"URL scheme of {value!r} not allowed (`url_schemes`:"
+                    f"Scheme of the {setting} not allowed (`url_schemes`:"
                     f" {self.url_schemes})"
                 )
         if self.uses_tokens and idp.issuer is None and idp.token_endpoint is None:

@@ -12,12 +12,18 @@
 ##     --tag <registry>/protes-plugins:<tag> <context>
 ## The smoke test builds it in CI with a test plugin (`tests/smoke/plugins.sh`)
 ARG PROTES_IMAGE
+FROM ghcr.io/astral-sh/uv:0.13.6@sha256:af22a52f5eafef3d78e551599d405c02df61919d18028f0cea8eda93bc9986d0 AS uv
+
 FROM ${PROTES_IMAGE}
 
 USER root
-RUN --mount=type=bind,source=plugins.txt,target=/tmp/plugins/plugins.txt \
+RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
+  --mount=type=bind,source=plugins.txt,target=/tmp/plugins/plugins.txt \
   --mount=type=bind,source=wheels,target=/tmp/plugins/wheels \
-  pip install --no-cache-dir --no-index --no-deps --require-hashes \
-    --find-links /tmp/plugins/wheels --requirement /tmp/plugins/plugins.txt \
-  && pip check
+  export UV_NO_CACHE=1 UV_PYTHON_DOWNLOADS=never \
+  && uv pip install --system --no-index --no-deps --require-hashes \
+    --only-binary :all: --compile-bytecode --find-links /tmp/plugins/wheels \
+    --requirement /tmp/plugins/plugins.txt \
+  && uv pip check --system \
+  && rm -f /tmp/uv-*.lock
 USER 1000

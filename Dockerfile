@@ -12,7 +12,7 @@ FROM ghcr.io/astral-sh/uv:0.13.6@sha256:af22a52f5eafef3d78e551599d405c02df61919d
 ## Pinned by digest, so that rebuilds (e.g., of a release) use the same base
 ## image; Dependabot updates the tag and digest together
 ## (`.github/dependabot.yml`)
-FROM elixircloud/foca:0.19.0-py3.13@sha256:82446bddb6aeb67f4371620bdf4229675c88cb8748c04050afd05c78e23cccfa AS base
+FROM elixircloud/foca:0.20.0-py3.13@sha256:292a0d62a811dced46baaccfb42eedf1391dfa11457883cb8e71710991fdf804 AS base
 
 ##### BUILD #####
 ## Build the app's wheel, in a stage of its own, so that the image doesn't
@@ -106,15 +106,19 @@ RUN --network=none --mount=from=build,source=/tmp/dist,target=/tmp/dist \
   && rm -rf /tmp/src /tmp/uv-*.lock
 
 ## Plugins for local builds (e.g., `--build-arg PLUGINS="<distribution>==<version>"`,
-## pip requirement specifiers without spaces, separated by spaces; recorded
-## in the image's history, so never credentials), installed with their
-## dependencies from the package index, NOT pinned by hash; then pip checks
+## requirement specifiers without spaces, separated by spaces; recorded in
+## the image's history, so never credentials), installed with their
+## dependencies from the package index, NOT pinned by hash; then uv checks
 ## that all dependencies are met. Empty by default, as for the published
 ## images; images for deployments derive from a release image instead (see
 ## `docs/plugin-images.md`)
 ARG PLUGINS=""
-RUN if [ -n "${PLUGINS}" ]; then \
-    pip install --no-cache-dir ${PLUGINS} && pip check; \
+RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
+  if [ -n "${PLUGINS}" ]; then \
+    export UV_NO_CACHE=1 UV_PYTHON_DOWNLOADS=never \
+    && uv pip install --system ${PLUGINS} \
+    && uv pip check --system \
+    && rm -f /tmp/uv-*.lock; \
   fi
 USER 1000
 

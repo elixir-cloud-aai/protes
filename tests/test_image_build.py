@@ -16,6 +16,7 @@ import tomllib
 
 from packaging.requirements import Requirement
 from uv import find_uv_bin
+import yaml
 
 ROOT = Path(__file__).parents[1]
 DOCKERFILE = ROOT / "Dockerfile"
@@ -337,8 +338,64 @@ def test_plugins_only_on_request() -> None:
         if "PLUGINS" in run
     ]
     assert len(runs) == 1, runs
-    assert re.match(r'if \[ -n "\$\{PLUGINS\}" \]; then\s', runs[0]), runs[0]
-    # It installs the plugins and checks the result
-    assert "pip install --no-cache-dir ${PLUGINS} && pip check;" in runs[0]
+    assert re.search(r'\sif \[ -n "\$\{PLUGINS\}" \]; then\s', runs[0]), runs[0]
+    # uv installs the plugins and checks the result, as the image has no pip
+    assert "--mount=from=uv,source=/uv,target=/usr/local/bin/uv" in runs[0]
+    assert "uv pip install --system ${PLUGINS}" in runs[0]
+    assert "uv pip check --system" in runs[0]
+    assert not re.search(r"(?<!uv )\bpip (install|check)", runs[0]), runs[0]
     # Nothing runs after the conditional
     assert runs[0].rstrip().endswith("fi"), runs[0]
+
+
+def test_recipe_without_pip() -> None:
+    """The recipe for plugin images installs with uv, as images have no pip.
+
+    uv is mounted, not copied, and the install is hash-checked and offline.
+    """
+    text = (ROOT / "examples/plugin-image/Dockerfile").read_text()
+    text = "\n".join(
+        line for line in text.splitlines() if not line.lstrip().startswith("#")
+    ).replace("\\\n", " ")
+    assert re.search(
+        r"^FROM ghcr\.io/astral-sh/uv:\S+@sha256:[0-9a-f]{64} AS uv$",
+        text,
+        flags=re.MULTILINE,
+    )
+    assert not re.search(r"^COPY\s+--from=uv\b", text, flags=re.MULTILINE)
+    (run,) = re.findall(r"^RUN\s+(.+)$", text, flags=re.MULTILINE)
+    assert "--mount=from=uv,source=/uv,target=/usr/local/bin/uv" in run
+    commands = [command.strip() for command in run.split("&&")]
+    assert all(not _runs_pip(command) for command in commands), commands
+    (install,) = [
+        args
+        for args in map(_uv_args, commands)
+        if args is not None and args[:2] == ["pip", "install"]
+    ]
+    assert {"--system", "--no-index", "--no-deps", "--require-hashes"} <= set(install)
+    assert install[install.index("--only-binary") + 1] == ":all:"
+    assert ["pip", "check", "--system"] in [_uv_args(c) for c in commands]
+
+
+def test_trivyignore_without_pip_entries() -> None:
+    """Nothing vendored by pip is accepted, as the image has no pip."""
+    ignored = yaml.safe_load((ROOT / ".trivyignore.yaml").read_text())
+    vendored = {
+        "pkg:pypi/setuptools@70.3.0",
+        "pkg:pypi/urllib3@2.7.0",
+        "pkg:pypi/msgpack@1.1.2",
+    }
+    # Without `purls`, an entry applies to all packages
+    vulnerabilities = {
+        "CVE-2025-47273",
+        "CVE-2026-59890",
+        "GHSA-xmj3-9gf7-h52w",
+        "CVE-2026-97687",
+        "CVE-2026-97689",
+        "CVE-2026-97688",
+        "GHSA-6v7p-g79w-8964",
+        "CVE-2026-114613",
+    }
+    for entry in ignored["vulnerabilities"] or []:
+        assert not vendored & set(entry.get("purls", [])), entry
+        assert entry["id"] not in vulnerabilities, entry
