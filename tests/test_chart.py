@@ -360,6 +360,10 @@ def test_values_of_library() -> None:
     assert set(app) <= set(values["protes"])
 
 
+# The custom config that the chart sets by default
+FULL_PAGE_DEFAULT = {"controllers": {"list_tasks": {"max_page_size_full": 6}}}
+
+
 def test_config_overlay() -> None:
     """The overlay connects to the release's MongoDB, and has the config."""
     overlay = _overlay(
@@ -367,7 +371,12 @@ def test_config_overlay() -> None:
     )
     assert overlay["db"] == {"host": MONGODB}
     assert overlay["custom"] == {
-        "controllers": {"list_tasks": {"default_page_size": 8}}
+        "controllers": {
+            "list_tasks": {
+                **FULL_PAGE_DEFAULT["controllers"]["list_tasks"],
+                "default_page_size": 8,
+            }
+        }
     }
     assert overlay["security"]["auth"]["issuers"] == ["https://login.example.org/oidc/"]
 
@@ -1057,7 +1066,9 @@ def test_generated_section_null(section: str) -> None:
     """
     docs = _render("--set-json", f"config.{section}=null")
     assert _overlay(docs)["server"] == {"public_url": "https://tes.example.org/"}
-    assert _overlay(docs)["custom"] == {}
+    # the chart's default of `custom` goes with the section
+    custom = {} if section == "custom" else FULL_PAGE_DEFAULT
+    assert _overlay(docs)["custom"] == custom
 
 
 # Entries of `tes.backends`, with the chart's keys, and as in the app config
@@ -1065,6 +1076,7 @@ CHART_BACKENDS = [
     {
         "type": "ga4gh-tes",
         "url": "https://tes.example.org",
+        "apiPath": "/v1",
         "auth": "basic",
         "basic": {"usernameEnv": "TES_USERNAME", "passwordEnv": "TES_PASSWORD"},
         "labels": {"regionName": "eu-north"},
@@ -1090,6 +1102,7 @@ CONFIG_BACKENDS = [
     {
         "type": "ga4gh-tes",
         "url": "https://tes.example.org",
+        "api_path": "/v1",
         "auth": "basic",
         "basic": {"username_env": "TES_USERNAME", "password_env": "TES_PASSWORD"},
         "labels": {"regionName": "eu-north"},
@@ -1132,9 +1145,9 @@ def test_tes_backends() -> None:
 
 def test_tes_backends_default() -> None:
     """Without `tes.backends`, the overlay sets no backends."""
-    assert _overlay(_render())["custom"] == {}
+    assert _overlay(_render())["custom"] == FULL_PAGE_DEFAULT
     docs = _render("--set-json", f"config.custom.tes.backends={json.dumps([])}")
-    assert _overlay(docs)["custom"] == {"tes": {"backends": []}}
+    assert _overlay(docs)["custom"] == {**FULL_PAGE_DEFAULT, "tes": {"backends": []}}
 
 
 @pytest.mark.parametrize(
@@ -1142,6 +1155,14 @@ def test_tes_backends_default() -> None:
     [
         ({"type": "ga4gh-tes"}, "missing property 'url'"),
         ({"type": "ga4gh-wes", "url": "https://wes.example.org"}, "/tes/backends/0"),
+        (
+            {"type": "ga4gh-tes", "url": "https://tes.example.org", "apiPath": "v1"},
+            "/tes/backends/0",
+        ),
+        (
+            {"type": "ga4gh-tes", "url": "https://tes.example.org", "apiPath": "/v?a"},
+            "/tes/backends/0",
+        ),
         (
             {"type": "ga4gh-tes", "url": "https://tes.example.org", "urlSchemes": []},
             "/tes/backends/0",

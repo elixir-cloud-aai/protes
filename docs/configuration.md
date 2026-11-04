@@ -46,7 +46,8 @@ Tasks are forwarded to the TES instances of the backend list,
 `custom.tes.backends`, in order (a typed backend list of FOCA,
 `foca.plugins.backends`). Each
 entry is either a TES instance (`type: ga4gh-tes`), with its base URL
-(`url`, without the API path `/ga4gh/tes/v1`) and how proTES authenticates
+(`url`, without the API path `/ga4gh/tes/v1`; see [API paths](#api-paths) for
+TES instances that serve it elsewhere) and how proTES authenticates
 at it (`auth`: with its own access token, the default, with HTTP Basic
 credentials from environment variables, or not at all; see [Credentials of
 TES instances](access-control.md#credentials-of-tes-instances)), or a
@@ -67,6 +68,10 @@ custom:
       - type: ga4gh-tes
         url: https://tes.example.com
         auth: none
+      # A TES instance that serves the TES API at another path, e.g., TESP
+      - type: ga4gh-tes
+        url: https://tesp.example.org
+        api_path: /v1
     # Identity provider of proTES, for the TES instances with
     # `auth: client_credentials` (the default)
     client_credentials:
@@ -97,8 +102,8 @@ Requests to discovered TES instances must end within `custom.tes.timeout`
 seconds as a whole (resolving, connecting, sending and reading), and
 connecting within 10 seconds (FOCA's guarded HTTP client). proTES creates, gets
 and cancels tasks with a single request each, to the API path of the URL
-(`<url>/ga4gh/tes/v1`), and never sends a request to create or cancel a
-task again, so that no TES instance gets a task twice; these requests don't
+(`<url>/ga4gh/tes/v1`, see [API paths](#api-paths)), and never sends a request
+to create or cancel a task again, so that no TES instance gets a task twice; these requests don't
 follow redirects. It tries the next TES instance only if a TES instance
 certainly did not accept the task: it was not reached (connection refused,
 host not resolved, connection timed out, certificate not accepted), there
@@ -154,14 +159,36 @@ proxy's timeout) for long lists of unreliable TES instances.
 Requests in flight when an instance of proTES stops are cut off after
 Gunicorn's graceful timeout (20 seconds in the chart).
 
+### API paths
+
+proTES appends the API path of the TES specification, `/ga4gh/tes/v1`, to the
+URL of a TES instance. TES instances that serve the TES API elsewhere set
+`api_path` in their entry (`/` if they serve it at the URL itself). It must be
+an absolute path of unreserved characters, without segments `.` or `..`, and
+applies to all requests to the TES instance. A path in `url` is no alternative,
+as the default API path is appended to it.
+
+[TESP](https://github.com/CESNET/tesp-api) (TESP-API with Pulsar) serves the
+TES API at `/v1` only, so it needs `api_path: /v1`, unless a proxy in front of
+it rewrites the default path. proTES also ignores the fields that TESP adds to
+tasks (see [TES versions](tes-versions.md#fields-that-tes-instances-add)).
+
+Plugins always see the path of the API of proTES (`/ga4gh/tes/v1/tasks` in
+outbound requests, which they can't change): proTES applies `api_path` when it
+sends the request, and [task provenance](operations.md#task-provenance) doesn't
+show it. Service registries list URLs only, so discovered TES
+instances always use the default API path, unless the same URL is also listed
+as an entry of its own, whose settings win.
+
 ### TES versions
 
 proTES serves TES 1.1, and relays tasks to TES instances of TES 1.0 and 1.1
 (see [TES versions](tes-versions.md)). It needs to know which one each TES
 instance implements: the label `tes.version` of its entry (`"1.0"` or `"1.1"`;
 other versions make the app refuse to start) wins; otherwise, proTES reads
-`GET <url>/ga4gh/tes/v1/service-info`, with its credentials for the TES
-instance and timeouts of 5 seconds (to connect and to answer), and caches the result per process for
+`GET <url>/ga4gh/tes/v1/service-info` (or below its `api_path`), with its
+credentials for the TES instance and timeouts of 5 seconds (to connect and to
+answer), and caches the result per process for
 `custom.tes.version_cache_ttl` seconds (default: 3600; failures for 60
 seconds). It reads `type.version` leniently (e.g., `TES`, `1.0`, `v1.1.0`), if
 `type.group` is `org.ga4gh` and `type.artifact` is `tes`. A TES instance that
@@ -366,6 +393,24 @@ plugins:
   per input; all contents together are limited by the [request size
   limit](#request-size-limit)); tasks with larger contents are rejected
   with `413 Content Too Large`, also if plugins added the contents;
+- `post_task.max_log_size`: the maximum size of the logs of a TES instance
+  that are stored per task, i.e., of the standard output and error of executors
+  and the system logs together, in bytes of UTF-8 (default 1048576, i.e., 1 MiB;
+  at most 8 MiB, as documents in MongoDB have at most 16 MB, with the task as
+  received and as forwarded). Small logs are kept; what they leave is shared
+  among the longer ones, which keep their end, where errors usually are. proTES
+  gets them once when a task has finished (`GET /tasks/{id}?view=FULL` at the TES
+  instance), and holds them in memory in the Celery worker meanwhile: a task
+  whose response is larger than 64 MiB, or takes longer than `custom.tes.timeout`
+  as a whole, stays without them. Such a response takes a worker process up to
+  about 420 MiB, so that two at once can exceed the 512 MiB of the [Helm
+  chart](deployment.md)'s worker: the broker then delivers the poll again, and
+  proTES finishes the task without its logs. If a task would still exceed the
+  limit of MongoDB (e.g., with very many short logs), proTES stores it without
+  these logs, or if need be also without the executors' logs and the outputs, and
+  logs an error. Their owners can read them in the view `FULL`, so
+  TES instances should keep secrets out of them. With `0`, proTES neither gets
+  nor stores them;
 - `post_task.max_create_time`: the number of seconds (default 3600, at
   most 31536000, i.e., a year) after which tasks that are still being
   created, i.e., in state `UNKNOWN` without identifier at a TES instance
@@ -384,17 +429,20 @@ plugins:
   `page_size`s are reduced to it (default and upper limit 2047: the TES
   specification requires fewer than 2048);
 - `list_tasks.max_page_size_full`: the maximum number of tasks per page of
-  the view `FULL` (default 64), whose tasks may be large (e.g., with inline
+  the view `FULL` (default 64; 6 in the [Helm chart](deployment.md), with its
+  memory limit of 256 MiB), whose tasks may be large (e.g., with inline
   contents of inputs and logs); larger `page_size`s, and the default page
   size, are reduced to it. Only the number of tasks is limited, not the
   size of a page: a task may be as large as the [request size
-  limit](#request-size-limit) (1 MiB by default), plus the logs that its
-  TES instance reports, so a page of the view `FULL` may be about
-  `max_page_size_full` times that size (64 MiB with the defaults), which a
-  Gunicorn worker holds in memory while serving it (for each request that
-  it serves at once). For small memory limits (e.g., the 256 MiB of the
-  [Helm chart](deployment.md)), lower `max_page_size_full` (e.g., to 8) or
-  raise the memory, if users may store large tasks.
+  limit](#request-size-limit) (1 MiB by default), plus its logs
+  (`post_task.max_log_size`, 1 MiB by default), so a page of the view `FULL`
+  may be about `max_page_size_full` times that size (128 MiB with the app's
+  defaults). A Gunicorn worker holds about 3 times the size of a page in
+  memory while serving it, as the documents, their JSON and the encoded body
+  exist at the same time, for each request that it serves at once (one per
+  thread). Set it and the memory limit together: about 36 MiB per request with
+  6, and about 384 MiB with 64, on top of about 90 MiB of the app; more if logs
+  hold text that JSON escapes (up to 6 times its size, e.g., control characters).
 
 ## Security
 

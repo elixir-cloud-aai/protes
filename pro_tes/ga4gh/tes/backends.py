@@ -28,7 +28,8 @@ checks the address of each connection itself, so that hosts whose addresses
 change between checks (DNS rebinding) can't lead requests to private
 addresses (unless allowed, `allow_private_addresses` of the registry entry);
 their redirects are not followed, and their responses are limited to
-`MAX_RESPONSE_SIZE` bytes. Requests to configured backends time out after
+`MAX_RESPONSE_SIZE` bytes. Tasks in the view `FULL` are limited to that size
+for configured backends, too. Requests to configured backends time out after
 `custom.tes.timeout` seconds without data, and after `CONNECT_TIMEOUT`
 seconds while connecting; requests to discovered backends must end within
 `custom.tes.timeout` seconds as a whole, and connecting within FOCA's
@@ -36,7 +37,8 @@ seconds while connecting; requests to discovered backends must end within
 
 Tasks are created and canceled with a single `POST` request each (which
 doesn't follow redirects), to the API path of the backend's URL
-(`<url>/ga4gh/tes/v1`), so that backends never get a task twice; tasks are
+(`<url>/ga4gh/tes/v1`, or `api_path` of its entry), so that backends never get
+a task twice; tasks are
 got from the same path. If it is unknown whether the backend processed such
 a request (e.g., because the response timed out), the request is not sent
 again (cf. :py:class:`pro_tes.exceptions.BackendOutcomeUnknown`).
@@ -51,6 +53,7 @@ from collections.abc import Iterator
 from contextlib import suppress
 from dataclasses import dataclass
 from http import HTTPStatus
+from inspect import signature
 import logging
 import os
 import ssl
@@ -74,13 +77,15 @@ from foca.utils.http import (
 import requests
 from requests.structures import CaseInsensitiveDict
 import tes
-from tes.utils import unmarshal
-from urllib3.exceptions import ConnectTimeoutError, NewConnectionError
+from tes.utils import camel_to_snake, unmarshal
+from urllib3.exceptions import ConnectTimeoutError, HTTPError, NewConnectionError
 
 from pro_tes.config_models import (
+    DEFAULT_API_PATH,
     ClientCredentials,
     CustomConfig,
     Tes,
+    TesServiceEntry,
     split_server_url,
 )
 from pro_tes.exceptions import (
@@ -110,15 +115,15 @@ CLIENT_SECRET_ENV = "PROTES_CLIENT_SECRET"  # noqa: S105 (a variable name)
 OIDC_CONFIG_PATH = ".well-known/openid-configuration"
 # Lifetime (in seconds) assumed for tokens of responses without `expires_in`
 DEFAULT_TOKEN_LIFETIME = 60
-# Path of the TES API, relative to the URL of a backend
-API_PATH = "ga4gh/tes/v1"
 # Timeout (in seconds) of connecting to TES backends (at most the timeout of
 # requests, `custom.tes.timeout`); short, as requests that time out while
 # connecting are sent to the next backend
 CONNECT_TIMEOUT = 5
-# Maximum size of responses of discovered backends, in bytes (e.g., tasks
-# with their logs)
+# Maximum size of responses of discovered backends, and of tasks in the view
+# `FULL` of all backends, whose logs can be of any size, in bytes
 MAX_RESPONSE_SIZE = 64 * 1024 * 1024
+# Maximum size of the parts in which responses limited to it are read, in bytes
+RESPONSE_CHUNK_SIZE = 64 * 1024
 # Label of a backend with its TES version, which wins over its service info
 TES_VERSION_LABEL = "tes.version"
 # Timeout of reading the service info of a backend, in seconds; short, as
@@ -126,6 +131,20 @@ TES_VERSION_LABEL = "tes.version"
 PROBE_TIMEOUT = 5
 # Seconds until the service info of a backend is read again after a failure
 PROBE_RETRY = 60
+# Models of py-tes that hold objects: the model of each such field
+_NESTED_MODELS: dict[type, dict[str, type]] = {
+    tes.Task: {
+        "inputs": tes.models.Input,
+        "outputs": tes.models.Output,
+        "resources": tes.models.Resources,
+        "executors": tes.models.Executor,
+        "logs": tes.models.TaskLog,
+    },
+    tes.models.TaskLog: {
+        "logs": tes.models.ExecutorLog,
+        "outputs": tes.models.OutputFileLog,
+    },
+}
 
 
 class BackendConnectTimeout(BackendRequestNotSent, requests.ConnectTimeout):
@@ -542,19 +561,59 @@ def not_sent(exc: requests.RequestException) -> bool:
     )
 
 
+def known_fields(value: Any, model: type = tes.Task) -> Any:
+    """Drop the fields of a task that the models of py-tes don't know.
+
+    py-tes raises on such fields, but backends may add them to what they serve
+    (e.g., TESP: `author`). Applies to the task and the objects nested in it
+    (`_NESTED_MODELS`); free-form maps (e.g., `tags`) are kept.
+
+    Args:
+        value: Task as served by a backend (JSON), or an object or a list of
+            objects nested in it; other values are returned as they are.
+        model: Model of py-tes of the value.
+
+    Returns:
+        The value, without the unknown fields; not changed in place.
+    """
+    if isinstance(value, list):
+        # only objects: lists of lists are invalid, however deep they are
+        return [
+            known_fields(item, model) if isinstance(item, dict) else item
+            for item in value
+        ]
+    if not isinstance(value, dict):
+        return value
+    fields = signature(model).parameters
+    nested = _NESTED_MODELS.get(model, {})
+    known: dict[str, Any] = {}
+    for key, item in value.items():
+        # py-tes converts the keys of objects
+        name = camel_to_snake(key)
+        if name not in fields:
+            logger.debug("Field %r of a task of a backend ignored", key)
+        elif name in nested:
+            known[key] = known_fields(item, nested[name])
+        else:
+            known[key] = item
+    return known
+
+
 class TesClient(tes.HTTPClient):
     """Client of a TES backend, authenticated as configured for the backend.
 
     Credentials are looked up for each request (cf.
     :py:meth:`TesClient._request_params`). Tasks are created, got and
-    canceled with a single request each, to the API path of the backend's
-    URL (unlike py-tes, which tries other paths too, and so may create a
-    task more than once); redirects of `POST` requests are not followed.
+    canceled with a single request each, to the API path of the backend
+    (`api_path` of its entry; unlike py-tes, which tries other paths too, and
+    so may create a task more than once); redirects of `POST` requests are
+    not followed.
 
     Attributes:
         backend: The backend.
         entry: Entry of the backend in `custom.tes.backends` (the registry
             entry, for discovered backends).
+        api_path: Path of the TES API, relative to the URL of the backend.
     """
 
     def __init__(
@@ -580,6 +639,9 @@ class TesClient(tes.HTTPClient):
         super().__init__(url=url, timeout=timeout)
         self.backend = backend
         self.entry = entry
+        self.api_path = (
+            entry.api_path if isinstance(entry, TesServiceEntry) else DEFAULT_API_PATH
+        )
         # discovered backends: each connection is checked
         self.guarded: GuardedClient | None = None
         if isinstance(entry, RegistryEntry):
@@ -599,12 +661,14 @@ class TesClient(tes.HTTPClient):
     ) -> tuple[str, BackendResponse]:
         """Relay a task, with a single request, as the plugins prepared it.
 
-        The request has the method, path (below the URL of the backend),
-        query and headers of the outbound request (cf.
-        :py:meth:`foca.plugins.PipelineRun.attempts`; usually `POST
-        /ga4gh/tes/v1/tasks`), the task as body, and the credentials of the
-        backend (none if the plugins set `outbound.auth` to `none`; plugins
-        can't choose other credentials), added after the plugins ran.
+        The request has the method, query and headers of the outbound request
+        (cf. :py:meth:`foca.plugins.PipelineRun.attempts`; usually `POST
+        /ga4gh/tes/v1/tasks`), its path with the API path of the backend for
+        the default one (plugins see the path of the API of proTES, cf.
+        :py:func:`pro_tes.gateway.check_outbound`), the task as body, and the
+        credentials of the backend (none if the plugins set `outbound.auth`
+        to `none`; plugins can't choose other credentials), added after the
+        plugins ran.
 
         Args:
             outbound: Outbound request, after the `forward` phase.
@@ -627,9 +691,12 @@ class TesClient(tes.HTTPClient):
                 accepted the task, but did not confirm it with its
                 identifier.
         """
+        path = outbound.path
+        if path.startswith(f"{DEFAULT_API_PATH}/"):
+            path = f"{self.api_path}{path.removeprefix(DEFAULT_API_PATH)}"
         response = self._send(
             method=outbound.method,
-            url=f"{self.url}{outbound.path}",
+            url=f"{self.url}{path}",
             data=task.as_json(),
             params=outbound.query,
             headers=dict(outbound.headers),
@@ -664,7 +731,8 @@ class TesClient(tes.HTTPClient):
             view: View of the task (`MINIMAL`, `BASIC` or `FULL`).
 
         Returns:
-            The task.
+            The task, without the fields that py-tes doesn't know (cf.
+            :py:func:`known_fields`).
 
         Raises:
             requests.RequestException: The request failed, or the backend
@@ -674,14 +742,16 @@ class TesClient(tes.HTTPClient):
         """
         kwargs = self._request_params(params={"view": view})
         timeout = kwargs.pop("timeout")
-        url = f"{self.url}/{API_PATH}/tasks/{quote_id(task_id)}"
-        response = self._request("GET", url, timeout=timeout, **kwargs)
+        url = f"{self.url}{self.api_path}/tasks/{quote_id(task_id)}"
+        response = self._request(
+            "GET", url, timeout=timeout, limited=view == "FULL", **kwargs
+        )
         response.raise_for_status()
         body = response.json()
         if isinstance(body, dict):
             # also for any other code that gets tasks from backends
             body = upgrade_task(body, backend_version(self.backend, probe=False))
-        task: tes.Task = unmarshal(body, tes.Task)
+        task: tes.Task = unmarshal(known_fields(body), tes.Task)
         return task
 
     def service_info(self) -> Any:
@@ -699,7 +769,7 @@ class TesClient(tes.HTTPClient):
         """
         kwargs = self._request_params()
         timeout = kwargs.pop("timeout")
-        url = f"{self.url}/{API_PATH}/service-info"
+        url = f"{self.url}{self.api_path}/service-info"
         response = self._request("GET", url, timeout=timeout, **kwargs)
         response.raise_for_status()
         return response.json()
@@ -719,7 +789,8 @@ class TesClient(tes.HTTPClient):
                 canceled the task, but did not confirm it.
         """
         self._send(
-            method="POST", url=f"{self.url}/{API_PATH}/tasks/{quote_id(task_id)}:cancel"
+            method="POST",
+            url=f"{self.url}{self.api_path}/tasks/{quote_id(task_id)}:cancel",
         )
 
     def _send(
@@ -810,7 +881,12 @@ class TesClient(tes.HTTPClient):
         )
 
     def _request(
-        self, method: str, url: str, timeout: tuple[float, float], **kwargs: Any
+        self,
+        method: str,
+        url: str,
+        timeout: tuple[float, float],
+        limited: bool = False,
+        **kwargs: Any,
     ) -> requests.Response:
         """Send a request, through the guarded client for discovered backends.
 
@@ -823,6 +899,9 @@ class TesClient(tes.HTTPClient):
             url: URL of the request.
             timeout: Timeouts of connecting and of reading, in seconds
                 (configured backends only).
+            limited: Whether the response of a configured backend is limited to
+                `MAX_RESPONSE_SIZE` bytes and the timeout as a whole, like all
+                of discovered backends.
             **kwargs: Other arguments of `requests.request()`; for discovered
                 backends, only `params`, `headers`, `data` and `auth`.
 
@@ -837,6 +916,13 @@ class TesClient(tes.HTTPClient):
                 `requests.ConnectionError` if it may have been.
         """
         if self.guarded is None:
+            if limited:
+                return read_limited(
+                    requests.request(
+                        method, url, timeout=timeout, stream=True, **kwargs
+                    ),
+                    timeout=timeout[1],
+                )
             return requests.request(method, url, timeout=timeout, **kwargs)
         unsupported = set(kwargs) - {
             "params",
@@ -940,6 +1026,45 @@ def response_headers(response: requests.Response) -> Headers:
         except (TypeError, ValueError):
             logger.warning("Header %r of the response of a backend left out", name)
     return headers
+
+
+def read_limited(response: requests.Response, timeout: float) -> requests.Response:
+    """Read the body of a streamed response, up to `MAX_RESPONSE_SIZE` bytes.
+
+    Args:
+        response: Streamed response.
+        timeout: Maximum time to read it, in seconds; as a whole, as the timeout
+            of requests only counts time without data.
+
+    Returns:
+        The response, with its body.
+
+    Raises:
+        requests.RequestException: The body is larger.
+        requests.ConnectionError: The body can't be read.
+        requests.Timeout: Reading the body takes longer.
+    """
+    content = bytearray()
+    deadline = time.monotonic() + timeout
+    with response:
+        # not `iter_content`, which waits for whole chunks, however long they take
+        try:
+            while chunk := response.raw.read1(RESPONSE_CHUNK_SIZE, decode_content=True):
+                content += chunk
+                if len(content) > MAX_RESPONSE_SIZE:
+                    raise requests.RequestException(
+                        f"Response larger than {MAX_RESPONSE_SIZE} bytes",
+                        response=response,
+                    )
+                if time.monotonic() >= deadline:
+                    raise requests.Timeout(
+                        f"Response not read within {timeout} seconds",
+                        response=response,
+                    )
+        except HTTPError as exc:
+            raise requests.ConnectionError(str(exc), response=response) from exc
+    response._content = bytes(content)
+    return response
 
 
 def as_response(guarded: HttpResponse, url: str) -> requests.Response:

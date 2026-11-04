@@ -84,6 +84,10 @@ class BackendOutcomeUnknown(RuntimeError):
         self.reason = reason
 
 
+class BackendRefused(RuntimeError):
+    """Raised when a TES backend refused a request, which it didn't process."""
+
+
 class BackendNotConfigured(ValueError):
     """Raised when a TES backend is neither configured nor discovered."""
 
@@ -247,6 +251,11 @@ exceptions = {
         "detail": (
             "The TES instance did not confirm the request; it may have processed it."
         ),
+        "status": 502,
+    },
+    BackendRefused: {
+        "title": "Bad gateway",
+        "detail": "The TES instance refused the request.",
         "status": 502,
     },
     # Errors of the plugin engine; `PipelineRejected` has the status of the

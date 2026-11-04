@@ -1,14 +1,16 @@
 """Custom app config models."""
 
+import re
 from typing import Annotated, Literal, Self
 from urllib.parse import SplitResult, urlsplit
 
-from foca.plugins.backends import BackendListConfig
+from foca.plugins.backends import BackendListConfig, ServiceEntry
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
     PositiveInt,
+    field_validator,
     model_validator,
 )
 
@@ -107,6 +109,11 @@ class PostTask(ConfigModel):
             if proTES stopped while forwarding them) are set to
             `SYSTEM_ERROR`; longer than creating a task may take, and at
             most a year.
+        max_log_size: Maximum size of the logs of a TES instance that are
+            stored per task (standard output and error of executors and
+            system logs together), in bytes (UTF-8); longer ones are cut,
+            keeping their end. `0` stores none, without getting them. At most
+            8 MiB, as documents in MongoDB have at most 16 MB.
 
     Attributes:
         db: DB insert behavior.
@@ -120,6 +127,8 @@ class PostTask(ConfigModel):
             inputs of a task, together, in bytes (UTF-8).
         max_create_time: Seconds after which tasks still being created are
             set to `SYSTEM_ERROR`.
+        max_log_size: Maximum size of the logs of a TES instance that are
+            stored per task, in bytes (UTF-8).
     """
 
     db: DB = DB()
@@ -129,6 +138,7 @@ class PostTask(ConfigModel):
     max_inline_content: PositiveInt = 131072
     # at most a year (cut-offs before the Unix epoch are invalid)
     max_create_time: Annotated[int, Field(gt=0, le=31536000)] = 3600
+    max_log_size: Annotated[int, Field(ge=0, le=8388608)] = 1048576
 
 
 class ListTasks(ConfigModel):
@@ -276,6 +286,58 @@ BACKENDS_HINT = (
 )
 
 
+DEFAULT_API_PATH = "/ga4gh/tes/v1"
+"""Path of the TES API, relative to the URL of a backend, as the TES
+specification has it; that of the API of proTES too."""
+
+# Absolute paths of unreserved characters (RFC 3986, section 2.3)
+_API_PATH = re.compile(r"(?:/[A-Za-z0-9._~-]+)+")
+
+
+class TesServiceEntry(ServiceEntry):
+    """TES instance of `custom.tes.backends`, with the settings of proTES.
+
+    Args:
+        api_path: Path of the TES API, relative to `url`, for TES instances
+            that serve it elsewhere than the TES specification says; `/` if
+            it is at `url` itself.
+        **data: Fields of :py:class:`foca.plugins.backends.ServiceEntry`.
+
+    Attributes:
+        api_path: Path of the TES API, relative to `url`, without trailing
+            slash (empty if it is at `url` itself).
+    """
+
+    api_path: str = DEFAULT_API_PATH
+
+    @field_validator("api_path")
+    @classmethod
+    def check_api_path(cls, value: str) -> str:
+        """Check the API path, and remove trailing slashes.
+
+        Args:
+            value: API path, as given.
+
+        Returns:
+            The API path.
+
+        Raises:
+            ValueError: The path is not absolute, has characters other than
+                unreserved ones (e.g., a query), or segments `.` or `..`.
+        """
+        if not value.startswith("/"):
+            raise ValueError(f"API path must be absolute: {value!r}")
+        path = value.removesuffix("/")
+        if path and (
+            not _API_PATH.fullmatch(path) or {".", ".."} & set(path.split("/"))
+        ):
+            raise ValueError(
+                f"API path must have unreserved characters only, and no segments"
+                f" `.` or `..`: {value!r}"
+            )
+        return path
+
+
 class Tes(ConfigModel):
     """TES backend configuration.
 
@@ -283,7 +345,8 @@ class Tes(ConfigModel):
         backends: TES backends that tasks may be forwarded to, in order:
             configured ones (`type: ga4gh-tes`) and service registries whose
             verified TES services are used (`type: ga4gh-service-registry`;
-            cf. :py:mod:`foca.plugins.backends`).
+            cf. :py:mod:`foca.plugins.backends`; TES instances also with
+            `api_path`, cf. :py:class:`TesServiceEntry`).
         url_schemes: URL schemes allowed for the identity provider of
             `client_credentials` (those of backends and registries are set
             per entry, `url_schemes`).
@@ -314,6 +377,32 @@ class Tes(ConfigModel):
     client_credentials: ClientCredentials = ClientCredentials()
     timeout: PositiveInt = 15
     version_cache_ttl: PositiveInt = 3600
+
+    @field_validator("backends", mode="before")
+    @classmethod
+    def parse_tes_instances(cls, value: object) -> object:
+        """Parse TES instances with the settings of proTES.
+
+        FOCA's backend list keeps entries that are instances of its models as
+        they are (also :py:class:`foca.plugins.backends.BackendList`), so the
+        settings are available from the entries of its candidates. As the
+        field has FOCA's type, `model_dump()` leaves them out: don't load the
+        config from such a dump.
+
+        Args:
+            value: Backend list, as given.
+
+        Returns:
+            The backend list, with entries of TES instances parsed.
+        """
+        if not isinstance(value, list):
+            return value
+        return [
+            TesServiceEntry.model_validate(entry)
+            if isinstance(entry, dict) and entry.get("type") == "ga4gh-tes"
+            else entry
+            for entry in value
+        ]
 
     @model_validator(mode="after")
     def check_version_labels(self) -> Self:

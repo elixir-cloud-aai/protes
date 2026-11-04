@@ -535,6 +535,11 @@
                     "minLength": 1,
                     "description": "Base URL of the TES instance, without /ga4gh/tes/v1"
                   },
+                  "apiPath": {
+                    "type": "string",
+                    "pattern": "^/([A-Za-z0-9._~-]+(/[A-Za-z0-9._~-]+)*/?)?$",
+                    "description": "Path of the TES API, relative to url (api_path), if not /ga4gh/tes/v1; e.g., /v1 for TESP"
+                  },
                   "urlSchemes": {
                     "type": "array",
                     "minItems": 1,

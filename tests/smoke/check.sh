@@ -73,17 +73,40 @@ id="$(jq -r .id "${body}")"
 await_state "${id}" COMPLETE
 check GET "/tasks/${id}?view=FULL" 200 \
   '.name == "smoke" and .tags["gateway.backend"] == "http://fake-tes-10:8080" and .logs[0].metadata.forwarded_to == null and .inputs[0].streamable == true and .outputs[0].path_prefix == "/"'
-# Tasks that TES 1.0 can't express go to the backend of TES 1.1
+# Tasks that TES 1.0 can't express go to the backend of TES 1.1, which serves
+# a field that the TES specification doesn't have: it is tracked all the same,
+# and the field isn't served
 needs_11='"executors": [{"image": "alpine", "command": ["true"], "ignore_error": true}]'
 check POST /tasks 200 '.id | length > 0' "{${needs_11}}"
 id_11="$(jq -r .id "${body}")"
 await_state "${id_11}" COMPLETE
 check GET "/tasks/${id_11}?view=FULL" 200 \
-  '.tags["gateway.backend"] == "http://fake-tes:8080" and .executors[0].ignore_error == true'
+  '.tags["gateway.backend"] == "http://fake-tes:8080" and .executors[0].ignore_error == true and (has("author") | not)'
 # ... and are rejected if the client chooses only the other one
 check POST /tasks 400 '.detail | contains("ignore_error")' \
   "{${needs_11}, \"tags\": {\"gateway.backends\":
     \"{\\\"type\\\": \\\"allow\\\", \\\"backends\\\": [\\\"http://fake-tes-10:8080\\\"]}\"}}"
+# A backend with an API path of its own (`api_path`, as for TESP): tasks are
+# created, tracked and canceled there
+only_v1='"tags": {"gateway.backends":
+    "{\"type\": \"allow\", \"backends\": [\"http://fake-tes-v1:8080\"]}"'
+check POST /tasks 200 '.id | length > 0' \
+  "{${only_v1}}, \"executors\": [{\"image\": \"alpine\", \"command\": [\"true\"]}]}"
+id_v1="$(jq -r .id "${body}")"
+await_state "${id_v1}" COMPLETE
+check GET "/tasks/${id_v1}?view=FULL" 200 \
+  '.tags["gateway.backend"] == "http://fake-tes-v1:8080"'
+check POST /tasks 200 '.id | length > 0' \
+  "{${only_v1}, \"fake.hold\": \"true\"}, \"executors\": [{\"image\": \"alpine\", \"command\": [\"true\"]}]}"
+held_v1="$(jq -r .id "${body}")"
+await_state "${held_v1}" RUNNING
+check POST "/tasks/${held_v1}:cancel" 200 '. == {}'
+await_state "${held_v1}" CANCELED
+# The logs of TES instances, in the view `FULL` only
+check GET "/tasks/${id_11}?view=FULL" 200 \
+  '.logs[0].logs[0].stdout == "fake stdout" and .logs[0].logs[0].stderr == "fake stderr" and .logs[0].system_logs == ["fake system log"]'
+check GET "/tasks/${id_11}?view=BASIC" 200 \
+  '(.logs[0].logs[0] | has("stdout") | not) and (.logs[0] | has("system_logs") | not)'
 # List filters
 check GET '/tasks?view=MINIMAL' 200 "any(.tasks[]; .id == \"${id}\")"
 check GET '/tasks?view=MINIMAL&state=COMPLETE' 200 "any(.tasks[]; .id == \"${id}\")"

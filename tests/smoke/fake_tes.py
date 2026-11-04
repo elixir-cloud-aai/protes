@@ -17,7 +17,14 @@ With the environment variable `FAKE_TES_VERSION=1.0`, it serves TES 1.0 as TESK
 does: it reports the version so (artifact `TES`, version `1.0` as a number),
 rejects tasks with fields of TES 1.1 (`400`), and requires no access tokens, as
 those of the identity provider of another instance can't be checked. Tasks with
-the tag `fake.hold` run until they are canceled.
+the tag `fake.hold` run until they are canceled. Otherwise, it serves tasks with
+a field that the TES specification doesn't have (`author`, as TESP does): TES
+instances may add such fields.
+
+With the environment variable `FAKE_TES_BASE_PATH=/v1`, it serves the TES API at
+that path only, and requires no access tokens, as TESP does (behind no rewriting
+proxy, and as those of the identity provider of another instance can't be
+checked).
 """
 
 import base64
@@ -35,7 +42,7 @@ from urllib.parse import parse_qs, unquote_plus, urlsplit
 from cryptography.hazmat.primitives.asymmetric import rsa
 import jwt
 
-BASE_PATH = "/ga4gh/tes/v1"
+BASE_PATH = os.environ.get("FAKE_TES_BASE_PATH", "/ga4gh/tes/v1")
 # Issuer of the fake identity provider, as proTES reaches it (`config.yaml` of
 # this directory)
 ISSUER = "http://fake-tes:8080/oidc/"
@@ -64,6 +71,14 @@ SERVICE_INFO = {
     "organization": {"name": "Example Organization", "url": "https://example.org"},
     "version": "1.0.0",
 }
+# Logs of tasks in the view `FULL` only, as the TES specification has it
+FULL_LOGS = [
+    {
+        "logs": [{"exit_code": 0, "stdout": "fake stdout", "stderr": "fake stderr"}],
+        "outputs": [],
+        "system_logs": ["fake system log"],
+    }
+]
 TASKS: dict[str, dict[str, Any]] = {}
 LOCK = threading.Lock()
 
@@ -211,7 +226,7 @@ class Handler(BaseHTTPRequestHandler):
         Returns:
             Whether the request has a valid access token of proTES.
         """
-        if TES_10:
+        if TES_10 or "FAKE_TES_BASE_PATH" in os.environ:
             return True
         token = (self.headers.get("Authorization") or "").removeprefix("Bearer ")
         try:
@@ -252,6 +267,9 @@ class Handler(BaseHTTPRequestHandler):
         if task is None or task_id == path:
             self._send(HTTPStatus.NOT_FOUND, {"msg": "not found"})
             return
+        view = parse_qs(urlsplit(self.path).query).get("view", ["MINIMAL"])[0]
+        if view == "FULL":
+            task = {**task, "logs": FULL_LOGS}
         self._send(HTTPStatus.OK, task)
 
     def do_POST(self) -> None:
@@ -279,6 +297,7 @@ class Handler(BaseHTTPRequestHandler):
                 task_id = f"fake-{len(TASKS) + 1}"
                 TASKS[task_id] = {
                     **task,
+                    **({} if TES_10 else {"author": None}),
                     "id": task_id,
                     "state": "RUNNING" if hold else "COMPLETE",
                     "logs": [{"logs": [], "outputs": []}],

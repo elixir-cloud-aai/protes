@@ -23,8 +23,6 @@ import re
 from typing import Any, Self
 
 _VERSION = re.compile(r"v?(\d+)\.(\d+)(?:[.\-+].*)?", re.IGNORECASE)
-# Wildcards of output paths in TES 1.1 (POSIX, IEEE Std 1003.1-2017, 2.13)
-_WILDCARDS = re.compile(r"[*?]|\[(?:\][^\]]*|[^\]]+)\]")
 
 
 @dataclass(frozen=True, order=True)
@@ -176,7 +174,7 @@ class Tes11To10(TesAdapter):
                 )
             )
         for index, output in _items(task, "outputs"):
-            if _WILDCARDS.search(str(output.get("path"))):
+            if has_wildcards(str(output.get("path"))):
                 found.append(
                     Incompatibility(
                         f"/outputs/{index}/path", "wildcards are not supported"
@@ -236,6 +234,28 @@ SUPPORTED: frozenset[TesVersion] = frozenset(
     version for adapter in ADAPTERS for version in (adapter.newer, adapter.older)
 )
 """Versions that proTES can relay tasks to."""
+
+
+def has_wildcards(path: str) -> bool:
+    """Check whether an output path has wildcards of TES 1.1.
+
+    Wildcards are those of POSIX (IEEE Std 1003.1-2017, 2.13): `*`, `?`, and
+    bracket expressions, which need a closing bracket after at least one
+    character (a bracket right after the opening one is a literal one). A
+    linear scan, as paths come from clients: a bracket expression exists if,
+    and only if, the first opening bracket and the last closing one are at
+    least two characters apart.
+
+    Args:
+        path: Output path.
+
+    Returns:
+        Whether the path has wildcards.
+    """
+    if "*" in path or "?" in path:
+        return True
+    opening = path.find("[")
+    return opening != -1 and path.rfind("]") >= opening + 2
 
 
 def _items(task: dict[str, Any], field: str) -> Iterator[tuple[int, dict[str, Any]]]:

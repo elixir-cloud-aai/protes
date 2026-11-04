@@ -143,6 +143,31 @@ TES 1.0 otherwise (see [TES versions](configuration.md#tes-versions)). Plugins
 get tasks in TES 1.1, as before, and route only among TES instances that can run
 them.
 
+**Logs in the view `FULL`:** proTES now gets a finished task once more from its
+TES instance in the view `FULL`, and stores its standard output and error and
+system logs, at most `post_task.max_log_size` per task (1 MiB by default; `0`
+turns it off, see [Tasks](configuration.md#tasks)). Their owners can read them,
+and stored tasks and pages of the view `FULL` get larger. Tasks that finished
+before keep what they have.
+
+**Outputs with wildcards:** proTES now rejects outputs with wildcards in their
+`path` and without `path_prefix` (`400 Bad Request`), as TES 1.1 requires it (see
+[TES versions](tes-versions.md)). That includes paths that mean `*`, `?` or
+`[...]` literally (e.g., `/data/sample[1].txt`): as TES 1.1 has no way to escape
+them, set `path_prefix` for them.
+
+**Rolling upgrades:** Celery workers of 0.4.0 can turn `CANCELING` back to
+`RUNNING` until they stop, which corrects itself once the task is final. If its
+TES instance deletes it instead, the task ends up `UNKNOWN`, until it is canceled
+again. If that matters, scale the old worker Deployment to 0 first.
+
+**Chart:** the chart now sets
+`config.custom.controllers.list_tasks.max_page_size_full` to 6 instead of the
+app's 64, as one page of the view `FULL` could exceed its memory limit of 256 MiB; clients
+get smaller pages, and follow `next_page_token`. To keep 64, also raise
+`protes.resources` (see [Tasks](configuration.md#tasks)). `config.custom: null`
+and `helm upgrade --reuse-values` leave the app's 64.
+
 ## To version 0.4.0
 
 Check each item; the sections below have the details.

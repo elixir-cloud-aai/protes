@@ -1,12 +1,15 @@
 """Tests of the clients of TES backends and their credentials."""
 
 from collections.abc import Callable, Iterator
+from copy import deepcopy
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
 import socket
 import ssl
 import threading
-from typing import Any, ClassVar
+import time
+from typing import Any, ClassVar, get_args, get_type_hints
 
 from connexion import FlaskApp
 from foca import get_custom_config
@@ -707,6 +710,111 @@ def wrapped(reason: Exception, error: type[requests.RequestException]) -> Except
     return error(MaxRetryError(None, "/", reason=reason))  # type: ignore[arg-type]
 
 
+@pytest.fixture
+def api_path_backend(configured: None) -> str:
+    """Set a backend with an API path of its own, parsed as in the config."""
+    conf = get_custom_config(CustomConfig).tes
+    conf.backends = Tes.model_validate(
+        {
+            "backends": [
+                {
+                    "type": "ga4gh-tes",
+                    "url": NONE_URL,
+                    "auth": "none",
+                    "api_path": "/v1/",
+                }
+            ]
+        }
+    ).backends
+    return NONE_URL
+
+
+def test_api_path(
+    api_path_backend: str, post: Callable[[FakeResponse | Exception], FakePost]
+) -> None:
+    """All requests to a backend use the API path of its entry."""
+    fake = post(FakeResponse({"id": "remote-1", "state": "RUNNING"}))
+    client = backends.create_client(host=api_path_backend)
+    create_task(client)
+    client.get_task("remote-1")
+    client.cancel_task("remote-1")
+    client.service_info()
+    assert [url for url, _ in fake.sent] == [
+        f"{api_path_backend}/v1/tasks",
+        f"{api_path_backend}/v1/tasks/remote-1",
+        f"{api_path_backend}/v1/tasks/remote-1:cancel",
+        f"{api_path_backend}/v1/service-info",
+    ]
+
+
+def test_api_path_candidates(api_path_backend: str) -> None:
+    """Clients of candidates of FOCA's backend list get the API path."""
+    [backend] = backends.get_backends()
+    assert backends.client_for(backend).api_path == "/v1"
+
+
+def test_api_path_at_root(
+    configured: None, post: Callable[[FakeResponse | Exception], FakePost]
+) -> None:
+    """The path `/` means that the TES API is at the URL of the backend."""
+    conf = get_custom_config(CustomConfig).tes
+    conf.backends = Tes.model_validate(
+        {
+            "backends": [
+                {"type": "ga4gh-tes", "url": NONE_URL, "auth": "none", "api_path": "/"}
+            ]
+        }
+    ).backends
+    fake = post(FakeResponse({}))
+    backends.create_client(host=NONE_URL).service_info()
+    assert fake.sent[0][0] == f"{NONE_URL}/service-info"
+
+
+def test_api_path_default(
+    configured: None, post: Callable[[FakeResponse | Exception], FakePost]
+) -> None:
+    """Other backends use the path of the TES specification."""
+    fake = post(FakeResponse({"id": "remote-1"}))
+    create_task(backends.create_client(host=NONE_URL))
+    assert fake.sent[0][0] == f"{NONE_URL}/ga4gh/tes/v1/tasks"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "",
+        "v1",
+        "/v1?a=b",
+        "/v1#a",
+        "/v1/../tasks",
+        "/./v1",
+        "/v 1",
+        "//v1",
+        "/v1\n",
+        "//",
+        "///",
+        "/v1//",
+    ],
+)
+def test_api_path_invalid(path: str) -> None:
+    """API paths must be absolute, and can't change anything but the path."""
+    entry = {"type": "ga4gh-tes", "url": NONE_URL, "auth": "none", "api_path": path}
+    with pytest.raises(pydantic.ValidationError):
+        Tes.model_validate({"backends": [entry]})
+
+
+def test_api_path_only_of_tes_instances() -> None:
+    """Registries have no API path: discovered backends use the default one."""
+    entry = {
+        "type": "ga4gh-service-registry",
+        "url": "https://registry.example.org",
+        "auth": "none",
+        "api_path": "/v1",
+    }
+    with pytest.raises(pydantic.ValidationError, match="api_path"):
+        Tes.model_validate({"backends": [entry]})
+
+
 def test_client_timeout(configured: None) -> None:
     """Requests to backends time out after `custom.tes.timeout` seconds.
 
@@ -811,6 +919,108 @@ def test_post_redirect_not_followed(
     assert RedirectingHandler.methods == ["POST", "POST"]
 
 
+class TaskHandler(BaseHTTPRequestHandler):
+    """Handler of a local server that serves a large task."""
+
+    def do_GET(self) -> None:
+        """Serve the task."""
+        body = json.dumps(
+            {"id": "remote-1", "state": "COMPLETE", "name": "x" * 5000}
+        ).encode()
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format: str, *args: Any) -> None:
+        """Log nothing."""
+
+
+@pytest.fixture
+def task_server(configured: None, loopback: None) -> Iterator[str]:
+    """URL of a local server with a large task, configured as a backend."""
+    server = ThreadingHTTPServer(("127.0.0.1", 0), TaskHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    url = f"http://127.0.0.1:{server.server_address[1]}"
+    conf = get_custom_config(CustomConfig).tes
+    conf.backends = BackendListConfig(
+        [
+            *conf.backends.root,
+            ServiceEntry(type="ga4gh-tes", url=url, url_schemes=["http"], auth="none"),
+        ]
+    )
+    yield url
+    server.shutdown()
+    server.server_close()
+
+
+def test_full_view_size_limit(
+    task_server: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Tasks in the view `FULL` hold logs of any size, which are not read whole."""
+    client = backends.create_client(host=task_server)
+    assert client.get_task("remote-1", view="FULL").name == "x" * 5000
+    monkeypatch.setattr(backends, "MAX_RESPONSE_SIZE", 1000)
+    with pytest.raises(requests.RequestException, match="larger than 1000 bytes"):
+        client.get_task("remote-1", view="FULL")
+    # other requests aren't affected
+    assert client.get_task("remote-1").name == "x" * 5000
+
+
+class DrippingHandler(BaseHTTPRequestHandler):
+    """Handler of a local server that sends its answer slowly."""
+
+    def do_GET(self) -> None:
+        """Send a byte at a time, within the timeout of reading."""
+        self.send_response(200)
+        self.send_header("Content-Length", "1000000")
+        self.end_headers()
+        try:
+            for _ in range(1000):
+                self.wfile.write(b"x")
+                self.wfile.flush()
+                time.sleep(0.01)
+        except OSError:
+            return
+
+    def log_message(self, format: str, *args: Any) -> None:
+        """Log nothing."""
+
+
+def test_read_limited_deadline(loopback: None) -> None:
+    """Responses that take too long as a whole are not read to their end."""
+    server = ThreadingHTTPServer(("127.0.0.1", 0), DrippingHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        response = requests.get(
+            f"http://127.0.0.1:{server.server_address[1]}", stream=True, timeout=5
+        )
+        started = time.monotonic()
+        with pytest.raises(requests.Timeout, match=r"0\.1 seconds"):
+            backends.read_limited(response, timeout=0.1)
+        assert time.monotonic() - started < 2
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_read_limited_connection_lost(
+    task_server: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Errors while reading are those of `requests`, as for other requests."""
+    response = requests.request("GET", task_server, stream=True, timeout=5)
+
+    def fail(*args: Any, **kwargs: Any) -> bytes:
+        """Fail."""
+        raise ProtocolError("lost")
+
+    monkeypatch.setattr(response.raw, "read1", fail)
+    with pytest.raises(requests.ConnectionError, match="lost"):
+        backends.read_limited(response, timeout=5)
+
+
 def test_get_task_once(
     configured: None, idp: FakeIdp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -826,6 +1036,109 @@ def test_get_task_once(
     with pytest.raises(requests.HTTPError):
         backends.create_client(host=NONE_URL).get_task("remote/1")
     assert sent == [f"{NONE_URL}/ga4gh/tes/v1/tasks/remote%2F1"]
+
+
+def test_get_task_unknown_fields(
+    configured: None, idp: FakeIdp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fields that py-tes doesn't know are dropped, at all levels of a task."""
+    body = {
+        "id": "remote-1",
+        "state": "COMPLETE",
+        "author": None,
+        "inputs": [{"url": "s3://a/b", "path": "/b", "extra": 1}],
+        "outputs": [{"url": "s3://a/c", "path": "/c", "extra": 1}],
+        "resources": {"cpu_cores": 1, "extra": 1},
+        "executors": [{"image": "alpine", "command": ["true"], "extra": 1}],
+        "tags": {"extra": "kept"},
+        "logs": [
+            {
+                "extra": 1,
+                "metadata": {"extra": "kept"},
+                "logs": [{"exit_code": 0, "stdout": "out", "extra": 1}],
+                "outputs": [
+                    {"url": "s3://a/c", "path": "/c", "size_bytes": "1", "x": 1}
+                ],
+                "system_logs": ["log"],
+            }
+        ],
+    }
+
+    def fake_request(method: str, url: str, **kwargs: Any) -> FakeResponse:
+        """Serve the task."""
+        return FakeResponse(body)
+
+    monkeypatch.setattr(backends.requests, "request", fake_request)
+    task = backends.create_client(host=NONE_URL).get_task("remote-1")
+    assert task.state == "COMPLETE"
+    assert task.tags == {"extra": "kept"}
+    assert task.inputs[0].url == "s3://a/b"
+    assert task.outputs[0].path == "/c"
+    assert task.resources.cpu_cores == 1
+    assert task.executors[0].image == "alpine"
+    log = task.logs[0]
+    assert log.metadata == {"extra": "kept"}
+    assert log.system_logs == ["log"]
+    assert log.logs[0].stdout == "out"
+    assert log.outputs[0].size_bytes == 1
+
+
+@pytest.mark.parametrize("value", [None, "task", 1])
+def test_known_fields_no_object(value: Any) -> None:
+    """Values that are no objects are left to py-tes."""
+    assert backends.known_fields(value) == value
+
+
+def test_known_fields_nested_lists() -> None:
+    """Lists of lists, which are invalid, are not searched, however deep."""
+    nested: list[Any] = []
+    for _ in range(100_000):
+        nested = [nested]
+    assert backends.known_fields({"inputs": nested}) == {"inputs": nested}
+
+
+def test_known_fields_not_changed() -> None:
+    """The task as served is not changed."""
+    body = {"id": "remote-1", "author": None, "logs": [{"extra": 1}]}
+    expected = deepcopy(body)
+    assert backends.known_fields(body) == {"id": "remote-1", "logs": [{}]}
+    assert body == expected
+
+
+@pytest.mark.parametrize("model", [tes.Task, tes.models.TaskLog])
+def test_nested_models_complete(model: type) -> None:
+    """All fields of py-tes's models that hold objects are mapped."""
+    nested = {}
+    for name, hint in get_type_hints(model).items():
+        for arg in get_args(hint):
+            found = [arg, *get_args(arg)]
+            classes = [item for item in found if isinstance(item, type)]
+            for cls in classes:
+                if issubclass(cls, tes.models.Base):
+                    nested[name] = cls
+    assert backends._NESTED_MODELS[model] == nested
+
+
+def test_get_task_camel_case(
+    configured: None, idp: FakeIdp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fields in camel case, which py-tes converts, are kept."""
+
+    def fake_request(method: str, url: str, **kwargs: Any) -> FakeResponse:
+        """Serve the task."""
+        return FakeResponse(
+            {
+                "id": "remote-1",
+                "state": "COMPLETE",
+                "creationTime": "2026-11-04T12:00:00+00:00",
+                "logs": None,
+            }
+        )
+
+    monkeypatch.setattr(backends.requests, "request", fake_request)
+    task = backends.create_client(host=NONE_URL).get_task("remote-1")
+    assert task.creation_time is not None
+    assert task.logs is None
 
 
 @pytest.mark.parametrize("status", [500, 502, 503, 504])

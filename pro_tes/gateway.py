@@ -25,7 +25,7 @@ The app serves FOCA's plugin listing (`GET /plugins`, cf.
 per task (tags `gateway.pipeline` and `gateway.backends`).
 """
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from copy import deepcopy
 from importlib.metadata import version
 from pathlib import Path
@@ -40,19 +40,22 @@ from foca.plugins.runtime import GatewayApp
 from foca.plugins.tags import strip_for_forwarding
 import tes
 
-from pro_tes.config_models import CustomConfig
+from pro_tes.config_models import DEFAULT_API_PATH, CustomConfig
 from pro_tes.exceptions import BadRequest, InlineContentTooLarge, TaskIncompatible
 from pro_tes.ga4gh.tes.models import TesTask
 from pro_tes.ga4gh.tes.versions import (
     CANONICAL,
     TesVersion,
     downgrade_task,
+    has_wildcards,
     incompatibilities,
 )
 from pro_tes.utils.misc import has_credentials, strip_auth
 
-TASKS_PATH = "/ga4gh/tes/v1/tasks"
-"""Path of the requests to create tasks, below the URL of a backend."""
+TASKS_PATH = f"{DEFAULT_API_PATH}/tasks"
+"""Path of the outbound requests to create tasks, as plugins see them; sent
+with the API path of the backend (`api_path` of its entry) instead of the
+default one (cf. :py:meth:`pro_tes.ga4gh.tes.backends.TesClient.forward`)."""
 
 TES_SPEC = "tes"
 """Name of the API specification of the TES API (`api.specs`)."""
@@ -75,6 +78,11 @@ RESERVED_HEADERS = frozenset(
 """Headers (lower case) that plugins can't set in requests to backends: they
 would change where or how requests are sent, e.g., to another virtual host
 with the backend's credentials."""
+
+MAX_PATH_SIZE = 4096
+"""Maximum size of each path of a task (cf. :py:func:`_task_paths`), in bytes
+of UTF-8, the value of `PATH_MAX` on Linux; backends may allow less. Other
+fields (e.g., URLs) are limited by the size of request bodies only."""
 
 # Fields of tasks that TES servers set (TES servers may reject tasks that set
 # them, as proTES does); never relayed
@@ -193,7 +201,8 @@ def tes_task(payload: Any) -> tes.Task:
     Raises:
         TypeError: The task is not a JSON object, or has fields or values
             that py-tes doesn't accept.
-        ValueError: The task has values that py-tes doesn't accept.
+        ValueError: The task has values that py-tes doesn't accept, or an output
+            with wildcards without the `path_prefix` that TES 1.1 requires.
     """
     if not isinstance(payload, dict):
         raise TypeError("Tasks are JSON objects")
@@ -206,11 +215,38 @@ def tes_task(payload: Any) -> tes.Task:
         task["inputs"] = [tes.models.Input(**item) for item in task["inputs"]]
     if task.get("outputs") is not None:
         task["outputs"] = [tes.models.Output(**item) for item in task["outputs"]]
+        for output in task["outputs"]:
+            if output.path_prefix is None and has_wildcards(str(output.path)):
+                raise ValueError("Output with wildcards in its path has no path_prefix")
     if task.get("resources") is not None:
         task["resources"] = tes.models.Resources(**task["resources"])
     if task.get("executors") is not None:
         task["executors"] = [tes.models.Executor(**item) for item in task["executors"]]
     return tes.Task(**task)
+
+
+def _task_paths(task: TesTask) -> Iterator[str]:
+    """Get the paths of a task.
+
+    Args:
+        task: Task.
+
+    Yields:
+        The paths of inputs and outputs, the path prefixes of outputs, the
+        volumes, and the working directories and the paths of the standard
+        streams of executors.
+    """
+    for item in task.inputs or []:
+        yield item.path
+    for output in task.outputs or []:
+        yield output.path
+        yield output.path_prefix or ""
+    yield from task.volumes or []
+    for executor in task.executors or []:
+        yield executor.workdir or ""
+        yield executor.stdin or ""
+        yield executor.stdout or ""
+        yield executor.stderr or ""
 
 
 def validate_task(payload: Any) -> None:
@@ -223,12 +259,17 @@ def validate_task(payload: Any) -> None:
         pydantic.ValidationError: The task is invalid as per the TES model
             of proTES.
         TypeError: The task can't be relayed (cf. :py:func:`tes_task`).
-        ValueError: The task can't be relayed.
+        ValueError: The task can't be relayed, or has a path over
+            `MAX_PATH_SIZE`.
     """
     if not isinstance(payload, dict):
         raise TypeError("Tasks are JSON objects")
-    TesTask(**payload)
+    task = TesTask(**payload)
     tes_task(payload)
+    for path in _task_paths(task):
+        # JSON can carry lone surrogates
+        if len(path.encode("utf-8", errors="surrogatepass")) > MAX_PATH_SIZE:
+            raise ValueError(f"Task has a path over {MAX_PATH_SIZE} bytes")
 
 
 def check_outbound(outbound: OutboundRequest) -> None:
@@ -236,7 +277,8 @@ def check_outbound(outbound: OutboundRequest) -> None:
 
     Requests that fail the check are not sent; the next backend is tried.
     Plugins can't change the method and path of the request: tasks are
-    created with `POST /ga4gh/tes/v1/tasks` (`TASKS_PATH`), so that other
+    created with `POST /ga4gh/tes/v1/tasks` (`TASKS_PATH`, whatever the
+    API path of the backend, which the client applies), so that other
     requests (e.g., for tasks of other users) can't be sent with proTES's
     credentials.
 

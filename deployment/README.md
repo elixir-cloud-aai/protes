@@ -27,7 +27,11 @@ config on startup (via `FOCA_CONFIG_OVERLAY`), for the app and the worker:
   `server.host` and `server.port` have no effect, as they apply to the
   development server only (see [Server](#server)); the broker is set via its
   Secret, not `jobs` (see [Celery worker and
-  broker](#celery-worker-and-broker)).
+  broker](#celery-worker-and-broker)). By default, the chart sets
+  `config.custom.controllers.list_tasks.max_page_size_full` to 6 (the app's
+  default is 64), so that pages of the view `FULL` fit its memory limit; to
+  raise it, also raise `protes.resources` (see
+  [Tasks](https://protes.readthedocs.io/en/latest/configuration/#tasks)).
 
 The identity provider is deployment configuration, without defaults (see
 [Access control](https://protes.readthedocs.io/en/latest/access-control/)).
@@ -62,9 +66,9 @@ refuses; the app checks the other settings of issuers on startup.
 
 The TES instances that tasks are forwarded to are listed in `tes.backends`,
 in order, with the keys of the app's `custom.tes.backends` in camelCase
-(e.g., `urlSchemes`, `refreshInterval`, `maxStale`, `allowPrivateAddresses`,
-`registryAllowPrivateAddresses`, `basic.usernameEnv` and
-`basic.passwordEnv`; the keys of `labels` are kept), which the chart renders
+(e.g., `apiPath`, `urlSchemes`, `refreshInterval`, `maxStale`,
+`allowPrivateAddresses`, `registryAllowPrivateAddresses`,
+`basic.usernameEnv` and `basic.passwordEnv`; the keys of `labels` are kept), which the chart renders
 into the config (see [TES
 instances](https://protes.readthedocs.io/en/latest/configuration/#tes-instances)):
 TES instances (`type: ga4gh-tes`) and service registries whose verified TES
@@ -189,6 +193,10 @@ tes:
   backends:
     - type: ga4gh-tes
       url: "https://tes.example.org"
+    # A TES instance that serves the TES API at another path, e.g., TESP
+    - type: ga4gh-tes
+      url: "https://tesp.example.org"
+      apiPath: /v1
     # Verified TES instances of a service registry, in its place
     - type: ga4gh-service-registry
       url: "https://registry.example.org/ga4gh/registry/v1"
@@ -405,6 +413,24 @@ Gateway API, OpenShift and cloud load balancers):
   `protes.route.enabled` is true (the default); otherwise the app is only
   reachable within the cluster, and Helm prints a warning after
   installing.
+
+On OpenShift (e.g., CSC's Rahti), disable the Ingress, which is enabled by
+default and has no TLS unless you configure it: the chart then creates the
+Route. Also set the timeout of the router, usually 30 seconds, above the
+longest duration of a request to create a task (see
+[Configuration](https://protes.readthedocs.io/en/latest/configuration/)):
+
+```yaml
+protes:
+  ingress:
+    enabled: false
+  route:
+    annotations:
+      haproxy.router.openshift.io/timeout: 70s
+```
+
+A TES instance that serves the TES API at another path, such as TESP, needs
+`apiPath` in `tes.backends` (see [Configuration](#configuration)).
 
 The chart sets no defaults for a particular ingress controller or Gateway
 implementation: their annotations, policies and NetworkPolicy peers go
