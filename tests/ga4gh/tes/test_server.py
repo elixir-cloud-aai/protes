@@ -1,6 +1,7 @@
 """Tests of the TES API endpoints, with fake TES backends."""
 
 import base64
+from collections.abc import Callable
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -1225,7 +1226,11 @@ def test_cancel_task_backend_auth_error(
 
 @pytest.mark.parametrize(
     "error, status",
-    [(BackendOutcomeUnknown("timed out"), 502), (requests.HTTPError("400"), 500)],
+    [
+        (BackendOutcomeUnknown("timed out"), 502),
+        (requests.HTTPError("400"), 502),
+        (requests.ConnectionError("refused"), 502),
+    ],
 )
 def test_cancel_task_backend_error(
     client: FlaskClient,
@@ -1250,6 +1255,194 @@ def test_cancel_task_backend_error(
     response = client.post(f"{BASE_PATH}/tasks/{task_id}:cancel")
     assert response.status_code == status
     assert stored(mongo_client, task_id)["task"]["state"] == "RUNNING"
+
+
+def http_error(status: int) -> requests.HTTPError:
+    """Get the error of a response of a TES instance.
+
+    Args:
+        status: Status code of the response.
+
+    Returns:
+        The error.
+    """
+    response = requests.Response()
+    response.status_code = status
+    return requests.HTTPError(str(status), response=response)
+
+
+@pytest.fixture
+def cancel_refused(
+    backend: type[FakeBackend], monkeypatch: pytest.MonkeyPatch
+) -> Callable[[int, str | Exception], None]:
+    """Make the backend refuse to cancel tasks.
+
+    Returns:
+        Function to set the status of the refusal, and the state that the
+        backend then reports, or the error of that request.
+    """
+
+    def setup(status: int, state: str | Exception) -> None:
+        """Set the status of the refusal and the state of the task."""
+
+        def cancel_task(self: FakeBackend, task_id: str) -> None:
+            """Refuse."""
+            raise http_error(status)
+
+        def get_task(self: FakeBackend, task_id: str, **kwargs: Any) -> tes.Task:
+            """Serve the state, or fail."""
+            if isinstance(state, Exception):
+                raise state
+            return tes.Task(id=task_id, state=state, executors=[])
+
+        monkeypatch.setattr(backend, "cancel_task", cancel_task)
+        monkeypatch.setattr(backend, "get_task", get_task)
+
+    return setup
+
+
+@pytest.mark.parametrize("state", ["COMPLETE", "EXECUTOR_ERROR", "CANCELED"])
+def test_cancel_task_finished_at_backend(
+    client: FlaskClient,
+    task_id: str,
+    mongo_client: MongoClient[dict[str, Any]],
+    cancel_refused: Callable[[int, str | Exception], None],
+    state: str,
+) -> None:
+    """A refusal for a task that has finished at its backend is no error.
+
+    Its state is left to tracking, which stores it with logs and outputs.
+    """
+    cancel_refused(400, state)
+    set_state(mongo_client, task_id, "RUNNING")
+    assert client.post(f"{BASE_PATH}/tasks/{task_id}:cancel").status_code == 200
+    assert stored(mongo_client, task_id)["task"]["state"] == "RUNNING"
+
+
+@pytest.mark.parametrize("state", ["RUNNING", requests.ConnectionError("refused")])
+def test_cancel_task_refused(
+    client: FlaskClient,
+    task_id: str,
+    mongo_client: MongoClient[dict[str, Any]],
+    cancel_refused: Callable[[int, str | Exception], None],
+    state: str | Exception,
+) -> None:
+    """A refusal for a task that hasn't finished at its backend is reported."""
+    cancel_refused(403, state)
+    set_state(mongo_client, task_id, "RUNNING")
+    assert client.post(f"{BASE_PATH}/tasks/{task_id}:cancel").status_code == 502
+    assert stored(mongo_client, task_id)["task"]["state"] == "RUNNING"
+
+
+def test_cancel_task_server_error(
+    client: FlaskClient,
+    task_id: str,
+    mongo_client: MongoClient[dict[str, Any]],
+    cancel_refused: Callable[[int, str | Exception], None],
+) -> None:
+    """A server error is no refusal: the task isn't read, and may still run."""
+    cancel_refused(503, "COMPLETE")
+    set_state(mongo_client, task_id, "RUNNING")
+    assert client.post(f"{BASE_PATH}/tasks/{task_id}:cancel").status_code == 502
+    assert stored(mongo_client, task_id)["task"]["state"] == "RUNNING"
+
+
+@pytest.mark.parametrize("status", [404, 410])
+def test_cancel_task_gone_at_backend(
+    client: FlaskClient,
+    task_id: str,
+    mongo_client: MongoClient[dict[str, Any]],
+    cancel_refused: Callable[[int, str | Exception], None],
+    status: int,
+) -> None:
+    """A task that its backend no longer has is canceled: tracking ends it."""
+    cancel_refused(status, http_error(status))
+    set_state(mongo_client, task_id, "RUNNING")
+    assert client.post(f"{BASE_PATH}/tasks/{task_id}:cancel").status_code == 200
+    assert stored(mongo_client, task_id)["task"]["state"] == "CANCELING"
+
+
+def test_cancel_task_refused_and_hidden(
+    client: FlaskClient,
+    task_id: str,
+    mongo_client: MongoClient[dict[str, Any]],
+    cancel_refused: Callable[[int, str | Exception], None],
+) -> None:
+    """A `404` of the read alone doesn't show that a refused task is gone."""
+    cancel_refused(403, http_error(404))
+    set_state(mongo_client, task_id, "RUNNING")
+    assert client.post(f"{BASE_PATH}/tasks/{task_id}:cancel").status_code == 502
+    assert stored(mongo_client, task_id)["task"]["state"] == "RUNNING"
+
+
+def test_cancel_task_route_not_found(
+    client: FlaskClient,
+    task_id: str,
+    mongo_client: MongoClient[dict[str, Any]],
+    cancel_refused: Callable[[int, str | Exception], None],
+) -> None:
+    """A `404` of a task that its backend still has is no cancel (e.g., a proxy)."""
+    cancel_refused(404, "RUNNING")
+    set_state(mongo_client, task_id, "RUNNING")
+    assert client.post(f"{BASE_PATH}/tasks/{task_id}:cancel").status_code == 502
+    assert stored(mongo_client, task_id)["task"]["state"] == "RUNNING"
+
+
+def test_cancel_task_being_canceled_at_backend(
+    client: FlaskClient,
+    task_id: str,
+    mongo_client: MongoClient[dict[str, Any]],
+    cancel_refused: Callable[[int, str | Exception], None],
+) -> None:
+    """A refusal for a task that its backend is canceling already is no error."""
+    cancel_refused(409, "CANCELING")
+    set_state(mongo_client, task_id, "RUNNING")
+    assert client.post(f"{BASE_PATH}/tasks/{task_id}:cancel").status_code == 200
+    assert stored(mongo_client, task_id)["task"]["state"] == "CANCELING"
+
+
+@pytest.mark.parametrize("state", [http_error(404), "COMPLETE"])
+def test_cancel_task_refused_untracked(
+    client: FlaskClient,
+    task_id: str,
+    mongo_client: MongoClient[dict[str, Any]],
+    cancel_refused: Callable[[int, str | Exception], None],
+    state: str | Exception,
+) -> None:
+    """Refusals for tasks of early versions, which nothing tracks, are reported.
+
+    Tracking wouldn't end their cancelation, or store their final state.
+    """
+    cancel_refused(404, state)
+    set_state(mongo_client, task_id, "RUNNING")
+    mongo_client[DB]["tasks"].update_one(
+        {"task.id": task_id},
+        {
+            "$unset": {"tes_endpoint.task_id": ""},
+            "$set": {
+                "task.logs.0.metadata.forwarded_to": {
+                    "id": "remote-1",
+                    "url": "https://tes.example.org",
+                }
+            },
+        },
+    )
+    assert client.post(f"{BASE_PATH}/tasks/{task_id}:cancel").status_code == 502
+    assert stored(mongo_client, task_id)["task"]["state"] == "RUNNING"
+
+
+def test_cancel_refused_message(
+    client: FlaskClient,
+    task_id: str,
+    mongo_client: MongoClient[dict[str, Any]],
+    cancel_refused: Callable[[int, str | Exception], None],
+) -> None:
+    """A refusal isn't reported as a request that may have been processed."""
+    cancel_refused(403, "RUNNING")
+    set_state(mongo_client, task_id, "RUNNING")
+    response = client.post(f"{BASE_PATH}/tasks/{task_id}:cancel")
+    assert response.status_code == 502
+    assert "refused" in response.get_json()["detail"]
 
 
 def test_create_task_no_basic_auth(

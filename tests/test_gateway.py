@@ -88,6 +88,50 @@ def test_long_paths(fields: dict[str, Any]) -> None:
         gateway.validate_task(payload)
 
 
+@pytest.mark.parametrize("path", ["/data/*.txt", "/data/?.txt", "/data/[ab].txt"])
+def test_wildcards_without_prefix(path: str) -> None:
+    """Outputs with wildcards need the prefix that TES 1.1 requires for them."""
+    output = {"url": "s3://a/b", "path": path}
+    with pytest.raises(ValueError, match="path_prefix"):
+        gateway.validate_task({"executors": [EXECUTOR], "outputs": [output]})
+    gateway.validate_task(
+        {"executors": [EXECUTOR], "outputs": [{**output, "path_prefix": "/data/"}]}
+    )
+
+
+def test_wildcards_without_prefix_outbound(app: FlaskApp) -> None:
+    """Plugins can't send outputs with wildcards without a prefix either."""
+    entry = ServiceEntry(type="ga4gh-tes", url="https://tes.example.org")
+    outbound = OutboundRequest(
+        backend=entry.backend(),
+        method="POST",
+        path=gateway.TASKS_PATH,
+        payload={
+            "executors": [EXECUTOR],
+            "outputs": [{"url": "s3://a/b", "path": "/data/*"}],
+        },
+    )
+    with app.app.app_context(), pytest.raises(ValueError, match="path_prefix"):
+        gateway.check_outbound(outbound)
+
+
+def test_wildcards_with_empty_prefix() -> None:
+    """An empty prefix is a prefix."""
+    gateway.validate_task(
+        {
+            "executors": [EXECUTOR],
+            "outputs": [{"url": "s3://a/b", "path": "/d/*", "path_prefix": ""}],
+        }
+    )
+
+
+def test_no_wildcards_without_prefix() -> None:
+    """Outputs without wildcards need no prefix."""
+    gateway.validate_task(
+        {"executors": [EXECUTOR], "outputs": [{"url": "s3://a/b", "path": "/data/x"}]}
+    )
+
+
 def test_paths_at_limit() -> None:
     """Paths up to the limit are valid; multi-byte characters count as bytes."""
     path = "/" + "a" * (gateway.MAX_PATH_SIZE - 1)

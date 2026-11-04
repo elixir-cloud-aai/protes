@@ -51,6 +51,9 @@ version was read once keeps that version if it fails to answer later.
 | `outputs[].path_prefix` | Dropped: ignored without wildcards. |
 | `inputs[].type`, `outputs[].type` | Set to `FILE` if missing, as TES 1.0 requires them. |
 
+Outputs with wildcards need a `path_prefix`, as TES 1.1 requires: proTES rejects
+tasks without one (`400 Bad Request`), for all TES instances.
+
 Dropped fields stay in the stored task, which clients get back. The stored
 task also records the version that it was relayed in
 (`tes_endpoint.tes_version`, not served). Tasks of TES 1.0 are valid in TES 1.1,

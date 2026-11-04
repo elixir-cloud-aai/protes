@@ -397,6 +397,17 @@ def _store_final(db_client: DbDocumentConnector, worker_id: str, response: Any) 
     if task_converted.logs is None or document.task.logs is None:
         raise ValueError(f"[{worker_id}] Task has no logs")
     for index, logs in enumerate(task_converted.logs):
+        if index == len(document.task.logs):
+            # e.g., of a retry; times are those of the backend, unlike in the
+            # entry of proTES
+            document.task.logs.append(
+                TesTaskLog(
+                    logs=[],
+                    outputs=[],
+                    start_time=logs.start_time,
+                    end_time=logs.end_time,
+                )
+            )
         document.task.logs[index].logs = logs.logs
         document.task.logs[index].system_logs = logs.system_logs
         # backends may log output URLs with credentials, e.g., of tasks that
@@ -430,7 +441,10 @@ def _deleted_after_cancel(
         has set it), which ends its tracking.
     """
     response = exc.response if isinstance(exc, requests.HTTPError) else None
-    if response is None or response.status_code != HTTPStatus.NOT_FOUND:
+    if response is None or response.status_code not in (
+        HTTPStatus.NOT_FOUND,
+        HTTPStatus.GONE,
+    ):
         return False
     result = collection.update_one(
         {

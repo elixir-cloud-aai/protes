@@ -18,7 +18,7 @@ control](access-control.md)).
 | `GET /tasks/{id}/provenance` | proTES extension: get the provenance of a task, for its owner and for admins (see [Provenance](#provenance)). |
 | `GET /plugins` | proTES extension (FOCA's plugin listing): list the plugins and presets that the caller may choose for its tasks, and the limits, for users; the default pipeline only for callers who may choose pipelines (see [Choices of clients](plugins.md#choices-of-clients)). |
 | `GET /plugins/{plugin_id}` | proTES extension: describe a plugin that the caller may choose (`404 Not Found` otherwise). |
-| `POST /tasks/{id}:cancel` | Cancel a task of the caller that has not finished yet (also in state `UNKNOWN`, e.g., not tracked yet), at the TES instance that runs it; the task is then in state `CANCELING` until the TES instance reports its final state (usually `CANCELED`), or answers that it no longer has the task (`404`; then `CANCELED`). Meanwhile, the task stays `CANCELING`, also while the TES instance is unavailable; finished tasks are left as they are, also tasks that finish while they are canceled (their final state is kept). Unfinished tasks whose identifier at their TES instance is unknown (e.g., while they are being forwarded, or if forwarding failed unexpectedly) can't be canceled (`409 Conflict`). |
+| `POST /tasks/{id}:cancel` | Cancel a task of the caller that has not finished yet (also in state `UNKNOWN`, e.g., not tracked yet), at the TES instance that runs it; the task is then in state `CANCELING` until the TES instance reports its final state (usually `CANCELED`), or answers that it no longer has the task (`404` or `410`; then `CANCELED`). Meanwhile, the task stays `CANCELING`, also while the TES instance is unavailable; finished tasks are left as they are, also tasks that finish while they are canceled (their final state is kept), and tasks that the TES instance refuses to cancel as they have finished there (`200`; proTES stores their final state with the next poll). If a TES instance refuses to cancel a task that it hasn't finished, the task stays as it is (`502 Bad Gateway`). Unfinished tasks whose identifier at their TES instance is unknown (e.g., while they are being forwarded, or if forwarding failed unexpectedly) can't be canceled (`409 Conflict`). |
 
 Only the owner of a task, the user who created it, can read and cancel it
 (see [Task ownership](access-control.md#task-ownership)). Admins can manage
@@ -174,6 +174,7 @@ Errors are [problem details](https://www.rfc-editor.org/rfc/rfc9457) (with
 `problem_type`, a URI in FOCA's documentation), sent as `application/json`,
 as the GA4GH
 specification declares: `400 Bad Request` for invalid requests (e.g.,
+outputs with wildcards without `path_prefix`,
 invalid tasks or query parameters, or invalid or reserved tags under
 `gateway.`), `401 Unauthorized` for requests
 without a valid access token (with a Bearer challenge), `403 Forbidden` for
@@ -187,7 +188,8 @@ of inputs over `max_inline_content` (see
 [Tasks](configuration.md#tasks)), the status of a plugin that rejected a
 task, `500 Internal Server Error` if all plugins of a step failed,
 `502 Bad Gateway` if a TES instance did not confirm a request to create or
-cancel a task, which it may have processed (see [Tasks](#tasks)),
+cancel a task, which it may have processed, or refused to cancel a task (see
+[Tasks](#tasks)),
 `503 Service Unavailable` if no TES instance accepted a task (in time; it
 is not kept), and `508 Loop Detected` for tasks that passed proTES before
 (see [Plugins](plugins.md)). The
