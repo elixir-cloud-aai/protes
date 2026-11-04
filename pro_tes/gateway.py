@@ -77,8 +77,9 @@ would change where or how requests are sent, e.g., to another virtual host
 with the backend's credentials."""
 
 MAX_PATH_SIZE = 4096
-"""Maximum size of the paths of a task, in bytes (UTF-8); that of paths on
-Linux (`PATH_MAX`)."""
+"""Maximum size of each path of a task (cf. :py:func:`_task_paths`), in bytes
+of UTF-8, the value of `PATH_MAX` on Linux; backends may allow less. Other
+fields (e.g., URLs) are limited by the size of request bodies only."""
 
 # Fields of tasks that TES servers set (TES servers may reject tasks that set
 # them, as proTES does); never relayed
@@ -259,6 +260,7 @@ def validate_task(payload: Any) -> None:
     task = TesTask(**payload)
     tes_task(payload)
     for path in _task_paths(task):
+        # JSON can carry lone surrogates
         if len(path.encode("utf-8", errors="surrogatepass")) > MAX_PATH_SIZE:
             raise ValueError(f"Task has a path over {MAX_PATH_SIZE} bytes")
 

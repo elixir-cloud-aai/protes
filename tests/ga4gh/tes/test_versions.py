@@ -228,13 +228,14 @@ def test_output_wildcards(path: str, wildcard: bool) -> None:
 def test_wildcards_same_as_pattern() -> None:
     """The scan finds what the POSIX pattern of wildcards matches."""
     pattern = re.compile(r"[*?]|\[(?:\][^\]]*|[^\]]+)\]")
-    for length in range(7):
-        for chars in product("[]a*", repeat=length):
+    # brackets only, as any `*` or `?` is a wildcard (cf. `test_output_wildcards`)
+    for length in range(9):
+        for chars in product("[]a", repeat=length):
             path = "".join(chars)
             assert has_wildcards(path) is bool(pattern.search(path)), path
 
 
-@pytest.mark.parametrize("path", ["[" * 1_000_000, "[]" * 500_000, "[a" * 500_000])
+@pytest.mark.parametrize("path", ["[" * 1_000_000, "]" * 1_000_000, "a[" * 500_000])
 def test_wildcards_linear(path: str) -> None:
     """Long paths without a closing bracket are checked in linear time.
 
@@ -242,6 +243,5 @@ def test_wildcards_linear(path: str) -> None:
     milliseconds; a quadratic one takes minutes.
     """
     start = time.monotonic()
-    task = {"outputs": [{"url": "s3://a/b", "path": path}]}
-    incompatibilities(task)
+    assert not has_wildcards(path)
     assert time.monotonic() - start < 1
