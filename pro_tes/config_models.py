@@ -208,8 +208,9 @@ class Controllers(ConfigModel):
 def split_server_url(url: str, name: str) -> SplitResult:
     """Split the URL of a server, checking its scheme, host and port.
 
-    Error messages leave out the URL, as it may contain credentials, and FOCA
-    shows them.
+    Refuses user info, as FOCA does for backends, since URLs are logged. Error
+    messages leave out the URL, as it may contain credentials, and FOCA shows
+    them.
 
     Args:
         url: URL, e.g., of a TES backend or an identity provider.
@@ -219,8 +220,8 @@ def split_server_url(url: str, name: str) -> SplitResult:
         Parts of the URL.
 
     Raises:
-        ValueError: The URL is malformed, has no scheme or host, or has an
-            invalid port.
+        ValueError: The URL is malformed, has no scheme or host, has an
+            invalid port, or has user info.
     """
     try:
         parts = urlsplit(url)
@@ -230,6 +231,8 @@ def split_server_url(url: str, name: str) -> SplitResult:
         raise ValueError(f"Invalid {name}") from exc
     if not (parts.scheme and parts.hostname):
         raise ValueError(f"{name} without scheme or host")
+    if parts.username is not None or parts.password is not None:
+        raise ValueError(f"{name} must not contain user info")
     return parts
 
 

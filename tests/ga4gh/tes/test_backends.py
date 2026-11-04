@@ -823,10 +823,12 @@ def test_api_path_reason_survives_foca(path: str, reason: str) -> None:
 @pytest.mark.parametrize(
     ("client_credentials", "reason"),
     [
-        ({"issuer": "http://user:hunter2@idp.example.org/"}, "not allowed"),
+        ({"issuer": "http://hunter2.example.org/"}, "not allowed"),
         ({"issuer": "https://user:hunter2@idp.example.org:x/"}, "Invalid URL"),
-        ({"token_endpoint": "http://user:hunter2@idp.example.org/t"}, "not allowed"),
+        ({"token_endpoint": "http://hunter2.example.org/t"}, "not allowed"),
         ({"token_endpoint": "hunter2"}, "without scheme or host"),
+        ({"issuer": "https://user:hunter2@idp.example.org/"}, "user info"),
+        ({"token_endpoint": "https://user:hunter2@idp.example.org/t"}, "user info"),
     ],
 )
 def test_identity_provider_errors_hide_urls(

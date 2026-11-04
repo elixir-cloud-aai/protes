@@ -98,6 +98,10 @@ changes:
 - **Validation errors:** startup errors of the config no longer show the
   invalid input, only the setting and the reason. Their `__cause__` is now a
   plain `ValueError`, for code that reads it.
+- **Identity provider:** `client_credentials.issuer` and `token_endpoint` with
+  user info (e.g., `https://user:password@idp.example.org/`) now stop the app
+  at startup, as they would end up in the logs. Authenticating at the identity
+  provider uses `PROTES_CLIENT_ID` and `PROTES_CLIENT_SECRET`.
 - **Plugin store:** `pluginStore.existingSecret` (see **Helm chart** below) and
   `plugins.defaults.store.key_secret` are available from this version on.
 - **Dependencies:** FOCA requires `urllib3>=2.8` and `pymongo>=4.18.3`, which
