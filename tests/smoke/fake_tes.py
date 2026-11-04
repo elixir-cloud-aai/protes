@@ -17,7 +17,9 @@ With the environment variable `FAKE_TES_VERSION=1.0`, it serves TES 1.0 as TESK
 does: it reports the version so (artifact `TES`, version `1.0` as a number),
 rejects tasks with fields of TES 1.1 (`400`), and requires no access tokens, as
 those of the identity provider of another instance can't be checked. Tasks with
-the tag `fake.hold` run until they are canceled.
+the tag `fake.hold` run until they are canceled. Otherwise, it serves tasks with
+a field that the TES specification doesn't have (`author`, as TESP does): TES
+instances may add such fields.
 """
 
 import base64
@@ -279,6 +281,7 @@ class Handler(BaseHTTPRequestHandler):
                 task_id = f"fake-{len(TASKS) + 1}"
                 TASKS[task_id] = {
                     **task,
+                    **({} if TES_10 else {"author": None}),
                     "id": task_id,
                     "state": "RUNNING" if hold else "COMPLETE",
                     "logs": [{"logs": [], "outputs": []}],

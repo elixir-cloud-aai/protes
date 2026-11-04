@@ -56,6 +56,13 @@ task also records the version that it was relayed in
 (`tes_endpoint.tes_version`, not served). Tasks of TES 1.0 are valid in TES 1.1,
 so responses of TES 1.0 instances stay as they are.
 
+## Fields that TES instances add
+
+TES instances may serve tasks with fields that the TES specification doesn't
+have (e.g., [TESP](https://github.com/CESNET/tesp-api), `author`). proTES
+ignores them, at all levels of a task, so that it tracks such tasks like any
+others, and doesn't serve the fields to its clients.
+
 ## Service info
 
 `tesResources_backend_parameters` of the service info of proTES lists the keys

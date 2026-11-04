@@ -73,13 +73,15 @@ id="$(jq -r .id "${body}")"
 await_state "${id}" COMPLETE
 check GET "/tasks/${id}?view=FULL" 200 \
   '.name == "smoke" and .tags["gateway.backend"] == "http://fake-tes-10:8080" and .logs[0].metadata.forwarded_to == null and .inputs[0].streamable == true and .outputs[0].path_prefix == "/"'
-# Tasks that TES 1.0 can't express go to the backend of TES 1.1
+# Tasks that TES 1.0 can't express go to the backend of TES 1.1, which serves
+# a field that the TES specification doesn't have: it is tracked all the same,
+# and the field isn't served
 needs_11='"executors": [{"image": "alpine", "command": ["true"], "ignore_error": true}]'
 check POST /tasks 200 '.id | length > 0' "{${needs_11}}"
 id_11="$(jq -r .id "${body}")"
 await_state "${id_11}" COMPLETE
 check GET "/tasks/${id_11}?view=FULL" 200 \
-  '.tags["gateway.backend"] == "http://fake-tes:8080" and .executors[0].ignore_error == true'
+  '.tags["gateway.backend"] == "http://fake-tes:8080" and .executors[0].ignore_error == true and (has("author") | not)'
 # ... and are rejected if the client chooses only the other one
 check POST /tasks 400 '.detail | contains("ignore_error")' \
   "{${needs_11}, \"tags\": {\"gateway.backends\":
