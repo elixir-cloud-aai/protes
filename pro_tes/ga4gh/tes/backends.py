@@ -130,7 +130,7 @@ TES_VERSION_LABEL = "tes.version"
 PROBE_TIMEOUT = 5
 # Seconds until the service info of a backend is read again after a failure
 PROBE_RETRY = 60
-# Models of py-tes of the fields of its models that hold objects
+# Models of py-tes that hold objects: the model of each such field
 _NESTED_MODELS: dict[type, dict[str, type]] = {
     tes.Task: {
         "inputs": tes.models.Input,
@@ -585,8 +585,12 @@ def known_fields(value: Any, model: type = tes.Task) -> Any:
     for key, item in value.items():
         # py-tes converts the keys of objects
         name = camel_to_snake(key)
-        if name in fields:
-            known[key] = known_fields(item, nested[name]) if name in nested else item
+        if name not in fields:
+            logger.debug("Field %r of a task of a backend ignored", key)
+        elif name in nested:
+            known[key] = known_fields(item, nested[name])
+        else:
+            known[key] = item
     return known
 
 

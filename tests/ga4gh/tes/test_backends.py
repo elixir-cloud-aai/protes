@@ -1,12 +1,13 @@
 """Tests of the clients of TES backends and their credentials."""
 
 from collections.abc import Callable, Iterator
+from copy import deepcopy
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import socket
 import ssl
 import threading
-from typing import Any, ClassVar
+from typing import Any, ClassVar, get_args, get_type_hints
 
 from connexion import FlaskApp
 from foca import get_custom_config
@@ -871,6 +872,34 @@ def test_get_task_unknown_fields(
     assert log.system_logs == ["log"]
     assert log.logs[0].stdout == "out"
     assert log.outputs[0].size_bytes == 1
+
+
+@pytest.mark.parametrize("value", [None, "task", 1])
+def test_known_fields_no_object(value: Any) -> None:
+    """Values that are no objects are left to py-tes."""
+    assert backends.known_fields(value) == value
+
+
+def test_known_fields_not_changed() -> None:
+    """The task as served is not changed."""
+    body = {"id": "remote-1", "author": None, "logs": [{"extra": 1}]}
+    expected = deepcopy(body)
+    assert backends.known_fields(body) == {"id": "remote-1", "logs": [{}]}
+    assert body == expected
+
+
+@pytest.mark.parametrize("model", [tes.Task, tes.models.TaskLog])
+def test_nested_models_complete(model: type) -> None:
+    """All fields of py-tes's models that hold objects are mapped."""
+    nested = {}
+    for name, hint in get_type_hints(model).items():
+        for arg in get_args(hint):
+            found = [arg, *get_args(arg)]
+            classes = [item for item in found if isinstance(item, type)]
+            for cls in classes:
+                if issubclass(cls, tes.models.Base):
+                    nested[name] = cls
+    assert backends._NESTED_MODELS[model] == nested
 
 
 def test_get_task_camel_case(
