@@ -377,7 +377,9 @@ class Tes(ConfigModel):
 
         FOCA's backend list keeps entries that are instances of its models as
         they are (also :py:class:`foca.plugins.backends.BackendList`), so the
-        settings are available from the entries of its candidates.
+        settings are available from the entries of its candidates. As the
+        field has FOCA's type, `model_dump()` leaves them out: don't load the
+        config from such a dump.
 
         Args:
             value: Backend list, as given.

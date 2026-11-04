@@ -173,7 +173,8 @@ tasks (see [TES versions](tes-versions.md#fields-that-tes-instances-add)).
 
 Plugins always see the path of the API of proTES (`/ga4gh/tes/v1/tasks` in
 outbound requests, which they can't change): proTES applies `api_path` when it
-sends the request. Service registries list URLs only, so discovered TES
+sends the request, and [task provenance](operations.md#task-provenance) doesn't
+show it. Service registries list URLs only, so discovered TES
 instances always use the default API path, unless the same URL is also listed
 as an entry of its own, whose settings win.
 
@@ -183,8 +184,9 @@ proTES serves TES 1.1, and relays tasks to TES instances of TES 1.0 and 1.1
 (see [TES versions](tes-versions.md)). It needs to know which one each TES
 instance implements: the label `tes.version` of its entry (`"1.0"` or `"1.1"`;
 other versions make the app refuse to start) wins; otherwise, proTES reads
-`GET <url>/ga4gh/tes/v1/service-info`, with its credentials for the TES
-instance and timeouts of 5 seconds (to connect and to answer), and caches the result per process for
+`GET <url>/ga4gh/tes/v1/service-info` (or below its `api_path`), with its
+credentials for the TES instance and timeouts of 5 seconds (to connect and to
+answer), and caches the result per process for
 `custom.tes.version_cache_ttl` seconds (default: 3600; failures for 60
 seconds). It reads `type.version` leniently (e.g., `TES`, `1.0`, `v1.1.0`), if
 `type.group` is `org.ga4gh` and `type.artifact` is `tes`. A TES instance that

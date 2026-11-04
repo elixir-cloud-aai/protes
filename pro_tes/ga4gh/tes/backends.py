@@ -37,7 +37,8 @@ seconds while connecting; requests to discovered backends must end within
 
 Tasks are created and canceled with a single `POST` request each (which
 doesn't follow redirects), to the API path of the backend's URL
-(`<url>/ga4gh/tes/v1`), so that backends never get a task twice; tasks are
+(`<url>/ga4gh/tes/v1`, or `api_path` of its entry), so that backends never get
+a task twice; tasks are
 got from the same path. If it is unknown whether the backend processed such
 a request (e.g., because the response timed out), the request is not sent
 again (cf. :py:class:`pro_tes.exceptions.BackendOutcomeUnknown`).
