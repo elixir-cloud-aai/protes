@@ -95,6 +95,23 @@ def test_create_task_invalid(
     assert mongo_client[DB]["tasks"].count_documents({}) == 0
 
 
+def test_create_task_long_path(
+    client: FlaskClient,
+    backend: type[FakeBackend],
+    mongo_client: MongoClient[dict[str, Any]],
+) -> None:
+    """Tasks with paths over the limit are rejected (`400`), and not kept."""
+    task = {
+        "executors": [{"image": "alpine", "command": ["true"]}],
+        "outputs": [{"url": "s3://a/b", "path": "/" + "[" * 4096}],
+    }
+    response = client.post(f"{BASE_PATH}/tasks", json=task)
+    assert response.status_code == 400
+    assert response.get_json()["status"] == 400
+    assert not relayed(backend)
+    assert mongo_client[DB]["tasks"].count_documents({}) == 0
+
+
 @pytest.mark.parametrize("unusable", ["invalid", "failing"])
 def test_create_task_next_backend(
     client: FlaskClient,
