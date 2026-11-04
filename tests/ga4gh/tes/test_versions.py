@@ -1,7 +1,9 @@
 """Tests of TES versions and adapters."""
 
 from copy import deepcopy
-from itertools import pairwise
+from itertools import pairwise, product
+import re
+import time
 from typing import Any
 
 import pytest
@@ -17,6 +19,7 @@ from pro_tes.ga4gh.tes.versions import (
     TesVersion,
     chain,
     downgrade_task,
+    has_wildcards,
     incompatibilities,
     upgrade_task,
 )
@@ -220,3 +223,25 @@ def test_output_wildcards(path: str, wildcard: bool) -> None:
     """Only valid wildcards in output paths need TES 1.1."""
     task = {"outputs": [{"url": "s3://a/b", "path": path}]}
     assert bool(incompatibilities(task)) is wildcard
+
+
+def test_wildcards_same_as_pattern() -> None:
+    """The scan finds what the POSIX pattern of wildcards matches."""
+    pattern = re.compile(r"[*?]|\[(?:\][^\]]*|[^\]]+)\]")
+    for length in range(7):
+        for chars in product("[]a*", repeat=length):
+            path = "".join(chars)
+            assert has_wildcards(path) is bool(pattern.search(path)), path
+
+
+@pytest.mark.parametrize("path", ["[" * 1_000_000, "[]" * 500_000, "[a" * 500_000])
+def test_wildcards_linear(path: str) -> None:
+    """Long paths without a closing bracket are checked in linear time.
+
+    The time bound is generous for a linear scan of 1 MB, which takes
+    milliseconds; a quadratic one takes minutes.
+    """
+    start = time.monotonic()
+    task = {"outputs": [{"url": "s3://a/b", "path": path}]}
+    incompatibilities(task)
+    assert time.monotonic() - start < 1

@@ -41,7 +41,9 @@ For `POST /tasks`, proTES:
    `creation_time` (tasks that set `creation_time`, which the TES
    specification marks read-only, are rejected with `400 Bad Request`, as
    are tasks with credentials in the URLs of inputs or outputs, unless
-   proTES is configured to remove them, and tasks with inline contents of
+   proTES is configured to remove them, tasks with paths over 4096 bytes
+   (of inputs, outputs, volumes and executors, as `PATH_MAX` on Linux), and
+   tasks with inline contents of
    inputs over `max_inline_content`, with `413 Content Too Large`: see
    [Tasks](configuration.md#tasks));
 2. runs the pipeline of [plugins](plugins.md), which may change the task
