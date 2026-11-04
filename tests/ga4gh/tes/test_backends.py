@@ -779,7 +779,20 @@ def test_api_path_default(
 
 @pytest.mark.parametrize(
     "path",
-    ["", "v1", "/v1?a=b", "/v1#a", "/v1/../tasks", "/./v1", "/v 1", "//v1", "/v1\n"],
+    [
+        "",
+        "v1",
+        "/v1?a=b",
+        "/v1#a",
+        "/v1/../tasks",
+        "/./v1",
+        "/v 1",
+        "//v1",
+        "/v1\n",
+        "//",
+        "///",
+        "/v1//",
+    ],
 )
 def test_api_path_invalid(path: str) -> None:
     """API paths must be absolute, and can't change anything but the path."""

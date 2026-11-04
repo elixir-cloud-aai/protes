@@ -319,7 +319,7 @@ class TesServiceEntry(ServiceEntry):
         """
         if not value.startswith("/"):
             raise ValueError(f"API path must be absolute: {value!r}")
-        path = value.rstrip("/")
+        path = value.removesuffix("/")
         if path and (
             not _API_PATH.fullmatch(path) or {".", ".."} & set(path.split("/"))
         ):
