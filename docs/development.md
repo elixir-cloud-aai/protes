@@ -76,7 +76,8 @@ and on TESP-API with Pulsar, in pinned versions (see [Notes on TES
 implementations](configuration.md#notes-on-tes-implementations)). Their
 containers run through the Docker socket of the host, and the images come from
 third parties' registries, so the gate doesn't need this job until it has
-proven reliable. To run it locally (with curl and jq), follow the steps of the
+proven reliable. Access to the Docker socket amounts to control of the host, so
+run the stack locally only on a disposable machine or VM. To run it locally (with curl and jq), follow the steps of the
 job in `.github/workflows/ci.yml`, including the pin of TESP-API's stage image:
 
 ```bash
