@@ -708,6 +708,111 @@ def wrapped(reason: Exception, error: type[requests.RequestException]) -> Except
     return error(MaxRetryError(None, "/", reason=reason))  # type: ignore[arg-type]
 
 
+@pytest.fixture
+def api_path_backend(configured: None) -> str:
+    """Set a backend with an API path of its own, parsed as in the config."""
+    conf = get_custom_config(CustomConfig).tes
+    conf.backends = Tes.model_validate(
+        {
+            "backends": [
+                {
+                    "type": "ga4gh-tes",
+                    "url": NONE_URL,
+                    "auth": "none",
+                    "api_path": "/v1/",
+                }
+            ]
+        }
+    ).backends
+    return NONE_URL
+
+
+def test_api_path(
+    api_path_backend: str, post: Callable[[FakeResponse | Exception], FakePost]
+) -> None:
+    """All requests to a backend use the API path of its entry."""
+    fake = post(FakeResponse({"id": "remote-1", "state": "RUNNING"}))
+    client = backends.create_client(host=api_path_backend)
+    create_task(client)
+    client.get_task("remote-1")
+    client.cancel_task("remote-1")
+    client.service_info()
+    assert [url for url, _ in fake.sent] == [
+        f"{api_path_backend}/v1/tasks",
+        f"{api_path_backend}/v1/tasks/remote-1",
+        f"{api_path_backend}/v1/tasks/remote-1:cancel",
+        f"{api_path_backend}/v1/service-info",
+    ]
+
+
+def test_api_path_candidates(api_path_backend: str) -> None:
+    """Clients of candidates of FOCA's backend list get the API path."""
+    [backend] = backends.get_backends()
+    assert backends.client_for(backend).api_path == "/v1"
+
+
+def test_api_path_at_root(
+    configured: None, post: Callable[[FakeResponse | Exception], FakePost]
+) -> None:
+    """The path `/` means that the TES API is at the URL of the backend."""
+    conf = get_custom_config(CustomConfig).tes
+    conf.backends = Tes.model_validate(
+        {
+            "backends": [
+                {"type": "ga4gh-tes", "url": NONE_URL, "auth": "none", "api_path": "/"}
+            ]
+        }
+    ).backends
+    fake = post(FakeResponse({}))
+    backends.create_client(host=NONE_URL).service_info()
+    assert fake.sent[0][0] == f"{NONE_URL}/service-info"
+
+
+def test_api_path_default(
+    configured: None, post: Callable[[FakeResponse | Exception], FakePost]
+) -> None:
+    """Other backends use the path of the TES specification."""
+    fake = post(FakeResponse({"id": "remote-1"}))
+    create_task(backends.create_client(host=NONE_URL))
+    assert fake.sent[0][0] == f"{NONE_URL}/ga4gh/tes/v1/tasks"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "",
+        "v1",
+        "/v1?a=b",
+        "/v1#a",
+        "/v1/../tasks",
+        "/./v1",
+        "/v 1",
+        "//v1",
+        "/v1\n",
+        "//",
+        "///",
+        "/v1//",
+    ],
+)
+def test_api_path_invalid(path: str) -> None:
+    """API paths must be absolute, and can't change anything but the path."""
+    entry = {"type": "ga4gh-tes", "url": NONE_URL, "auth": "none", "api_path": path}
+    with pytest.raises(pydantic.ValidationError):
+        Tes.model_validate({"backends": [entry]})
+
+
+def test_api_path_only_of_tes_instances() -> None:
+    """Registries have no API path: discovered backends use the default one."""
+    entry = {
+        "type": "ga4gh-service-registry",
+        "url": "https://registry.example.org",
+        "auth": "none",
+        "api_path": "/v1",
+    }
+    with pytest.raises(pydantic.ValidationError, match="api_path"):
+        Tes.model_validate({"backends": [entry]})
+
+
 def test_client_timeout(configured: None) -> None:
     """Requests to backends time out after `custom.tes.timeout` seconds.
 

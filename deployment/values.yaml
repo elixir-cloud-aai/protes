@@ -85,7 +85,9 @@ tes:
   # its own access token (`auth: client_credentials`, the default; see
   # `config.custom.tes.client_credentials`), with HTTP Basic credentials from
   # environment variables (`auth: basic`, set via `protes.extraEnv`) or not
-  # at all (`auth: none`); see deployment/README.md, Configuration.
+  # at all (`auth: none`); see deployment/README.md, Configuration. TES
+  # instances that serve the TES API elsewhere than at `/ga4gh/tes/v1` set
+  # `apiPath` (e.g., TESP: `/v1`).
   # Examples:
   backends: []
   #   - type: ga4gh-tes

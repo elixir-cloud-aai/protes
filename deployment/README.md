@@ -62,9 +62,9 @@ refuses; the app checks the other settings of issuers on startup.
 
 The TES instances that tasks are forwarded to are listed in `tes.backends`,
 in order, with the keys of the app's `custom.tes.backends` in camelCase
-(e.g., `urlSchemes`, `refreshInterval`, `maxStale`, `allowPrivateAddresses`,
-`registryAllowPrivateAddresses`, `basic.usernameEnv` and
-`basic.passwordEnv`; the keys of `labels` are kept), which the chart renders
+(e.g., `apiPath`, `urlSchemes`, `refreshInterval`, `maxStale`,
+`allowPrivateAddresses`, `registryAllowPrivateAddresses`,
+`basic.usernameEnv` and `basic.passwordEnv`; the keys of `labels` are kept), which the chart renders
 into the config (see [TES
 instances](https://protes.readthedocs.io/en/latest/configuration/#tes-instances)):
 TES instances (`type: ga4gh-tes`) and service registries whose verified TES
@@ -189,6 +189,10 @@ tes:
   backends:
     - type: ga4gh-tes
       url: "https://tes.example.org"
+    # A TES instance that serves the TES API at another path, e.g., TESP
+    - type: ga4gh-tes
+      url: "https://tesp.example.org"
+      apiPath: /v1
     # Verified TES instances of a service registry, in its place
     - type: ga4gh-service-registry
       url: "https://registry.example.org/ga4gh/registry/v1"

@@ -1065,6 +1065,7 @@ CHART_BACKENDS = [
     {
         "type": "ga4gh-tes",
         "url": "https://tes.example.org",
+        "apiPath": "/v1",
         "auth": "basic",
         "basic": {"usernameEnv": "TES_USERNAME", "passwordEnv": "TES_PASSWORD"},
         "labels": {"regionName": "eu-north"},
@@ -1090,6 +1091,7 @@ CONFIG_BACKENDS = [
     {
         "type": "ga4gh-tes",
         "url": "https://tes.example.org",
+        "api_path": "/v1",
         "auth": "basic",
         "basic": {"username_env": "TES_USERNAME", "password_env": "TES_PASSWORD"},
         "labels": {"regionName": "eu-north"},
@@ -1142,6 +1144,14 @@ def test_tes_backends_default() -> None:
     [
         ({"type": "ga4gh-tes"}, "missing property 'url'"),
         ({"type": "ga4gh-wes", "url": "https://wes.example.org"}, "/tes/backends/0"),
+        (
+            {"type": "ga4gh-tes", "url": "https://tes.example.org", "apiPath": "v1"},
+            "/tes/backends/0",
+        ),
+        (
+            {"type": "ga4gh-tes", "url": "https://tes.example.org", "apiPath": "/v?a"},
+            "/tes/backends/0",
+        ),
         (
             {"type": "ga4gh-tes", "url": "https://tes.example.org", "urlSchemes": []},
             "/tes/backends/0",
