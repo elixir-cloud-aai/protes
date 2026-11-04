@@ -171,6 +171,7 @@ The TES backends of `tes.backends`, with the keys of the app config
 */}}
 {{- define "protes.tesBackends" -}}
 {{- $keys := dict
+  "apiPath" "api_path"
   "urlSchemes" "url_schemes"
   "refreshInterval" "refresh_interval"
   "maxStale" "max_stale"

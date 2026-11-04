@@ -1065,6 +1065,7 @@ CHART_BACKENDS = [
     {
         "type": "ga4gh-tes",
         "url": "https://tes.example.org",
+        "apiPath": "/v1",
         "auth": "basic",
         "basic": {"usernameEnv": "TES_USERNAME", "passwordEnv": "TES_PASSWORD"},
         "labels": {"regionName": "eu-north"},
@@ -1090,6 +1091,7 @@ CONFIG_BACKENDS = [
     {
         "type": "ga4gh-tes",
         "url": "https://tes.example.org",
+        "api_path": "/v1",
         "auth": "basic",
         "basic": {"username_env": "TES_USERNAME", "password_env": "TES_PASSWORD"},
         "labels": {"regionName": "eu-north"},

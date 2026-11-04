@@ -20,6 +20,11 @@ those of the identity provider of another instance can't be checked. Tasks with
 the tag `fake.hold` run until they are canceled. Otherwise, it serves tasks with
 a field that the TES specification doesn't have (`author`, as TESP does): TES
 instances may add such fields.
+
+With the environment variable `FAKE_TES_BASE_PATH=/v1`, it serves the TES API at
+that path only, and requires no access tokens, as TESP does (behind no rewriting
+proxy, and as those of the identity provider of another instance can't be
+checked).
 """
 
 import base64
@@ -37,7 +42,7 @@ from urllib.parse import parse_qs, unquote_plus, urlsplit
 from cryptography.hazmat.primitives.asymmetric import rsa
 import jwt
 
-BASE_PATH = "/ga4gh/tes/v1"
+BASE_PATH = os.environ.get("FAKE_TES_BASE_PATH", "/ga4gh/tes/v1")
 # Issuer of the fake identity provider, as proTES reaches it (`config.yaml` of
 # this directory)
 ISSUER = "http://fake-tes:8080/oidc/"
@@ -213,7 +218,7 @@ class Handler(BaseHTTPRequestHandler):
         Returns:
             Whether the request has a valid access token of proTES.
         """
-        if TES_10:
+        if TES_10 or "FAKE_TES_BASE_PATH" in os.environ:
             return True
         token = (self.headers.get("Authorization") or "").removeprefix("Bearer ")
         try:

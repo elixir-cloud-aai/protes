@@ -82,9 +82,11 @@ from tes.utils import camel_to_snake, unmarshal
 from urllib3.exceptions import ConnectTimeoutError, NewConnectionError
 
 from pro_tes.config_models import (
+    DEFAULT_API_PATH,
     ClientCredentials,
     CustomConfig,
     Tes,
+    TesServiceEntry,
     split_server_url,
 )
 from pro_tes.exceptions import (
@@ -114,8 +116,6 @@ CLIENT_SECRET_ENV = "PROTES_CLIENT_SECRET"  # noqa: S105 (a variable name)
 OIDC_CONFIG_PATH = ".well-known/openid-configuration"
 # Lifetime (in seconds) assumed for tokens of responses without `expires_in`
 DEFAULT_TOKEN_LIFETIME = 60
-# Path of the TES API, relative to the URL of a backend
-API_PATH = "ga4gh/tes/v1"
 # Timeout (in seconds) of connecting to TES backends (at most the timeout of
 # requests, `custom.tes.timeout`); short, as requests that time out while
 # connecting are sent to the next backend
@@ -603,14 +603,16 @@ class TesClient(tes.HTTPClient):
 
     Credentials are looked up for each request (cf.
     :py:meth:`TesClient._request_params`). Tasks are created, got and
-    canceled with a single request each, to the API path of the backend's
-    URL (unlike py-tes, which tries other paths too, and so may create a
-    task more than once); redirects of `POST` requests are not followed.
+    canceled with a single request each, to the API path of the backend
+    (`api_path` of its entry; unlike py-tes, which tries other paths too, and
+    so may create a task more than once); redirects of `POST` requests are
+    not followed.
 
     Attributes:
         backend: The backend.
         entry: Entry of the backend in `custom.tes.backends` (the registry
             entry, for discovered backends).
+        api_path: Path of the TES API, relative to the URL of the backend.
     """
 
     def __init__(
@@ -636,6 +638,9 @@ class TesClient(tes.HTTPClient):
         super().__init__(url=url, timeout=timeout)
         self.backend = backend
         self.entry = entry
+        self.api_path = (
+            entry.api_path if isinstance(entry, TesServiceEntry) else DEFAULT_API_PATH
+        )
         # discovered backends: each connection is checked
         self.guarded: GuardedClient | None = None
         if isinstance(entry, RegistryEntry):
@@ -655,12 +660,14 @@ class TesClient(tes.HTTPClient):
     ) -> tuple[str, BackendResponse]:
         """Relay a task, with a single request, as the plugins prepared it.
 
-        The request has the method, path (below the URL of the backend),
-        query and headers of the outbound request (cf.
-        :py:meth:`foca.plugins.PipelineRun.attempts`; usually `POST
-        /ga4gh/tes/v1/tasks`), the task as body, and the credentials of the
-        backend (none if the plugins set `outbound.auth` to `none`; plugins
-        can't choose other credentials), added after the plugins ran.
+        The request has the method, query and headers of the outbound request
+        (cf. :py:meth:`foca.plugins.PipelineRun.attempts`; usually `POST
+        /ga4gh/tes/v1/tasks`), its path with the API path of the backend for
+        the default one (plugins see the path of the API of proTES, cf.
+        :py:func:`pro_tes.gateway.check_outbound`), the task as body, and the
+        credentials of the backend (none if the plugins set `outbound.auth`
+        to `none`; plugins can't choose other credentials), added after the
+        plugins ran.
 
         Args:
             outbound: Outbound request, after the `forward` phase.
@@ -683,9 +690,12 @@ class TesClient(tes.HTTPClient):
                 accepted the task, but did not confirm it with its
                 identifier.
         """
+        path = outbound.path
+        if path.startswith(f"{DEFAULT_API_PATH}/"):
+            path = f"{self.api_path}{path.removeprefix(DEFAULT_API_PATH)}"
         response = self._send(
             method=outbound.method,
-            url=f"{self.url}{outbound.path}",
+            url=f"{self.url}{path}",
             data=task.as_json(),
             params=outbound.query,
             headers=dict(outbound.headers),
@@ -731,7 +741,7 @@ class TesClient(tes.HTTPClient):
         """
         kwargs = self._request_params(params={"view": view})
         timeout = kwargs.pop("timeout")
-        url = f"{self.url}/{API_PATH}/tasks/{quote_id(task_id)}"
+        url = f"{self.url}{self.api_path}/tasks/{quote_id(task_id)}"
         response = self._request("GET", url, timeout=timeout, **kwargs)
         response.raise_for_status()
         body = response.json()
@@ -756,7 +766,7 @@ class TesClient(tes.HTTPClient):
         """
         kwargs = self._request_params()
         timeout = kwargs.pop("timeout")
-        url = f"{self.url}/{API_PATH}/service-info"
+        url = f"{self.url}{self.api_path}/service-info"
         response = self._request("GET", url, timeout=timeout, **kwargs)
         response.raise_for_status()
         return response.json()
@@ -776,7 +786,8 @@ class TesClient(tes.HTTPClient):
                 canceled the task, but did not confirm it.
         """
         self._send(
-            method="POST", url=f"{self.url}/{API_PATH}/tasks/{quote_id(task_id)}:cancel"
+            method="POST",
+            url=f"{self.url}{self.api_path}/tasks/{quote_id(task_id)}:cancel",
         )
 
     def _send(

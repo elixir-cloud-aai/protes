@@ -32,6 +32,14 @@ custom:
         url_schemes:
           - http
         auth: client_credentials
+      # Serves the TES API at `/v1` only (as TESP does); only for tasks that
+      # choose it, as the backends before it accept all others
+      - type: ga4gh-tes
+        url: http://fake-tes-v1:8080
+        api_path: /v1
+        url_schemes:
+          - http
+        auth: none
     url_schemes:
       - http
     client_credentials:

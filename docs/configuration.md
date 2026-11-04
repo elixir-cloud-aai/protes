@@ -46,7 +46,8 @@ Tasks are forwarded to the TES instances of the backend list,
 `custom.tes.backends`, in order (a typed backend list of FOCA,
 `foca.plugins.backends`). Each
 entry is either a TES instance (`type: ga4gh-tes`), with its base URL
-(`url`, without the API path `/ga4gh/tes/v1`) and how proTES authenticates
+(`url`, without the API path `/ga4gh/tes/v1`; see [API paths](#api-paths) for
+TES instances that serve it elsewhere) and how proTES authenticates
 at it (`auth`: with its own access token, the default, with HTTP Basic
 credentials from environment variables, or not at all; see [Credentials of
 TES instances](access-control.md#credentials-of-tes-instances)), or a
@@ -67,6 +68,10 @@ custom:
       - type: ga4gh-tes
         url: https://tes.example.com
         auth: none
+      # A TES instance that serves the TES API at another path, e.g., TESP
+      - type: ga4gh-tes
+        url: https://tesp.example.org
+        api_path: /v1
     # Identity provider of proTES, for the TES instances with
     # `auth: client_credentials` (the default)
     client_credentials:
@@ -97,7 +102,7 @@ Requests to discovered TES instances must end within `custom.tes.timeout`
 seconds as a whole (resolving, connecting, sending and reading), and
 connecting within 10 seconds (FOCA's guarded HTTP client). proTES creates, gets
 and cancels tasks with a single request each, to the API path of the URL
-(`<url>/ga4gh/tes/v1`), and never sends a request to create or cancel a
+(`<url>/ga4gh/tes/v1`, see [API paths](#api-paths)), and never sends a request to create or cancel a
 task again, so that no TES instance gets a task twice; these requests don't
 follow redirects. It tries the next TES instance only if a TES instance
 certainly did not accept the task: it was not reached (connection refused,
@@ -151,6 +156,26 @@ proxy's timeout) for long lists of unreliable TES instances.
 
 Requests in flight when an instance of proTES stops are cut off after
 Gunicorn's graceful timeout (20 seconds in the chart).
+
+### API paths
+
+proTES appends the API path of the TES specification, `/ga4gh/tes/v1`, to the
+URL of a TES instance. TES instances that serve the TES API elsewhere set
+`api_path` in their entry (`/` if they serve it at the URL itself). It must be
+an absolute path of unreserved characters, without segments `.` or `..`, and
+applies to all requests to the TES instance. A path in `url` is no alternative,
+as the default API path is appended to it.
+
+[TESP](https://github.com/CESNET/tesp-api) (TESP-API with Pulsar) serves the
+TES API at `/v1` only, so it needs `api_path: /v1`, unless a proxy in front of
+it rewrites the default path. proTES also ignores the fields that TESP adds to
+tasks (see [TES versions](tes-versions.md#fields-that-tes-instances-add)).
+
+Plugins always see the path of the API of proTES (`/ga4gh/tes/v1/tasks` in
+outbound requests, which they can't change): proTES applies `api_path` when it
+sends the request. Service registries list URLs only, so discovered TES
+instances always use the default API path, unless the same URL is also listed
+as an entry of its own, whose settings win.
 
 ### TES versions
 

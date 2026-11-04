@@ -12,7 +12,7 @@ import pytest
 import yaml
 
 from pro_tes.app import init_app, run_app
-from pro_tes.config_models import CustomConfig
+from pro_tes.config_models import CustomConfig, TesServiceEntry
 from pro_tes.ga4gh.tes.backends import CLIENT_ID_ENV, CLIENT_SECRET_ENV, CONNECT_TIMEOUT
 from tests.conftest import DB, set_overlays
 
@@ -210,7 +210,8 @@ def test_smoke_test_config(
 
     It relays tasks to the fake TES backends only: the one of TES 1.0, which
     needs no access tokens, first, then the one of TES 1.1, with access tokens
-    of proTES (client ID and secret as in the Compose override).
+    of proTES (client ID and secret as in the Compose override), then the one
+    with an API path of its own, for tasks that choose it.
     """
     monkeypatch.setenv("FOCA_CONFIG_OVERLAY", str(SMOKE_CONFIG))
     smoke = yaml.safe_load(SMOKE_COMPOSE.read_text())
@@ -219,11 +220,14 @@ def test_smoke_test_config(
     app = init_app()
     with app.app.app_context():
         custom = get_custom_config(CustomConfig)
-    (entry_10, entry) = custom.tes.backends.root
+    (entry_10, entry, entry_v1) = custom.tes.backends.root
     assert entry_10.url == "http://fake-tes-10:8080"
     assert entry_10.auth == "none"
     assert entry.url == "http://fake-tes:8080"
     assert entry.auth == "client_credentials"
+    assert entry_v1.url == "http://fake-tes-v1:8080"
+    assert isinstance(entry_v1, TesServiceEntry)
+    assert entry_v1.api_path == "/v1"
     assert custom.tes.client_credentials.issuer == "http://fake-tes:8080/oidc/"
     # tasks go through the default pipeline, FOCA's ordered failover
     with app.app.app_context():

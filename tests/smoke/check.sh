@@ -86,6 +86,22 @@ check GET "/tasks/${id_11}?view=FULL" 200 \
 check POST /tasks 400 '.detail | contains("ignore_error")' \
   "{${needs_11}, \"tags\": {\"gateway.backends\":
     \"{\\\"type\\\": \\\"allow\\\", \\\"backends\\\": [\\\"http://fake-tes-10:8080\\\"]}\"}}"
+# A backend with an API path of its own (`api_path`, as for TESP): tasks are
+# created, tracked and canceled there
+only_v1='"tags": {"gateway.backends":
+    "{\"type\": \"allow\", \"backends\": [\"http://fake-tes-v1:8080\"]}"'
+check POST /tasks 200 '.id | length > 0' \
+  "{${only_v1}}, \"executors\": [{\"image\": \"alpine\", \"command\": [\"true\"]}]}"
+id_v1="$(jq -r .id "${body}")"
+await_state "${id_v1}" COMPLETE
+check GET "/tasks/${id_v1}?view=FULL" 200 \
+  '.tags["gateway.backend"] == "http://fake-tes-v1:8080"'
+check POST /tasks 200 '.id | length > 0' \
+  "{${only_v1}, \"fake.hold\": \"true\"}, \"executors\": [{\"image\": \"alpine\", \"command\": [\"true\"]}]}"
+held_v1="$(jq -r .id "${body}")"
+await_state "${held_v1}" RUNNING
+check POST "/tasks/${held_v1}:cancel" 200 '. == {}'
+await_state "${held_v1}" CANCELED
 # List filters
 check GET '/tasks?view=MINIMAL' 200 "any(.tasks[]; .id == \"${id}\")"
 check GET '/tasks?view=MINIMAL&state=COMPLETE' 200 "any(.tasks[]; .id == \"${id}\")"
