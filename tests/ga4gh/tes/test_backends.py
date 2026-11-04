@@ -4,7 +4,6 @@ from collections.abc import Callable, Iterator
 from copy import deepcopy
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-import io
 import json
 import socket
 import ssl
@@ -999,7 +998,7 @@ def test_read_limited_deadline(loopback: None) -> None:
             f"http://127.0.0.1:{server.server_address[1]}", stream=True, timeout=5
         )
         started = time.monotonic()
-        with pytest.raises(requests.Timeout, match="0.1 seconds"):
+        with pytest.raises(requests.Timeout, match=r"0\.1 seconds"):
             backends.read_limited(response, timeout=0.1)
         assert time.monotonic() - started < 2
     finally:

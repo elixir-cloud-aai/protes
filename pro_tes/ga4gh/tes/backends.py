@@ -1062,9 +1062,7 @@ def read_limited(response: requests.Response, timeout: float) -> requests.Respon
     with response:
         # not `iter_content`, which waits for whole chunks, however long they take
         try:
-            while chunk := response.raw.read1(
-                RESPONSE_CHUNK_SIZE, decode_content=True
-            ):
+            while chunk := response.raw.read1(RESPONSE_CHUNK_SIZE, decode_content=True):
                 content += chunk
                 if len(content) > MAX_RESPONSE_SIZE:
                     raise requests.RequestException(
