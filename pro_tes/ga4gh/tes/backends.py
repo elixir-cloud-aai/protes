@@ -903,7 +903,8 @@ class TesClient(tes.HTTPClient):
             timeout: Timeouts of connecting and of reading, in seconds
                 (configured backends only).
             limited: Whether the response of a configured backend is limited to
-                `MAX_RESPONSE_SIZE` bytes, like all of discovered backends.
+                `MAX_RESPONSE_SIZE` bytes and the timeout as a whole, like all
+                of discovered backends.
             **kwargs: Other arguments of `requests.request()`; for discovered
                 backends, only `params`, `headers`, `data` and `auth`.
 
@@ -922,7 +923,8 @@ class TesClient(tes.HTTPClient):
                 return read_limited(
                     requests.request(
                         method, url, timeout=timeout, stream=True, **kwargs
-                    )
+                    ),
+                    timeout=timeout[1],
                 )
             return requests.request(method, url, timeout=timeout, **kwargs)
         unsupported = set(kwargs) - {
@@ -1039,19 +1041,23 @@ def response_headers(response: requests.Response) -> Headers:
     return headers
 
 
-def read_limited(response: requests.Response) -> requests.Response:
+def read_limited(response: requests.Response, timeout: float) -> requests.Response:
     """Read the body of a streamed response, up to `MAX_RESPONSE_SIZE` bytes.
 
     Args:
         response: Streamed response.
+        timeout: Maximum time to read it, in seconds; as a whole, as the timeout
+            of requests only counts time without data.
 
     Returns:
         The response, with its body.
 
     Raises:
         requests.RequestException: The body is larger.
+        requests.Timeout: Reading the body takes longer.
     """
     content = bytearray()
+    deadline = time.monotonic() + timeout
     with response:
         for chunk in response.iter_content(chunk_size=RESPONSE_CHUNK_SIZE):
             content += chunk
@@ -1059,6 +1065,10 @@ def read_limited(response: requests.Response) -> requests.Response:
                 raise requests.RequestException(
                     f"Response larger than {MAX_RESPONSE_SIZE} bytes",
                     response=response,
+                )
+            if time.monotonic() >= deadline:
+                raise requests.Timeout(
+                    f"Response not read within {timeout} seconds", response=response
                 )
     response._content = bytes(content)
     return response

@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 import time
 from typing import Any, ClassVar
 
+from bson.errors import InvalidDocument
 from bson.objectid import ObjectId
 from celery.exceptions import Reject
 from connexion import FlaskApp
@@ -199,7 +200,21 @@ def stored_states(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         if after["task"]["state"] != before["task"]["state"]:
             calls.append(after["task"]["state"])
 
+    store_final = track_task_progress._store_final
+
+    def record_final(
+        db_client: DbDocumentConnector, worker_id: str, **kwargs: Any
+    ) -> None:
+        """Store the final state, and record it if it was stored."""
+        before = db_client.collection.find_one({"worker_id": worker_id})
+        store_final(db_client=db_client, worker_id=worker_id, **kwargs)
+        after = db_client.collection.find_one({"worker_id": worker_id})
+        assert before is not None and after is not None
+        if after["task"]["state"] != before["task"]["state"]:
+            calls.append(after["task"]["state"])
+
     monkeypatch.setattr(track_task_progress, "_store_state", record)
+    monkeypatch.setattr(track_task_progress, "_store_final", record_final)
     return calls
 
 
@@ -340,13 +355,27 @@ def test_full_logs_unavailable(
 
 
 def test_full_logs_with_final_state(
-    tasks: Collection[dict[str, Any]], client_class: type[FakeClient]
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The final state appears only once the logs can be stored with it.
+    """The final state appears only together with the logs.
 
     Clients that wait for it may read the logs once, right after it.
     """
     seen: list[str] = []
+    upsert = DbDocumentConnector.upsert_fields_in_root_object
+
+    def writes(self: DbDocumentConnector, **kwargs: Any) -> Any:
+        """Check the state before the write, which has it and the logs."""
+        document = tasks.find_one({"worker_id": ARGS["worker_id"]})
+        assert document is not None
+        assert document["task"]["state"] == "QUEUED"
+        assert kwargs["state"] == "COMPLETE"
+        assert kwargs["logs"]
+        return upsert(self, **kwargs)
+
+    monkeypatch.setattr(DbDocumentConnector, "upsert_fields_in_root_object", writes)
 
     def record() -> None:
         """Record the stored state when the logs are requested."""
@@ -366,6 +395,9 @@ TOO_LARGE = [
     DocumentTooLarge("too large"),
     OperationFailure("too large", code=10334),
     OperationFailure("too large", code=17419),
+    # e.g., of output URLs with lone surrogates
+    UnicodeEncodeError("utf-8", "\ud800", 0, 1, "surrogates not allowed"),
+    InvalidDocument("can't be encoded"),
 ]
 
 
@@ -451,6 +483,40 @@ def test_too_large_state_kept(
     assert document["task"]["state"] == "COMPLETE"
     assert not scheduled
     assert "not stored" in caplog.text
+
+
+def test_redelivered_poll_without_full_logs(
+    tasks: Collection[dict[str, Any]], client_class: type[FakeClient]
+) -> None:
+    """A poll delivered again skips the logs, which may have cost its worker."""
+    TRACK.push_request(delivery_info={"redelivered": True})
+    try:
+        run()
+    finally:
+        TRACK.pop_request()
+    assert client_class.views == ["BASIC"]
+    document = tasks.find_one({"worker_id": ARGS["worker_id"]})
+    assert document is not None
+    assert document["task"]["state"] == "COMPLETE"
+
+
+def test_final_state_kept_on_failure(
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If storing the logs fails, the final state is stored without them."""
+
+    def fail(**kwargs: Any) -> None:
+        """Fail."""
+        raise ValueError("invalid")
+
+    monkeypatch.setattr(track_task_progress, "_store_final", fail)
+    with pytest.raises(ValueError, match="invalid"):
+        run()
+    document = tasks.find_one({"worker_id": ARGS["worker_id"]})
+    assert document is not None
+    assert document["task"]["state"] == "COMPLETE"
 
 
 def test_other_database_errors_not_too_large(

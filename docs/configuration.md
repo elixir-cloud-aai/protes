@@ -400,10 +400,14 @@ plugins:
   among the longer ones, which keep their end, where errors usually are. proTES
   gets them once when a task has finished (`GET /tasks/{id}?view=FULL` at the TES
   instance), and holds them in memory in the Celery worker meanwhile: a task
-  whose response is larger than 64 MiB stays without them. If a task would still
-  exceed the limit of MongoDB (e.g., with very many short logs), proTES stores it
-  without these logs, or if need be also without the executors' logs and the
-  outputs, and logs an error. Their owners can read them in the view `FULL`, so
+  whose response is larger than 64 MiB, or takes longer than `custom.tes.timeout`
+  as a whole, stays without them. Such a response takes a worker process up to
+  about 420 MiB, so that two at once can exceed the 512 MiB of the [Helm
+  chart](deployment.md)'s worker: the broker then delivers the poll again, and
+  proTES finishes the task without its logs. If a task would still exceed the
+  limit of MongoDB (e.g., with very many short logs), proTES stores it without
+  these logs, or if need be also without the executors' logs and the outputs, and
+  logs an error. Their owners can read them in the view `FULL`, so
   TES instances should keep secrets out of them. With `0`, proTES neither gets
   nor stores them;
 - `post_task.max_create_time`: the number of seconds (default 3600, at

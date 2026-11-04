@@ -28,13 +28,14 @@ import time
 from typing import Any
 from uuid import uuid4
 
+from bson.errors import InvalidDocument
 from bson.objectid import ObjectId
 from celery.exceptions import Reject
 from celery.signals import worker_ready
 from foca import get_collection, get_custom_config
 from kombu.exceptions import OperationalError
 from pymongo.collection import Collection
-from pymongo.errors import DocumentTooLarge, OperationFailure, PyMongoError
+from pymongo.errors import OperationFailure, PyMongoError
 import requests
 
 from pro_tes.celery_worker import celery
@@ -295,13 +296,14 @@ def _drop_logs(logs: list[TesTaskLog]) -> None:
 def _store_within_limit(
     db_client: DbDocumentConnector, worker_id: str, task: TesTask
 ) -> None:
-    """Store the state and logs of a task, with less if MongoDB refuses them.
+    """Store the state and logs of a task, with less if they can't be stored.
 
     The size of logs is limited, but not their number, and the limits of
     logs and requests are configured separately, so that documents can
-    exceed the limit of MongoDB. Trying again wouldn't help, and would keep a
-    finished task from ending its tracking. If nothing can be stored, the state
-    stays as it was stored before.
+    exceed the limit of MongoDB; values of backends may also not be encodable
+    (e.g., lone surrogates in URLs). Trying again wouldn't help, and would keep
+    a finished task from ending its tracking. All at once, as clients may read
+    the logs once, right after the final state.
 
     Args:
         db_client: Database connector of the task.
@@ -323,16 +325,18 @@ def _store_within_limit(
                     mode="json", exclude_none=True, include={"state", "logs"}
                 ),
             )
-        except (DocumentTooLarge, OperationFailure) as exc:
+        except (InvalidDocument, UnicodeEncodeError, OperationFailure) as exc:
             if isinstance(exc, OperationFailure) and exc.code not in TOO_LARGE_CODES:
                 raise
             logger.error(
-                "[%s] Logs of the finished task too large for the database",
+                "[%s] Logs of the finished task can't be stored: %s",
                 worker_id,
+                type(exc).__name__,
             )
         else:
             return
     logger.error("[%s] Logs and outputs of the finished task not stored", worker_id)
+    db_client.upsert_fields_in_root_object(root="task", state=task.state)
 
 
 def _limit_logs(logs: list[TesTaskLog], limit: int) -> None:
@@ -440,12 +444,13 @@ def _deleted_after_cancel(
     return True
 
 
-def _poll(kwargs: dict[str, Any]) -> None:
+def _poll(kwargs: dict[str, Any], redelivered: bool = False) -> None:
     """Poll a task at its backend once, and schedule the next poll.
 
     Args:
         kwargs: Arguments of the poll (cf.
             :py:func:`task__track_task_progress`).
+        redelivered: Whether the broker delivers the poll again.
 
     Raises:
         ValueError: The task finished, but has no logs.
@@ -504,27 +509,35 @@ def _poll(kwargs: dict[str, Any]) -> None:
         return
 
     stored = db_client.get_document(projection={"_id": False, "task.state": True})
-    finished = response.state in States.FINISHED
-    if finished:
-        # before the final state is stored: clients that wait for it may read
-        # the logs once, right after it; a failure leaves the task of this poll
+    if response.state not in States.FINISHED:
+        if response.state != stored.task.state:
+            _store_state(
+                collection=collection,
+                worker_id=worker_id,
+                state=str(response.state),
+            )
+        _schedule(collection=collection, kwargs=kwargs, failures=0)
+        return
+    # not if the message is delivered again: getting the logs may have cost its
+    # worker (e.g., out of memory), which must not keep the task from finishing
+    if not redelivered:
         response = _full_task(
             cli=cli,
             worker_id=worker_id,
             remote_task_id=kwargs["remote_task_id"],
             basic=response,
         )
-    if response.state != stored.task.state:
+    try:
+        _store_final(db_client=db_client, worker_id=worker_id, response=response)
+    except Exception:
         _store_state(
             collection=collection,
             worker_id=worker_id,
             state=str(response.state),
-            keep_canceled=not finished,
+            keep_canceled=False,
         )
-    if not finished:
-        _schedule(collection=collection, kwargs=kwargs, failures=0)
-        return
-    _store_final(db_client=db_client, worker_id=worker_id, response=response)
+        raise
+    logger.info("[%s] %s", worker_id, response.state)
 
 
 @celery.task(
@@ -549,8 +562,8 @@ def task__track_task_progress(
 
     The state is stored if it changed (a stored cancelation only once the
     backend has finished the task); a finished task is got once more in the view
-    `FULL` before that, its logs and outputs are stored, and tracking ends.
-    Failed polls are retried, also if
+    `FULL`, unless the poll is delivered again, its final state, logs and outputs
+    are stored together, and tracking ends. Failed polls are retried, also if
     the backend is not (or no longer) configured or discovered; after
     `polling.attempts` consecutive failures, the state is set to `UNKNOWN`
     (the task may still run at its backend), and polls back off (see
@@ -593,8 +606,9 @@ def task__track_task_progress(
         "previous": previous,
         "failures": failures,
     }
+    delivery_info = self.request.delivery_info or {}
     try:
-        _poll(kwargs)
+        _poll(kwargs, redelivered=bool(delivery_info.get("redelivered")))
     except OperationalError as exc:
         # the retry couldn't be published either: the broker delivers the
         # poll again

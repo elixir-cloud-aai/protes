@@ -4,6 +4,7 @@ from collections.abc import Callable, Iterator
 from copy import deepcopy
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import io
 import json
 import socket
 import ssl
@@ -965,6 +966,21 @@ def test_full_view_size_limit(
         client.get_task("remote-1", view="FULL")
     # other requests aren't affected
     assert client.get_task("remote-1").name == "x" * 5000
+
+
+def test_read_limited_deadline() -> None:
+    """Responses that take too long as a whole are not read to their end."""
+    response = requests.Response()
+    response.raw = io.BytesIO(b"x" * 100)
+    with pytest.raises(requests.Timeout, match="0 seconds"):
+        backends.read_limited(response, timeout=0)
+
+
+def test_read_limited() -> None:
+    """Bodies are read within the limits."""
+    response = requests.Response()
+    response.raw = io.BytesIO(b'{"id": "x"}')
+    assert backends.read_limited(response, timeout=60).json() == {"id": "x"}
 
 
 def test_get_task_once(
