@@ -25,6 +25,9 @@ TASK: dict[str, Any] = {
     "tags": {"gateway.pipeline": "fast", "project": "x"},
 }
 
+EXECUTOR: dict[str, Any] = {"image": "alpine", "command": ["true"]}
+LONG_PATH = "/" + "a" * 4096
+
 
 def test_settings() -> None:
     """ProTES is a gateway of the TES API, with its callbacks."""
@@ -63,6 +66,41 @@ def test_invalid(payload: dict[str, Any]) -> None:
     """Tasks that the models of proTES or py-tes reject are invalid."""
     with pytest.raises((TypeError, ValueError, ValidationError)):
         gateway.validate_task(payload)
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"inputs": [{"url": "s3://a/b", "path": LONG_PATH}]},
+        {"outputs": [{"url": "s3://a/b", "path": LONG_PATH}]},
+        {"outputs": [{"url": "s3://a/b", "path": "/a", "path_prefix": LONG_PATH}]},
+        {"volumes": [LONG_PATH]},
+        {"executors": [{**EXECUTOR, "workdir": LONG_PATH}]},
+        {"executors": [{**EXECUTOR, "stdin": LONG_PATH}]},
+        {"executors": [{**EXECUTOR, "stdout": LONG_PATH}]},
+        {"executors": [{**EXECUTOR, "stderr": LONG_PATH}]},
+    ],
+)
+def test_long_paths(fields: dict[str, Any]) -> None:
+    """Tasks with paths over the limit are invalid."""
+    payload = {"executors": [EXECUTOR], **fields}
+    with pytest.raises(ValueError, match="over 4096 bytes"):
+        gateway.validate_task(payload)
+
+
+def test_paths_at_limit() -> None:
+    """Paths up to the limit are valid; multi-byte characters count as bytes."""
+    path = "/" + "a" * (gateway.MAX_PATH_SIZE - 1)
+    gateway.validate_task(
+        {
+            "executors": [{**EXECUTOR, "workdir": path}],
+            "outputs": [{"url": "s3://a/b", "path": path}],
+        }
+    )
+    with pytest.raises(ValueError, match="over 4096 bytes"):
+        gateway.validate_task(
+            {"executors": [{**EXECUTOR, "workdir": f"/{'é' * 2048}"}]}
+        )
 
 
 def test_relayed_task() -> None:
