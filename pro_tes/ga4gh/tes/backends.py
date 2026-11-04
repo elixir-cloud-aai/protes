@@ -52,6 +52,7 @@ from collections.abc import Iterator
 from contextlib import suppress
 from dataclasses import dataclass
 from http import HTTPStatus
+from inspect import signature
 import logging
 import os
 import ssl
@@ -77,7 +78,7 @@ from foca.utils.http import (
 import requests
 from requests.structures import CaseInsensitiveDict
 import tes
-from tes.utils import unmarshal
+from tes.utils import camel_to_snake, unmarshal
 from urllib3.exceptions import ConnectTimeoutError, NewConnectionError
 
 from pro_tes.config_models import (
@@ -129,6 +130,20 @@ TES_VERSION_LABEL = "tes.version"
 PROBE_TIMEOUT = 5
 # Seconds until the service info of a backend is read again after a failure
 PROBE_RETRY = 60
+# Models of py-tes that hold objects: the model of each such field
+_NESTED_MODELS: dict[type, dict[str, type]] = {
+    tes.Task: {
+        "inputs": tes.models.Input,
+        "outputs": tes.models.Output,
+        "resources": tes.models.Resources,
+        "executors": tes.models.Executor,
+        "logs": tes.models.TaskLog,
+    },
+    tes.models.TaskLog: {
+        "logs": tes.models.ExecutorLog,
+        "outputs": tes.models.OutputFileLog,
+    },
+}
 
 
 class BackendConnectTimeout(BackendRequestNotSent, requests.ConnectTimeout):
@@ -545,6 +560,44 @@ def not_sent(exc: requests.RequestException) -> bool:
     )
 
 
+def known_fields(value: Any, model: type = tes.Task) -> Any:
+    """Drop the fields of a task that the models of py-tes don't know.
+
+    py-tes raises on such fields, but backends may add them to what they serve
+    (e.g., TESP: `author`). Applies to the task and the objects nested in it
+    (`_NESTED_MODELS`); free-form maps (e.g., `tags`) are kept.
+
+    Args:
+        value: Task as served by a backend (JSON), or an object or a list of
+            objects nested in it; other values are returned as they are.
+        model: Model of py-tes of the value.
+
+    Returns:
+        The value, without the unknown fields; not changed in place.
+    """
+    if isinstance(value, list):
+        # only objects: lists of lists are invalid, however deep they are
+        return [
+            known_fields(item, model) if isinstance(item, dict) else item
+            for item in value
+        ]
+    if not isinstance(value, dict):
+        return value
+    fields = signature(model).parameters
+    nested = _NESTED_MODELS.get(model, {})
+    known: dict[str, Any] = {}
+    for key, item in value.items():
+        # py-tes converts the keys of objects
+        name = camel_to_snake(key)
+        if name not in fields:
+            logger.debug("Field %r of a task of a backend ignored", key)
+        elif name in nested:
+            known[key] = known_fields(item, nested[name])
+        else:
+            known[key] = item
+    return known
+
+
 class TesClient(tes.HTTPClient):
     """Client of a TES backend, authenticated as configured for the backend.
 
@@ -667,7 +720,8 @@ class TesClient(tes.HTTPClient):
             view: View of the task (`MINIMAL`, `BASIC` or `FULL`).
 
         Returns:
-            The task.
+            The task, without the fields that py-tes doesn't know (cf.
+            :py:func:`known_fields`).
 
         Raises:
             requests.RequestException: The request failed, or the backend
@@ -684,7 +738,7 @@ class TesClient(tes.HTTPClient):
         if isinstance(body, dict):
             # also for any other code that gets tasks from backends
             body = upgrade_task(body, backend_version(self.backend, probe=False))
-        task: tes.Task = unmarshal(body, tes.Task)
+        task: tes.Task = unmarshal(known_fields(body), tes.Task)
         return task
 
     def service_info(self) -> Any:

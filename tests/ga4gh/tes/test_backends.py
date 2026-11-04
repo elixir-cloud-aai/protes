@@ -1,12 +1,13 @@
 """Tests of the clients of TES backends and their credentials."""
 
 from collections.abc import Callable, Iterator
+from copy import deepcopy
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import socket
 import ssl
 import threading
-from typing import Any, ClassVar
+from typing import Any, ClassVar, get_args, get_type_hints
 
 from connexion import FlaskApp
 from foca import get_custom_config
@@ -826,6 +827,109 @@ def test_get_task_once(
     with pytest.raises(requests.HTTPError):
         backends.create_client(host=NONE_URL).get_task("remote/1")
     assert sent == [f"{NONE_URL}/ga4gh/tes/v1/tasks/remote%2F1"]
+
+
+def test_get_task_unknown_fields(
+    configured: None, idp: FakeIdp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fields that py-tes doesn't know are dropped, at all levels of a task."""
+    body = {
+        "id": "remote-1",
+        "state": "COMPLETE",
+        "author": None,
+        "inputs": [{"url": "s3://a/b", "path": "/b", "extra": 1}],
+        "outputs": [{"url": "s3://a/c", "path": "/c", "extra": 1}],
+        "resources": {"cpu_cores": 1, "extra": 1},
+        "executors": [{"image": "alpine", "command": ["true"], "extra": 1}],
+        "tags": {"extra": "kept"},
+        "logs": [
+            {
+                "extra": 1,
+                "metadata": {"extra": "kept"},
+                "logs": [{"exit_code": 0, "stdout": "out", "extra": 1}],
+                "outputs": [
+                    {"url": "s3://a/c", "path": "/c", "size_bytes": "1", "x": 1}
+                ],
+                "system_logs": ["log"],
+            }
+        ],
+    }
+
+    def fake_request(method: str, url: str, **kwargs: Any) -> FakeResponse:
+        """Serve the task."""
+        return FakeResponse(body)
+
+    monkeypatch.setattr(backends.requests, "request", fake_request)
+    task = backends.create_client(host=NONE_URL).get_task("remote-1")
+    assert task.state == "COMPLETE"
+    assert task.tags == {"extra": "kept"}
+    assert task.inputs[0].url == "s3://a/b"
+    assert task.outputs[0].path == "/c"
+    assert task.resources.cpu_cores == 1
+    assert task.executors[0].image == "alpine"
+    log = task.logs[0]
+    assert log.metadata == {"extra": "kept"}
+    assert log.system_logs == ["log"]
+    assert log.logs[0].stdout == "out"
+    assert log.outputs[0].size_bytes == 1
+
+
+@pytest.mark.parametrize("value", [None, "task", 1])
+def test_known_fields_no_object(value: Any) -> None:
+    """Values that are no objects are left to py-tes."""
+    assert backends.known_fields(value) == value
+
+
+def test_known_fields_nested_lists() -> None:
+    """Lists of lists, which are invalid, are not searched, however deep."""
+    nested: list[Any] = []
+    for _ in range(100_000):
+        nested = [nested]
+    assert backends.known_fields({"inputs": nested}) == {"inputs": nested}
+
+
+def test_known_fields_not_changed() -> None:
+    """The task as served is not changed."""
+    body = {"id": "remote-1", "author": None, "logs": [{"extra": 1}]}
+    expected = deepcopy(body)
+    assert backends.known_fields(body) == {"id": "remote-1", "logs": [{}]}
+    assert body == expected
+
+
+@pytest.mark.parametrize("model", [tes.Task, tes.models.TaskLog])
+def test_nested_models_complete(model: type) -> None:
+    """All fields of py-tes's models that hold objects are mapped."""
+    nested = {}
+    for name, hint in get_type_hints(model).items():
+        for arg in get_args(hint):
+            found = [arg, *get_args(arg)]
+            classes = [item for item in found if isinstance(item, type)]
+            for cls in classes:
+                if issubclass(cls, tes.models.Base):
+                    nested[name] = cls
+    assert backends._NESTED_MODELS[model] == nested
+
+
+def test_get_task_camel_case(
+    configured: None, idp: FakeIdp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fields in camel case, which py-tes converts, are kept."""
+
+    def fake_request(method: str, url: str, **kwargs: Any) -> FakeResponse:
+        """Serve the task."""
+        return FakeResponse(
+            {
+                "id": "remote-1",
+                "state": "COMPLETE",
+                "creationTime": "2026-11-04T12:00:00+00:00",
+                "logs": None,
+            }
+        )
+
+    monkeypatch.setattr(backends.requests, "request", fake_request)
+    task = backends.create_client(host=NONE_URL).get_task("remote-1")
+    assert task.creation_time is not None
+    assert task.logs is None
 
 
 @pytest.mark.parametrize("status", [500, 502, 503, 504])
