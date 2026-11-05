@@ -32,7 +32,7 @@ if ! k rollout status deployment/tesk-api --namespace "${namespace}" --timeout=3
 fi
 # No readiness probe in the chart: the rollout doesn't tell that it serves
 for _ in $(seq 60); do
-  if docker compose exec -T k3s wget -q -O /dev/null \
+  if docker compose exec -T k3s wget -q -T 5 -O /dev/null \
       http://localhost:31567/ga4gh/tes/v1/service-info 2> /dev/null; then
     exit 0
   fi

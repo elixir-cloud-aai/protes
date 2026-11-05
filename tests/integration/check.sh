@@ -37,7 +37,7 @@ auth="$(docker compose exec -T fake-tes python -c \
 # JSON response matches a jq filter
 check() {
   local method="$1" path="$2" status="$3" filter="$4" data="${5:-}" actual
-  local args=(--silent --show-error --output "${body}"
+  local args=(--silent --show-error --max-time 60 --output "${body}"
     --write-out '%{http_code}' -X "${method}"
     --header 'Accept: application/json'
     --header "Authorization: Bearer ${auth}")
