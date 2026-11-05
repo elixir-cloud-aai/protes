@@ -92,6 +92,9 @@ services:
             RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-protes}
         volumes:
             - rabbitmq-data:/var/lib/rabbitmq
+        configs:
+            - source: rabbitmq-foca
+              target: /etc/rabbitmq/conf.d/90-foca.conf
         healthcheck:
             test: ["CMD", "rabbitmq-diagnostics", "--quiet", "ping"]
             interval: 5s
@@ -136,6 +139,14 @@ services:
             FLOWER_BASIC_AUTH: ${FLOWER_BASIC_AUTH:-}
         ports:
             - "127.0.0.1:5555:5555"
+
+# Config of RabbitMQ, as the chart's (FOCA's library chart): Celery declares
+# transient non-exclusive queues (e.g., for the rpc:// result backend and
+# remote control), which RabbitMQ 4.3 denies by default
+configs:
+    rabbitmq-foca:
+        content: |
+            deprecated_features.permit.transient_nonexcl_queues = true
 
 # Named volumes; data of earlier versions of this file, in
 # `PROTES_DATA_DIR` (default `../data/pro_tes`), is not migrated
