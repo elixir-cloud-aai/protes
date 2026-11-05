@@ -24,10 +24,9 @@ the config (see [Plugins](plugins.md)): installed is not enabled.
     the distribution `foca-plugins`, e.g., `foca-plugins[tes-routing]`). See
     its
     [documentation](https://foca-plugins.readthedocs.io/en/latest/installing/).
-    The images of proTES contain the two routing plugins already (the
-    release train `foca-plugins`, pinned in `pyproject.toml`, with exact
-    versions and hashes in the repository's `uv.lock`, from which the image
-    build installs them hash-checked, as all dependencies of proTES, see
+    The images of proTES contain the two routing plugins already (for now
+    built from the commit of foca-plugins in `pyproject.toml`, as its releases
+    don't allow FOCA 0.21 yet, see
     [Dependencies](development.md#dependencies)); don't list them in
     `plugins.in`. The recipe works the same for plugins of any repository, and CI
     tests it with a test plugin (see [Testing the
@@ -175,7 +174,7 @@ wrong image fails at once, not with the first task.
 Rebuild the image for every release of proTES that you deploy, and resolve
 `plugins.in` against the new image again (see [Pinning
 plugins](#pinning-plugins)), as its packages change. Plugins declare the
-FOCA versions that they support (e.g., `foca>=0.20.0,<0.21`), so resolving
+FOCA versions that they support (e.g., `foca>=0.21.0,<0.22`), so resolving
 them against an image with another FOCA version fails.
 
 ## Local builds

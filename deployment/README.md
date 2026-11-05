@@ -240,7 +240,7 @@ Always`), so that moving tags such as `dev` deploy the latest image; set
 the nodes (e.g., with `kind load`). The images of MongoDB, RabbitMQ and
 Flower are pinned to patch versions and pulled only if missing.
 
-The chart needs images of its release, built with FOCA 0.20 (installed as a
+The chart needs images of its release, built with FOCA 0.21 (installed as a
 package, with the worker entry point `pro_tes.celery_worker`,
 `security.access_control.require_admin`, and the store settings of plugins,
 `plugins.available.<id>.store` and `config.plugins.defaults.store`, which
