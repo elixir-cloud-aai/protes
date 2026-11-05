@@ -2,11 +2,45 @@
 
 The [release notes](changelog.md) list the breaking changes of each release.
 This page describes how existing setups and data are affected, and what to
-change: first for upgrades from 0.4.0 ([To version
+change: first for upgrades from 0.5.0 ([To version
+0.6.0](#to-version-060)), then from 0.4.0 ([To version
 0.5.0](#to-version-050)), then for upgrades from 0.3.0 ([To version
 0.4.0](#to-version-040)), then for deployments from before 0.3.0, i.e.,
 images tagged by date, on FOCA 0.12 ([From versions before
 0.3.0](#from-versions-before-030)), which apply the steps of both parts.
+
+## To version 0.6.0
+
+**FOCA 0.21 (all deployments):** proTES now requires FOCA 0.21.0, on the FOCA
+0.21.0 image (see [FOCA's release
+notes](https://github.com/elixir-cloud-aai/foca/releases/tag/v0.21.0)). What this
+changes:
+
+- **Discovery:** FOCA reads `serviceId`, which Cloud Registry 1.0.0rc2 has in
+  `GET /verifications`, so TES instances are found with that version again.
+- **Configuration files:** `${...}` now references an environment variable, and
+  an unset variable or an invalid form stops the app. In your overlays, write
+  `$$` for a literal `$` in these two cases.
+- **Request identifiers:** responses have the header `X-Request-ID`. proTES now
+  generates the identifier and ignores the client's, also in the field
+  `request_id` of records. Behind a proxy that replaces or rejects clients'
+  values, set `server.request_id.trust_incoming`.
+- **Requests:** query parameters on operations without parameters, such as `GET
+  /service-info?x=1` or `POST /tasks?x=1`, now fail with `400 Bad Request`, which
+  may affect probes and clients that add a query string. So do unpaired surrogates
+  in JSON, and, if your overlays patch the specs, values that don't fit the
+  formats `date-time`, `date` or `uri`.
+- **Workers:** the Celery worker now stops on invalid access control settings, as
+  the app does. The chart and Docker Compose give both the same config; check
+  this if you run workers with an overlay of their own.
+- **Logging:** a `log` section naming filters or handlers that it doesn't configure
+  stops the app, instead of falling back to the default logging.
+- **MongoDB:** clients time out after 5 seconds when selecting a server and
+  connecting; set `db.client_options` if your database needs longer.
+- **Indexes:** documents that violate a unique index now stop the start with
+  FOCA's `IndexConflictError`, with another message.
+- **Plugins:** resolving plugins that cap `foca<0.21` against this image fails. Ask
+  their authors for a release.
 
 ## To version 0.5.0
 

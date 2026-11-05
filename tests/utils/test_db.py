@@ -300,7 +300,7 @@ def other_unique_index(
     ("collection", "error", "message"),
     [
         ("tasks", RuntimeError, "share 1 identifiers"),
-        ("others", ValueError, "conflicts with an existing index"),
+        ("others", ValueError, "stored documents violate it"),
     ],
 )
 def test_duplicate_keys_celery_worker(
@@ -368,7 +368,7 @@ def test_duplicate_other_keys(
 ) -> None:
     """Other unique indexes that fail fail the start with FOCA's error."""
     mongo_client[DB]["others"].insert_many([{"name": "a"}, {"name": "a"}])
-    with pytest.raises(ValueError, match="conflicts with an existing index"):
+    with pytest.raises(ValueError, match="stored documents violate it"):
         init_app()
 
 

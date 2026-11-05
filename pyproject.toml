@@ -113,13 +113,17 @@ dependencies = [
     "connexion>=2.15.1,<3.0.0",
     # FOCA minors are bumped by hand, together with the base image in the
     # `Dockerfile` (`.github/dependabot.yml`).
-    "foca>=0.20.0,<0.21",
+    "foca>=0.21.0,<0.22",
     # The routing plugins in the image: `generic.routing.random` (default
     # pipeline, `pro_tes/config.yaml`) and `tes.routing.distance` (opt-in,
-    # as it looks up addresses at third parties). The release train
-    # pins each plugin to an exact version, which `uv.lock` records with
-    # hashes; Dependabot bumps the train
-    "foca-plugins[generic-routing,tes-routing]==0.2.0",
+    # as it looks up addresses at third parties). At a commit of foca-plugins,
+    # as its releases cap `foca<0.21`, until one allows FOCA 0.21: then back to
+    # `foca-plugins[generic-routing,tes-routing]==<version>` alone, with hashes
+    # in `uv.lock`. The image builds them from the same commit (`Dockerfile`),
+    # and the release pin check flags them, so no release has them
+    "foca-plugins[generic-routing,tes-routing] @ git+https://github.com/elixir-cloud-aai/foca-plugins@8c5e0c2f70510575231e377d0fef6ce7c8ccb261#subdirectory=meta",
+    "foca-plugin-generic-routing-random @ git+https://github.com/elixir-cloud-aai/foca-plugins@8c5e0c2f70510575231e377d0fef6ce7c8ccb261#subdirectory=plugins/generic/routing/random",
+    "foca-plugin-tes-routing-distance @ git+https://github.com/elixir-cloud-aai/foca-plugins@8c5e0c2f70510575231e377d0fef6ce7c8ccb261#subdirectory=plugins/tes/routing/distance",
     "gunicorn>=26.2.0,<27",
     "py-tes>=1.1,<2",
     # Used directly (TES backends, identity provider); 2.33.0 fixes

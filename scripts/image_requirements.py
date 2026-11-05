@@ -12,7 +12,9 @@ commit>`, as set by setuptools-scm (e.g., `0.16.1.dev7+gdb6998cae`). The
 dependencies of FOCA stay locked and hashed. A locked FOCA release is kept,
 but the build fails unless the base image has exactly that release, so that
 the lock doesn't install another FOCA on top of it (e.g., revert an update
-of the base image): update the base image and the lock together.
+of the base image): update the base image and the lock together. Direct
+references to a commit of foca-plugins (temporary as well) are left out too:
+the `Dockerfile` builds their wheels from that commit.
 
 Usage: `python scripts/image_requirements.py <requirements>`, where
 `<requirements>` is the output of
@@ -39,6 +41,17 @@ FOCA_COMMIT = re.compile(
 FOCA = re.compile(r"\s*foca(?![A-Za-z0-9._-])", re.IGNORECASE)
 FOCA_LOCKED = re.compile(
     r"\s*foca\s*==\s*(?P<version>[^\s;\\\[\]]+)\s*\\?\s*", re.IGNORECASE
+)
+# A requirement of a distribution of foca-plugins that is a direct reference,
+# and one to a commit of its repository
+PLUGINS_REFERENCE = re.compile(
+    r"\s*foca-plugins?(-[a-z0-9-]+)?\s*(\[[^\]]*\])?\s*@", re.IGNORECASE
+)
+PLUGINS_COMMIT = re.compile(
+    r"\s*foca-plugins?(-[a-z0-9-]+)?\s*(\[[^\]]*\])?\s*@\s*"
+    r"git\+https://github\.com/elixir-cloud-aai/foca-plugins@[0-9a-f]{40}"
+    r"#subdirectory=[A-Za-z0-9/_.-]+\s*",
+    re.IGNORECASE,
 )
 # The abbreviated commit in the local part of a version set by setuptools-scm
 SCM_COMMIT = re.compile(r"\+g(?P<sha>[0-9a-f]{7,40})(\.|$)")
@@ -73,19 +86,27 @@ def image_requirements(requirements: str, installed: str) -> str:
         installed: Version of FOCA in the base image.
 
     Returns:
-        The requirements, without a direct reference to a FOCA commit (and
-        its continuation lines).
+        The requirements, without direct references to a commit of FOCA or
+        foca-plugins (and their continuation lines).
 
     Raises:
         ValueError: A direct reference of FOCA is not to a full commit SHA of
             FOCA's repository, another requirement of FOCA is not a plain
             locked release (`foca==<version>`, e.g., with a marker), or the
             base image has FOCA of another commit or another release than
-            the locked one (compared as written).
+            the locked one (compared as written), or a direct reference of
+            foca-plugins is not to a full commit SHA of its repository.
     """
     kept = []
     for entry in entries(requirements):
         requirement = entry[0]
+        if PLUGINS_REFERENCE.match(requirement):
+            if PLUGINS_COMMIT.fullmatch(requirement) is None:
+                raise ValueError(
+                    "foca-plugins must be pinned to a full commit SHA of its "
+                    f"repository: '{requirement.strip()}'"
+                )
+            continue
         if not FOCA.match(requirement):
             kept.extend(entry)
             continue

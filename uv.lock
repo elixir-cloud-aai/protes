@@ -912,7 +912,7 @@ wheels = [
 
 [[package]]
 name = "foca"
-version = "0.20.0"
+version = "0.21.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "addict" },
@@ -935,48 +935,36 @@ dependencies = [
     { name = "urllib3" },
     { name = "werkzeug" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f2/42/548c07b887f37e11ef6ecfc4c37e8950172f841e09dc3abef44295eacc53/foca-0.20.0.tar.gz", hash = "sha256:f5b1f46c91a2e2a015d74f85db67f1979f301490d8db48470fb431ebbc64fce9", size = 516650, upload-time = "2026-11-03T21:05:52.657Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7d/3c/30e645f663616c100307736259cfebcbbfd0e931ffce8d492de14042496a/foca-0.21.0.tar.gz", hash = "sha256:0b1187c5b4ef23bcb9cf9b24da841cd32df15378e3f7ddc9876f9b928127c650", size = 641321, upload-time = "2026-11-05T00:57:47.226Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b1/c4/66899bb8e7ca86953ad711845bea2c9d5b12da1eea3729dd282e0d7335ca/foca-0.20.0-py3-none-any.whl", hash = "sha256:b08c3e8303883e1b5985fb8c04571e46fde3c3d67548af0d55cb293530a07dd4", size = 282811, upload-time = "2026-11-03T21:05:50.891Z" },
+    { url = "https://files.pythonhosted.org/packages/81/f2/ea5d20b4c998c5a74193764078d0972585a8f473826070f8e44f4bd05460/foca-0.21.0-py3-none-any.whl", hash = "sha256:45d1653a6f7a3c8ec0e44c68e8d47d01897358b74b60d459ef4dc8d2e2a5d468", size = 338273, upload-time = "2026-11-05T00:57:45.513Z" },
 ]
 
 [[package]]
 name = "foca-plugin-generic-routing-random"
 version = "0.1.2"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/elixir-cloud-aai/foca-plugins?subdirectory=plugins%2Fgeneric%2Frouting%2Frandom&rev=8c5e0c2f70510575231e377d0fef6ce7c8ccb261#8c5e0c2f70510575231e377d0fef6ce7c8ccb261" }
 dependencies = [
     { name = "foca" },
     { name = "pydantic" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/33/21/eedb2af8736ba80518403b75a1a2d566e9bedd3eb08c20b88d314d14b54b/foca_plugin_generic_routing_random-0.1.2.tar.gz", hash = "sha256:2b76e06a8c883b06584775696015cad9e33ebf516f5438f7b0c6de05262139ba", size = 12126, upload-time = "2026-11-04T20:56:21.392Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/80/68/1d9c287f8ecd3692805d8231bd008d51172594dc203f6f900e97179df802/foca_plugin_generic_routing_random-0.1.2-py3-none-any.whl", hash = "sha256:6a86b4dd2ad8f495ac3eb67e03773ee3081fc6425661da852083883821098f79", size = 9758, upload-time = "2026-11-04T20:56:19.946Z" },
 ]
 
 [[package]]
 name = "foca-plugin-tes-routing-distance"
 version = "0.1.2"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/elixir-cloud-aai/foca-plugins?subdirectory=plugins%2Ftes%2Frouting%2Fdistance&rev=8c5e0c2f70510575231e377d0fef6ce7c8ccb261#8c5e0c2f70510575231e377d0fef6ce7c8ccb261" }
 dependencies = [
     { name = "foca" },
     { name = "maxminddb" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/34/99/22521a38e62fc88c76f93892e205e0572f1a5313356270c6b785f5b8ab60/foca_plugin_tes_routing_distance-0.1.2.tar.gz", hash = "sha256:08a7505e18e70b677ce343a7e2a1bc34593709067e168fde71e78ce55b1a149d", size = 37742, upload-time = "2026-11-04T20:56:12.305Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/07/66/80488e0552c1b621d6413941e244cf9421478fd9fbef961706efa8a2fc7a/foca_plugin_tes_routing_distance-0.1.2-py3-none-any.whl", hash = "sha256:aa161f3cf80e6b6a7c2afcbc5dabfbb6572a503bc93223b17c0ab518bdf12c6d", size = 25736, upload-time = "2026-11-04T20:56:11.188Z" },
-]
 
 [[package]]
 name = "foca-plugins"
 version = "0.2.0"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/elixir-cloud-aai/foca-plugins?subdirectory=meta&rev=8c5e0c2f70510575231e377d0fef6ce7c8ccb261#8c5e0c2f70510575231e377d0fef6ce7c8ccb261" }
 dependencies = [
     { name = "foca" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/fb/27/43641a66bb34d865577893bd5f302e6cf59c4146bae11027be4714629e74/foca_plugins-0.2.0.tar.gz", hash = "sha256:3fd851802976eedbb10bd24d50229c1ee9a07b626b871dc2f4e13141ba4f1bec", size = 6834, upload-time = "2026-11-04T21:01:21.932Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/02/cf/2d0a0c187f060810a8ba5935f9b830910604ac98588f499b8db279e8a0d5/foca_plugins-0.2.0-py3-none-any.whl", hash = "sha256:539989ae50c202de9712e87ddd6e20dc9be60fcfc2e5824429f102265552b767", size = 6179, upload-time = "2026-11-04T21:01:20.705Z" },
 ]
 
 [package.optional-dependencies]
@@ -1849,6 +1837,8 @@ source = { editable = "." }
 dependencies = [
     { name = "connexion" },
     { name = "foca" },
+    { name = "foca-plugin-generic-routing-random" },
+    { name = "foca-plugin-tes-routing-distance" },
     { name = "foca-plugins", extra = ["generic-routing", "tes-routing"] },
     { name = "gunicorn" },
     { name = "py-tes" },
@@ -1895,8 +1885,10 @@ requires-dist = [
     { name = "celery-types", marker = "extra == 'dev'", specifier = ">=0.20.0" },
     { name = "connexion", specifier = ">=2.15.1,<3.0.0" },
     { name = "coverage", marker = "extra == 'dev'", specifier = ">=7.16" },
-    { name = "foca", specifier = ">=0.20.0,<0.21" },
-    { name = "foca-plugins", extras = ["generic-routing", "tes-routing"], specifier = "==0.2.0" },
+    { name = "foca", specifier = ">=0.21.0,<0.22" },
+    { name = "foca-plugin-generic-routing-random", git = "https://github.com/elixir-cloud-aai/foca-plugins?subdirectory=plugins%2Fgeneric%2Frouting%2Frandom&rev=8c5e0c2f70510575231e377d0fef6ce7c8ccb261" },
+    { name = "foca-plugin-tes-routing-distance", git = "https://github.com/elixir-cloud-aai/foca-plugins?subdirectory=plugins%2Ftes%2Frouting%2Fdistance&rev=8c5e0c2f70510575231e377d0fef6ce7c8ccb261" },
+    { name = "foca-plugins", extras = ["generic-routing", "tes-routing"], git = "https://github.com/elixir-cloud-aai/foca-plugins?subdirectory=meta&rev=8c5e0c2f70510575231e377d0fef6ce7c8ccb261" },
     { name = "griffelib", marker = "extra == 'docs'", specifier = ">=2.4,<3" },
     { name = "gunicorn", specifier = ">=26.2.0,<27" },
     { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.6.1,<2" },

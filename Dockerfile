@@ -12,15 +12,7 @@ FROM ghcr.io/astral-sh/uv:0.13.6@sha256:af22a52f5eafef3d78e551599d405c02df61919d
 ## Pinned by digest, so that rebuilds (e.g., of a release) use the same base
 ## image; Dependabot updates the tag and digest together
 ## (`.github/dependabot.yml`)
-FROM elixircloud/foca:0.20.0-py3.13@sha256:292a0d62a811dced46baaccfb42eedf1391dfa11457883cb8e71710991fdf804 AS base
-## The pinned base image has a vulnerable apt (CVE-2026-109518; fixed by 3.0.4
-## in `trixie-security`), which the images of FOCA 0.21.0 and later have fixed:
-## can go with the move to one of them
-USER root
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends --only-upgrade apt libapt-pkg7.0 \
-  && rm -rf /var/lib/apt/lists/*
-USER 1000
+FROM elixircloud/foca:0.21.0-py3.13@sha256:ba79033cab60dd79419c2c44f90000f4fb9aa8d495ea09c2798a7348516bd84f AS base
 
 ##### BUILD #####
 ## Build the app's wheel, in a stage of its own, so that the image doesn't
@@ -51,11 +43,23 @@ RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
 ## workflows do); without it, the app reports version `0.0.0.dev0`
 COPY README.md LICENSE /tmp/src/
 COPY pro_tes /tmp/src/pro_tes
+## The wheels of foca-plugins, built the same way, from the commit of
+## `pyproject.toml`, as its releases don't allow this FOCA yet (the image has no
+## Git, and such requirements have no hashes; `scripts/image_requirements.py`
+## leaves them out, and `tests/test_image_requirements.py` checks that the
+## commits match). Installed with the app's wheel below; goes with the next
+## release of foca-plugins
+ADD https://github.com/elixir-cloud-aai/foca-plugins.git#8c5e0c2f70510575231e377d0fef6ce7c8ccb261 /tmp/foca-plugins
 ARG SETUPTOOLS_SCM_PRETEND_VERSION
 RUN --network=none --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
   export UV_NO_CACHE=1 UV_PYTHON_DOWNLOADS=never \
   && uv build --wheel --offline --no-build-isolation \
-    --python /tmp/build-env/bin/python --out-dir /tmp/dist /tmp/src
+    --python /tmp/build-env/bin/python --out-dir /tmp/dist /tmp/src \
+  && for plugin in meta plugins/generic/routing/random plugins/tes/routing/distance; do \
+    uv build --wheel --offline --no-build-isolation \
+      --python /tmp/build-env/bin/python --out-dir /tmp/dist \
+      "/tmp/foca-plugins/${plugin}"; \
+  done
 
 ##### IMAGE #####
 FROM base
@@ -75,7 +79,8 @@ LABEL org.opencontainers.image.authors="ELIXIR On-Cloud <cloud-service@elixir-eu
 LABEL org.opencontainers.image.vendor="ELIXIR On-Cloud"
 
 ## Install dependencies first, so that code changes do not reinstall them;
-## the FOCA image runs as non-root user. Only the locked ones are installed:
+## the FOCA image runs as non-root user. Only the locked ones are installed
+## (for now without foca-plugins, whose wheels come from the `build` stage):
 ## the runtime dependencies (`project.dependencies` of `pyproject.toml`; the
 ## export leaves out the extras, and `--no-dev` a `dev` dependency group) and
 ## all their own dependencies, at the exact versions of `uv.lock`, checked

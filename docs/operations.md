@@ -194,8 +194,8 @@ accepted by no TES instance) leave no task. With
 of rejected input is kept; see [Plugins](configuration.md#plugins)), their
 records go to the collection `failed_runs`, with the time (`failed_at`) and
 the error (`type`, `status`, `slug`), keyed by the run's random identifier
-(`run-<run ID>`), with the request identifier in the field `request_id` (the
-client's `X-Request-ID`, if valid). Clients can't replace records, but each
+(`run-<run ID>`), with the request identifier in the field `request_id` (a
+generated one, unless `server.request_id` trusts clients' `X-Request-ID`). Clients can't replace records, but each
 rejected request adds one. Look up a request by `request_id`, and add an
 index on it if you do that often. Requests refused before the pipeline started (e.g.,
 invalid tasks, loops, or invalid tags under `gateway.`) have no record, nor

@@ -211,9 +211,10 @@ and `RUN --network=none`.
 [Versioning and releases](#versioning-and-releases)) out of the export and
 fails the build unless the base image has the locked FOCA release (or FOCA
 of the pinned commit); `tests/test_image_build.py` checks that every install
-of the image build is hash-checked or offline. The only exception is the
-build argument `PLUGINS` for local builds, empty for the published images
-(see [Plugin images](plugin-images.md#local-builds)). The image contains
+of the image build is hash-checked or offline. The exceptions are the build
+argument `PLUGINS` for local builds, empty for the published images (see [Plugin
+images](plugin-images.md#local-builds)), and, temporarily, the wheels of
+foca-plugins, built from a pinned commit (see below). The image contains
 no pip and no uv: the FOCA base image has no pip, and uv is mounted from a
 stage pinned by digest into the steps that use it, which the smoke test of
 CI checks.
@@ -234,6 +235,16 @@ image build fails unless the base image has exactly the locked FOCA, so FOCA
 is updated by hand, in the base image and the lock together
 (`uv lock --upgrade-package foca`); Dependabot ignores new FOCA versions in
 both entries, but still proposes digest updates of the base image's tag.
+
+The releases of foca-plugins cap `foca<0.21`, so `pyproject.toml` temporarily
+pins `foca-plugins` and its two routing plugins to a commit of `dev`. These
+requirements have no hashes and the image has no Git, so the `build` stage of the
+`Dockerfile` fetches the same commit and builds their wheels
+(`tests/test_image_requirements.py` checks that the commits match), and
+`scripts/image_requirements.py` leaves them out. The release pin check fails on
+them, so a release of proTES needs a release of foca-plugins first: then go back
+to `foca-plugins[generic-routing,tes-routing]==<version>`, and remove the `ADD`,
+the build of those wheels and that handling.
 
 ## Helm chart
 
