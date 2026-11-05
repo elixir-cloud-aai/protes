@@ -91,6 +91,28 @@ tests/integration/check.sh "${API}" http://tesp-api:8080 /v1
 docker compose down
 ```
 
+CI's `Integration (TESK)` job, which the gate doesn't need either, runs the same
+check against [TESK](https://github.com/elixir-cloud-aai/TESK), from its chart
+in a throwaway [k3s](https://k3s.io/) cluster in a privileged container
+(`tests/integration/tesk/`). The chart comes from the commit of TESK's repository
+that `install.sh` pins (or `TESK_COMMIT`), the images from `values.yaml`. As for
+the other backends, the check uses inputs with `content` only, and TESK has
+neither FTP nor S3 there. `COMBINED_LOGS=true` tells the check that TESK writes
+both streams of an executor to `stdout`. To run it locally (with curl, jq, git
+and Helm):
+
+```bash
+export COMPOSE_FILE=docker-compose.yaml:tests/integration/compose.yaml:tests/integration/tesk/compose.yaml
+export SETUPTOOLS_SCM_PRETEND_VERSION=0.0.0+compose
+docker compose up -d --wait k3s
+tests/integration/tesk/install.sh
+docker compose up -d --build --wait protes protes-worker fake-tes
+COMBINED_LOGS=true tests/integration/check.sh \
+  http://localhost:8080/ga4gh/tes/v1 http://k3s:31567 /ga4gh/tes/v1
+tests/integration/tesk/stopped.sh
+docker compose down --volumes
+```
+
 To try changes in the running app, rebuild it with
 `docker compose up --build -d`. `python -m pro_tes.app` runs the app with
 Flask's development server instead of Gunicorn (see
@@ -558,7 +580,9 @@ and passes without the secrets; in all forks, Codecov upload errors don't
 fail CI. The weekly scan also uploads a full report, findings without a fix
 included, as the workflow artifact `trivy-report-release-image` of each run
 (`trivy-report.json` and `trivy-report.txt`, a table; Actions tab, "Scan");
-it is not uploaded to code scanning. Accepted findings are left out of all
+it is not uploaded to code scanning. If no FOCA image has the fix of a system
+package yet, or moving to one has to wait, upgrade that package in the stage
+`base` of the `Dockerfile`, until then. Accepted findings are left out of all
 results. To accept a finding (e.g., if it doesn't affect the app), add it to
 `.trivyignore.yaml` with the affected package versions (`purls`), the reason
 (`statement`) and an expiry date (`expired_at`), after which the scans fail

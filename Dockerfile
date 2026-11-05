@@ -13,6 +13,14 @@ FROM ghcr.io/astral-sh/uv:0.13.6@sha256:af22a52f5eafef3d78e551599d405c02df61919d
 ## image; Dependabot updates the tag and digest together
 ## (`.github/dependabot.yml`)
 FROM elixircloud/foca:0.20.0-py3.13@sha256:292a0d62a811dced46baaccfb42eedf1391dfa11457883cb8e71710991fdf804 AS base
+## The pinned base image has a vulnerable apt (CVE-2026-109518; fixed by 3.0.4
+## in `trixie-security`), which the images of FOCA 0.21.0 and later have fixed:
+## can go with the move to one of them
+USER root
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends --only-upgrade apt libapt-pkg7.0 \
+  && rm -rf /var/lib/apt/lists/*
+USER 1000
 
 ##### BUILD #####
 ## Build the app's wheel, in a stage of its own, so that the image doesn't

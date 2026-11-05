@@ -7,7 +7,10 @@
 # and docker compose (with `COMPOSE_FILE` set as for `up`, to get a token and to
 # ask the backend). Tasks run real containers, whose images the backend pulls,
 # so the waits are long. TESP-API reports tasks as canceled, but leaves their
-# containers running, so the executors end by themselves.
+# containers running, so the executors end by themselves. TESK has one log per
+# executor, with both streams, in `stdout`: set `COMBINED_LOGS=true` for it, so
+# that what an executor writes to its standard error is looked for there. TESK
+# reports tasks as canceled at once; `tesk/stopped.sh` checks their executors.
 set -euo pipefail
 
 api="$1"
@@ -15,6 +18,11 @@ backend="$2"
 backend_api="$2$3"
 # Seconds to wait for a state (a pull and a start may take long)
 final_wait="${FINAL_WAIT:-180}"
+# Where a backend reports the standard error of an executor
+stderr_field=stderr
+if [ "${COMBINED_LOGS:-false}" = true ]; then
+  stderr_field=stdout
+fi
 image='alpine:3.22@sha256:2e0b81d60597f449baa56dc25d355367869d2dca4cd57e866f1e2b52af3eb55f'
 body="$(mktemp)"
 trap 'rm -f "${body}"' EXIT
@@ -29,7 +37,7 @@ auth="$(docker compose exec -T fake-tes python -c \
 # JSON response matches a jq filter
 check() {
   local method="$1" path="$2" status="$3" filter="$4" data="${5:-}" actual
-  local args=(--silent --show-error --output "${body}"
+  local args=(--silent --show-error --max-time 60 --output "${body}"
     --write-out '%{http_code}' -X "${method}"
     --header 'Accept: application/json'
     --header "Authorization: Bearer ${auth}")
@@ -98,7 +106,7 @@ check GET "/tasks/${done}?view=FULL" 200 "
   and .logs[0].logs[0].exit_code == 0
   and (.logs[0].logs[0].stdout | contains(\"integration-input\"))
   and (.logs[0].logs[0].stdout | contains(\"integration-stdout\"))
-  and (.logs[0].logs[0].stderr | contains(\"integration-stderr\"))"
+  and (.logs[0].logs[0].${stderr_field} | contains(\"integration-stderr\"))"
 check GET "/tasks/${done}?view=BASIC" 200 '
   .state == "COMPLETE"
   and (.logs[0].logs[0] | has("stdout") or has("stderr") | not)
@@ -113,9 +121,9 @@ echo "${backend}: a task that fails"
 create 'echo integration-failure >&2; exit 3'
 failed="${id}"
 await_state "${failed}" EXECUTOR_ERROR
-check GET "/tasks/${failed}?view=FULL" 200 '
+check GET "/tasks/${failed}?view=FULL" 200 "
   .logs[0].logs[0].exit_code == 3
-  and (.logs[0].logs[0].stderr | contains("integration-failure"))'
+  and (.logs[0].logs[0].${stderr_field} | contains(\"integration-failure\"))"
 
 echo "${backend}: a task that is canceled while it runs"
 create 'echo integration-started; sleep 300'

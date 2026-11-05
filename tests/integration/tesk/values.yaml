@@ -1,0 +1,17 @@
+# Values of TESK's chart for the integration test: at a node port of the k3s
+# container, without ingress, FTP or S3. Tasks get the cluster's default
+# storage class (k3s: local-path). Mode `noauth` is the chart's default
+tesk:
+    image: docker.io/elixircloud/tesk-api:1.1.0@sha256:28e0bca49e82e8ed378ae115a8b126dc3d355752ced6d05dd9f61960f691116c
+    # Not the chart's default, v0.10.2: its taskmaster ends every task in
+    # `SYSTEM_ERROR` on Kubernetes 1.31 or later, as it reads only the first
+    # condition of a job (`SuccessCriteriaMet` there, not `Complete`)
+    taskmaster_image_version: v0.10.6@sha256:706065abb72bd7a5a670f88ce4d55394f286f619cc28e7e017fe3d9f40ef2141
+    taskmaster_filer_image_version: v0.10.6@sha256:49eb27201e178bccedd1818bcacc6fa6f754df9057e1f6a1ed58b3376c919b10
+service:
+    type: NodePort
+    node_port: 31567
+ftp:
+    classic_ftp_secret: ""
+ingress:
+    rules: false

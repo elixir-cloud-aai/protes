@@ -72,7 +72,7 @@ check POST /tasks 200 '.id | length > 0' \
 id="$(jq -r .id "${body}")"
 await_state "${id}" COMPLETE
 check GET "/tasks/${id}?view=FULL" 200 \
-  '.name == "smoke" and .tags["gateway.backend"] == "http://fake-tes-10:8080" and .logs[0].metadata.forwarded_to == null and .inputs[0].streamable == true and .outputs[0].path_prefix == "/"'
+  '.name == "smoke" and .tags["gateway.backend"] == "http://fake-tes-10:8080" and .logs[0].metadata.forwarded_to == null and .inputs[0].streamable == true and .outputs[0].path_prefix == "/" and (.logs[0].logs[0].stdout | contains("fake stderr")) and (.logs[0].logs[0] | has("stderr") | not)'
 # Tasks that TES 1.0 can't express go to the backend of TES 1.1, which serves
 # a field that the TES specification doesn't have: it is tracked all the same,
 # and the field isn't served

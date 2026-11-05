@@ -14,12 +14,17 @@ Run it with `python fake_tes.py [port]` (default 8080); it depends on the
 standard library, PyJWT and cryptography (dependencies of FOCA).
 
 With the environment variable `FAKE_TES_VERSION=1.0`, it serves TES 1.0 as TESK
-does: it reports the version so (artifact `TES`, version `1.0` as a number),
-rejects tasks with fields of TES 1.1 (`400`), and requires no access tokens, as
-those of the identity provider of another instance can't be checked. Tasks with
-the tag `fake.hold` run until they are canceled. Otherwise, it serves tasks with
-a field that the TES specification doesn't have (`author`, as TESP does): TES
-instances may add such fields.
+does (compared with tesk-api 1.1.0, see `tests/integration/tesk/`): it reports
+the version so (artifact `tes`, version `1.0`), rejects tasks with fields of TES
+1.1 (`400`), serves only the identifier and state in the view `MINIMAL`, one log
+per executor without `stderr`, refuses to cancel tasks that have finished (`400`) or
+that it doesn't have (`404`), and requires no access tokens, as those of the
+identity provider of another instance can't be checked. It is stricter than
+TESK in one way, so that the smoke test sees whether proTES adapts tasks:
+TESK accepts `backend_parameters` and files without `type`, and ignores the
+former. Tasks with the tag `fake.hold` run until they are canceled. Otherwise, it
+serves tasks with a field that the TES specification doesn't have (`author`, as
+TESP does): TES instances may add such fields.
 
 With the environment variable `FAKE_TES_BASE_PATH=/v1`, it serves the TES API at
 that path only, and requires no access tokens, as TESP does (behind no rewriting
@@ -65,8 +70,8 @@ SERVICE_INFO = {
     "name": "Fake TES",
     "type": {
         "group": "org.ga4gh",
-        "artifact": "TES" if TES_10 else "tes",
-        "version": 1.0 if TES_10 else "1.1.0",
+        "artifact": "tes",
+        "version": "1.0" if TES_10 else "1.1.0",
     },
     "organization": {"name": "Example Organization", "url": "https://example.org"},
     "version": "1.0.0",
@@ -76,6 +81,14 @@ FULL_LOGS = [
     {
         "logs": [{"exit_code": 0, "stdout": "fake stdout", "stderr": "fake stderr"}],
         "outputs": [],
+        "system_logs": ["fake system log"],
+    }
+]
+# The same as TESK has them, with both streams of an executor in `stdout`
+FULL_LOGS_10 = [
+    {
+        "logs": [{"exit_code": 0, "stdout": "fake stdout\nfake stderr\n"}],
+        "metadata": {"USER_ID": "anonymousUser"},
         "system_logs": ["fake system log"],
     }
 ]
@@ -90,7 +103,7 @@ def fields_of_tes_11(task: dict[str, Any]) -> list[str]:
         task: Task.
 
     Returns:
-        The names of the fields, as TESK rejects them.
+        The names of the fields, as this fake rejects them.
     """
     items: list[tuple[dict[str, Any], tuple[str, ...]]]
     items = [(item, ("ignore_error",)) for item in task.get("executors") or []]
@@ -268,8 +281,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send(HTTPStatus.NOT_FOUND, {"msg": "not found"})
             return
         view = parse_qs(urlsplit(self.path).query).get("view", ["MINIMAL"])[0]
-        if view == "FULL":
-            task = {**task, "logs": FULL_LOGS}
+        if TES_10 and view == "MINIMAL":
+            task = {"id": task["id"], "state": task["state"]}
+        elif view == "FULL":
+            task = {**task, "logs": FULL_LOGS_10 if TES_10 else FULL_LOGS}
         self._send(HTTPStatus.OK, task)
 
     def do_POST(self) -> None:
@@ -308,9 +323,15 @@ class Handler(BaseHTTPRequestHandler):
             task_id = path.removeprefix(f"{BASE_PATH}/tasks/").removesuffix(":cancel")
             with LOCK:
                 task = TASKS.get(task_id)
-                if task is not None and task["state"] == "RUNNING":
+                state = task["state"] if task is not None else None
+                if task is not None and state == "RUNNING":
                     task["state"] = "CANCELED"
-            self._send(HTTPStatus.OK, {})
+            if TES_10 and state is None:
+                self._send(HTTPStatus.NOT_FOUND, {"message": "not found"})
+            elif TES_10 and state != "RUNNING":
+                self._send(HTTPStatus.BAD_REQUEST, {"message": "no running pods"})
+            else:
+                self._send(HTTPStatus.OK, {})
             return
         self._send(HTTPStatus.NOT_FOUND, {"msg": "not found"})
 
