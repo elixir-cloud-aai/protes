@@ -1,7 +1,17 @@
 version: 2
-# Every entry targets `dev` (`target-branch`), which takes all pull
-# requests whatever the default branch is (`main` only moves forward to
-# releases); security updates always target the default branch, though
+# Every entry targets `dev` (`target-branch`, set on the group for entries of
+# a multi-ecosystem group), which takes all pull requests whatever the default
+# branch is (`main` only moves forward to releases); security updates always
+# target the default branch, though
+multi-ecosystem-groups:
+  # The images of MongoDB, RabbitMQ and Flower, which Docker Compose
+  # (`docker-compose.yaml`) and the Helm chart (`deployment/values.yaml`) pin
+  # to the same references (`tests/test_repository.py` checks), in one pull
+  # request for both files
+  service-images:
+    schedule:
+      interval: monthly
+    target-branch: dev
 updates:
   # Dependencies in `pyproject.toml` and the lock (`uv.lock`), updated
   # together; CI's checks and the image build (`Dockerfile`) install the
@@ -64,6 +74,20 @@ updates:
     groups:
       docker:
         patterns: ["*"]
+  # Images of the services in `docker-compose.yaml` (see the group)
+  - package-ecosystem: docker-compose
+    directory: /
+    patterns: ["*"]
+    multi-ecosystem-group: service-images
+  # Images in the chart's values (`deployment/values.yaml`; see the group)
+  - package-ecosystem: helm
+    directory: /deployment
+    patterns: ["*"]
+    multi-ecosystem-group: service-images
+    ignore:
+      # FOCA's library chart is bumped by hand, with `Chart.lock` and
+      # `charts.sha256` (see "Helm chart" in `docs/development.md`)
+      - dependency-name: foca-common
   # Hook revisions in `.pre-commit-config.yaml`
   - package-ecosystem: pre-commit
     directory: /
