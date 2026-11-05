@@ -580,7 +580,9 @@ and passes without the secrets; in all forks, Codecov upload errors don't
 fail CI. The weekly scan also uploads a full report, findings without a fix
 included, as the workflow artifact `trivy-report-release-image` of each run
 (`trivy-report.json` and `trivy-report.txt`, a table; Actions tab, "Scan");
-it is not uploaded to code scanning. Accepted findings are left out of all
+it is not uploaded to code scanning. If no FOCA image has the fix of a system
+package yet, or moving to one has to wait, upgrade that package in the stage
+`base` of the `Dockerfile`, until then. Accepted findings are left out of all
 results. To accept a finding (e.g., if it doesn't affect the app), add it to
 `.trivyignore.yaml` with the affected package versions (`purls`), the reason
 (`statement`) and an expiry date (`expired_at`), after which the scans fail

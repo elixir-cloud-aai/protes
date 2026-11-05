@@ -93,6 +93,18 @@ def test_tesk_job() -> None:
     assert any(backend in run for run in runs if "check.sh" in run)
 
 
+def test_base_stage_upgrades_apt() -> None:
+    """All later stages get the fixed `apt`, with the pinned base image."""
+    text = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    base_stage = text.partition(" AS base\n")[2].partition(" AS build\n")[0]
+    assert re.search(
+        r"apt-get install -y --no-install-recommends --only-upgrade "
+        r"apt libapt-pkg7\.0\b",
+        base_stage,
+    )
+    assert "\nUSER 1000\n" in base_stage
+
+
 def test_verification_signer_workflow() -> None:
     """The verification commands name the workflow that signed the release.
 
