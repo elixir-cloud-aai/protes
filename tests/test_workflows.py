@@ -20,7 +20,7 @@ WORKFLOWS = ROOT / ".github" / "workflows"
 GATE = "passed"
 # Jobs that don't block pull requests, until they have proven reliable: they
 # depend on the registries and packages of third parties
-NOT_IN_GATE = {"integration"}
+NOT_IN_GATE = {"integration", "integration-tesk"}
 # The last release signed by the release workflow before its file was renamed
 # from `release.yaml` to `release.yml`
 LAST_RELEASE_YAML = Version("0.3.0")
@@ -71,6 +71,26 @@ def test_gate_needs_all_jobs() -> None:
     assert gate["name"] == "CI passed"
     assert gate["if"] == "always()"
     assert sorted(gate["needs"]) == sorted(set(jobs) - {GATE} - NOT_IN_GATE)
+
+
+def test_tesk_job() -> None:
+    """The TESK job serves what the config of proTES and the check expect.
+
+    The job starts the cluster before TESK and proTES, and the node port of TESK
+    is the port that proTES relays to and that the job checks.
+    """
+    job = _load(WORKFLOWS / "ci.yml")["jobs"]["integration-tesk"]
+    tesk = ROOT / "tests" / "integration" / "tesk"
+    assert "tests/integration/tesk/compose.yaml" in job["env"]["COMPOSE_FILE"]
+    runs = [step["run"] for step in job["steps"] if "run" in step]
+    install = next(i for i, run in enumerate(runs) if "tesk/install.sh" in run)
+    assert any("k3s" in run for run in runs[:install])
+    assert any("protes-worker" in run for run in runs[install + 1 :])
+    values = yaml.safe_load((tesk / "values.yaml").read_text())
+    backend = f"http://k3s:{values['service']['node_port']}"
+    config = yaml.safe_load((tesk / "config.yaml").read_text())
+    assert [item["url"] for item in config["custom"]["tes"]["backends"]] == [backend]
+    assert any(backend in run for run in runs if "check.sh" in run)
 
 
 def test_verification_signer_workflow() -> None:

@@ -218,8 +218,9 @@ To tell the versions in a registry apart, use one entry per version, with its
 
 What was seen when running these versions through proTES; other versions may
 behave differently. CI runs tasks on real instances of Funnel 0.11.14 and
-TESP-API 0.2.0 with Pulsar (see [Testing](development.md)). TESK and a deployment
-on Rahti, CSC's OpenShift, were not tested.
+TESP-API 0.2.0 with Pulsar, and of TESK with tesk-api 1.1.0 (see
+[Testing](development.md)). A deployment on Rahti, CSC's OpenShift, was not
+tested.
 
 [TESP-API](https://github.com/CESNET/tesp-api) 0.2.0:
 
@@ -238,8 +239,25 @@ on Rahti, CSC's OpenShift, were not tested.
 
 - The executor log of a canceled task shows `exit_code: 0`.
 
-[TESK](https://github.com/elixir-cloud-aai/TESK): not tested against a real
-instance yet.
+[TESK](https://github.com/elixir-cloud-aai/TESK) with tesk-api 1.1.0, the
+taskmaster and filer v0.10.6, on Kubernetes 1.36:
+
+- With the default of its chart, the taskmaster v0.10.2, all tasks end in
+  `SYSTEM_ERROR` on Kubernetes 1.31 or later (system log: `Cancelling taskmaster:
+  Got status Error`). Set `tesk.taskmaster_image_version` and
+  `tesk.taskmaster_filer_image_version` to v0.10.6, or later, in the chart's
+  values.
+- It reports TES 1.0, so don't set the label `tes.version` to `"1.1"`. It rejects
+  fields it doesn't know with `400 Bad Request`, which proTES avoids by adapting
+  tasks (see [TES versions](tes-versions.md)).
+- An executor's log has both streams in `stdout`, and no `stderr`.
+- It refuses to cancel a task that has finished, with `400 Bad Request`; proTES
+  answers such cancels with `200 OK`, and leaves the task as it is.
+- A task canceled before its taskmaster's pod runs is reported as `CANCELED`,
+  but keeps running: its executor runs to its end, using its resources. A task
+  canceled later stops. Neither proTES nor clients can tell from the state.
+- Tasks with inputs, outputs or volumes need a default storage class, or the
+  chart's value `storageClass`.
 
 In general, if no selected TES instance accepts a task, clients get a generic
 `503 Service Unavailable`, without the reason of the refusal.

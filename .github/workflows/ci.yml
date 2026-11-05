@@ -445,6 +445,51 @@ jobs:
       - name: Show logs
         if: failure()
         run: docker compose logs
+  # The same check against TESK (`tests/integration/tesk/`), from its chart in a
+  # throwaway k3s cluster in a privileged container, so that the node port is in
+  # the Compose network. Not needed by the gate, like `integration`; a job of its
+  # own, as it needs another config and may fail for other reasons
+  integration-tesk:
+    name: Integration (TESK)
+    if: ${{ github.event.action != 'edited' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      COMPOSE_FILE: docker-compose.yaml:tests/integration/compose.yaml:tests/integration/tesk/compose.yaml
+      API: http://localhost:8080/ga4gh/tes/v1
+      # Passed to the image build by Docker Compose, as for published images
+      SETUPTOOLS_SCM_PRETEND_VERSION: 0.0.0+compose
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # As in `chart`
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.22.1
+      - name: Start cluster
+        run: docker compose up -d --wait --wait-timeout 300 k3s
+      - name: Install TESK
+        run: tests/integration/tesk/install.sh
+      - name: Start app
+        run: docker compose up -d --build --wait --wait-timeout 300 protes protes-worker fake-tes
+      - name: Check TESK
+        env:
+          COMBINED_LOGS: "true"
+        run: tests/integration/check.sh "${API}" http://k3s:31567 /ga4gh/tes/v1
+      - name: Check canceled executors
+        run: tests/integration/tesk/stopped.sh
+      - name: Show logs
+        if: failure()
+        run: |
+          docker compose logs
+          docker compose exec -T k3s kubectl get all,pvc --namespace tesk
+          docker compose exec -T k3s kubectl get events --namespace tesk --sort-by=.lastTimestamp
+          docker compose exec -T k3s kubectl logs --namespace tesk deployment/tesk-api --tail=100
+          docker compose exec -T k3s kubectl logs --namespace tesk --selector job-type=taskmaster --prefix --tail=100
+          docker compose exec -T k3s kubectl logs --namespace tesk --selector job-type=executor --prefix --tail=100
   # On pushes that publish (`PUBLISH`), builds the image once and pushes it
   # by digest only (untagged, with SBOM and provenance attestations,
   # `mode=max`), for `scan` to scan and `publish` to sign and tag, as in

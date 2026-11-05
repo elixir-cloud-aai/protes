@@ -1142,9 +1142,9 @@ def client_for(backend: Backend, timeout: int | None = None) -> TesClient:
 def reported_version(service_info: Any) -> TesVersion | None:
     """Get the TES version that a service info reports, read leniently.
 
-    Backends report it in different ways (e.g., TESK: artifact `TES`, version
-    `1.0`, also as a number; Poiesis: `v1.1.0`), or report none (Funnel 0.11.14:
-    an empty `type.version`).
+    Backends report it in different ways (e.g., tesk-api 1.1.0: artifact `tes`,
+    version `1.0`, while TESK's chart has it as artifact `TES` and a number;
+    Poiesis: `v1.1.0`), or report none (Funnel 0.11.14: an empty `type.version`).
 
     Args:
         service_info: Service info, as served by a backend.

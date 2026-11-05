@@ -1,0 +1,31 @@
+# Compose override for the integration test against TESK (job `integration-tesk` of
+# `.github/workflows/ci.yml`), on top of `../compose.yaml`, of which only the
+# identity provider `fake-tes` is used: proTES relays tasks to TESK, in a
+# throwaway k3s cluster in a container of its own. See `install.sh`.
+
+services:
+
+    protes:
+        environment:
+            FOCA_CONFIG_OVERLAY: /integration/tesk/config.yaml
+
+    protes-worker:
+        environment:
+            FOCA_CONFIG_OVERLAY: /integration/tesk/config.yaml
+
+    # Privileged, as it runs containers, with `/run` as k3s expects it. The
+    # cluster's state is in the anonymous volume of the image: `docker compose
+    # down --volumes` removes it. TESK is served at a node port (`values.yaml`)
+    k3s:
+        image: rancher/k3s:v1.36.6-k3s1@sha256:88d3fac10eb4a429d3c5275f4868fe4b13620f6bbca5bdb5dca0627ac76ae2a0
+        command: ["server", "--disable", "traefik", "--disable", "metrics-server"]
+        privileged: true
+        tmpfs:
+            - /run
+            - /var/run
+        healthcheck:
+            test: ["CMD", "kubectl", "get", "serviceaccount", "default"]
+            interval: 5s
+            timeout: 5s
+            retries: 24
+            start_period: 10s
