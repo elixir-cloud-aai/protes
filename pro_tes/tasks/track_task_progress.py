@@ -745,6 +745,8 @@ def task__resume_tracking() -> int:
         "task.state": {"$in": States.UNFINISHED},
         "tes_endpoint.host": {"$nin": ["", None]},
         "tes_endpoint.task_id": {"$type": "string"},
+        # also if a worker of an earlier version stored a state over the end
+        POLL_FIELD: {"$ne": TRACKING_ENDED},
         "$or": [
             {POLLED_AT_FIELD: {"$exists": False}},
             {POLLED_AT_FIELD: {"$lt": stale}},

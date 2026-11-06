@@ -1713,7 +1713,9 @@ def test_tracking_resumed(
     Each gets a new poll, which takes over from the stored one and ends the
     chain of polls that tracked it before (e.g., of a worker that was lost);
     tasks polled recently, finished tasks, tasks that weren't forwarded and
-    tasks without remote identifier (of earlier versions) are not resumed.
+    tasks without remote identifier (of earlier versions) and tasks whose
+    tracking ended (e.g., stored as running again by a worker of an earlier
+    version after their cancel timed out) are not resumed.
     """
     endpoint = {"host": ARGS["remote_host"], "base_path": "", "task_id": "remote-1"}
     stale = time.time() - 3 * polling.max_wait - 1
@@ -1733,6 +1735,13 @@ def test_tracking_resumed(
         tes_endpoint={"host": ARGS["remote_host"], "base_path": ""},
     )
     insert_task(tasks, "no-host", tes_endpoint={**endpoint, "host": ""})
+    insert_task(
+        tasks,
+        "ended",
+        state="RUNNING",
+        tes_endpoint=endpoint,
+        tracking={"poll": track_task_progress.TRACKING_ENDED, "polled_at": stale},
+    )
     assert track_task_progress.task__resume_tracking.run() == 1
     (call,) = scheduled
     assert call["kwargs"] == {
