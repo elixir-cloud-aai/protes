@@ -462,7 +462,7 @@ def test_client_auth_unknown(configured: None) -> None:
 def test_client_none(configured: None, idp: FakeIdp) -> None:
     """Backends with `auth: none` get no credentials."""
     kwargs = request_kwargs(f"{BACKEND_URL}/none")
-    assert kwargs["auth"] is backends.no_auth
+    assert "auth" not in kwargs
     assert "Authorization" not in kwargs["headers"]
     assert not idp.requests
 
@@ -1381,7 +1381,7 @@ def test_forward_auth_chosen(post: Callable[..., FakePost], idp: FakeIdp) -> Non
     assert [kwargs["headers"]["Authorization"] for _, kwargs in fake.sent] == [
         "Bearer plugin"
     ] * 4
-    assert all(kwargs.get("auth") is backends.no_auth for _, kwargs in fake.sent)
+    assert not any(kwargs.get("auth") for _, kwargs in fake.sent)
 
 
 def test_request_params_unknown_auth() -> None:

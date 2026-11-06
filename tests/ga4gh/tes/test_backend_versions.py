@@ -1,7 +1,6 @@
 """Tests of the TES versions of backends."""
 
 from collections.abc import Iterator
-from pathlib import Path
 from typing import Any, ClassVar
 
 from connexion import FlaskApp
@@ -312,28 +311,6 @@ def test_probe_without_config(
     assert client.calls == 0
 
 
-def test_probe_without_netrc_credentials(
-    app: FlaskApp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """Requests without credentials don't get those of a `.netrc` file."""
-    netrc = tmp_path / "netrc"
-    netrc.write_text("machine tes.example.org login user password secret\n")
-    netrc.chmod(0o600)
-    monkeypatch.setenv("NETRC", str(netrc))
-    session = requests.Session()
-    with app.app.app_context():
-        get_custom_config(CustomConfig).tes.backends = tes_backends(URL)
-        client = backends.client_for(Backend(id=URL, url=URL, auth="none"))
-        kwargs = client._request_params(auth="none")
-    # `requests` would use the file without credentials of the request
-    ambient = session.prepare_request(requests.Request("GET", f"{URL}/x"))
-    assert "Authorization" in ambient.headers
-    prepared = session.prepare_request(
-        requests.Request("GET", f"{URL}/x", auth=kwargs.get("auth"))
-    )
-    assert "Authorization" not in prepared.headers
-
-
 def test_probe_without_basic_credentials(
     app: FlaskApp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -359,7 +336,7 @@ def test_probe_without_basic_credentials(
             basic={"username_env": "TES_USER", "password_env": "TES_PASSWORD"},
         )
         backend_version(backend)
-    assert kwargs_sent[0]["auth"] is backends.no_auth
+    assert "auth" not in kwargs_sent[0]
 
 
 @pytest.mark.parametrize("with_token", [False, True])

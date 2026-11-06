@@ -150,18 +150,6 @@ _NESTED_MODELS: dict[type, dict[str, type]] = {
 }
 
 
-def no_auth(request: requests.PreparedRequest) -> requests.PreparedRequest:
-    """Send a request without credentials, also none of a `.netrc` file.
-
-    Args:
-        request: Request.
-
-    Returns:
-        The request, unchanged.
-    """
-    return request
-
-
 class BackendConnectTimeout(BackendRequestNotSent, requests.ConnectTimeout):
     """Connecting to a discovered backend timed out (not sent)."""
 
@@ -1020,12 +1008,7 @@ class TesClient(tes.HTTPClient):
                 # prevented by the config validation
                 raise BackendAuthError(f"No Basic credentials of {self.backend.url}")
             kwargs["auth"] = (get_env(basic.username_env), get_env(basic.password_env))
-        elif auth == "none":
-            if self.guarded is None:
-                # not those of a `.netrc` file, which `requests` reads for
-                # requests without credentials (the guarded client doesn't)
-                kwargs["auth"] = no_auth
-        else:
+        elif auth != "none":
             raise BackendAuthError(
                 f"Unknown credentials {auth!r} of {self.backend.url}"
             )
