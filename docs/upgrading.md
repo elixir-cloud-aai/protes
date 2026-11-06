@@ -70,8 +70,9 @@ each cancel (`tracking.canceled_at`); for tasks that are `CANCELING` when you
 upgrade (or that instances of the earlier version cancel during a rolling
 upgrade), the time counts from when the upgraded workers next resume the
 tracking of tasks (on their start, then every `polling.max_wait` seconds; see
-[Task tracking](operations.md#task-tracking)). Raise the setting for TES instances that take longer
-to cancel tasks (see [Tasks](configuration.md#tasks)).
+[Task tracking](operations.md#task-tracking)). Raise the setting for TES
+instances that take longer to cancel tasks (see
+[Tasks](configuration.md#tasks)).
 
 ## To version 0.5.0
 
