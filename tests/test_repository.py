@@ -4,6 +4,8 @@ from pathlib import Path
 import re
 import subprocess
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[1]
 
 # Values specific to an identity provider or deployment, which the
@@ -116,3 +118,24 @@ def test_no_personal_email_addresses() -> None:
         if match[0].lower() not in ADDRESSES and not DOMAINS.fullmatch(match[1])
     ]
     assert found == []
+
+
+# Services of Docker Compose (`docker-compose.yaml`) that run the image of a
+# component of the Helm chart (`deployment/values.yaml`), by component
+COMPOSE_CHART_IMAGES = {"mongodb": "mongodb", "rabbitmq": "broker", "flower": "flower"}
+
+
+def test_compose_images_of_chart() -> None:
+    """Docker Compose runs the images of the chart, with the same references.
+
+    Both pin the versions of MongoDB, RabbitMQ and Flower; bumps of one must
+    also change the other.
+    """
+    services = yaml.safe_load((ROOT / "docker-compose.yaml").read_text())["services"]
+    values = yaml.safe_load((ROOT / "deployment" / "values.yaml").read_text())
+    assert {
+        service: services[service]["image"] for service in COMPOSE_CHART_IMAGES
+    } == {
+        service: values[component]["image"]
+        for service, component in COMPOSE_CHART_IMAGES.items()
+    }

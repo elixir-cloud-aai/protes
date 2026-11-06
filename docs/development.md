@@ -277,7 +277,8 @@ it; `helm dependency build deployment` downloads it into
 `deployment/charts/` (ignored by Git), and the release workflow packages it
 with the chart. CI and the release workflow check the downloaded archive
 against its digest in `deployment/charts.sha256`, as OCI tags can be pushed
-again. Dependabot doesn't update it: to bump it, change the version in
+again. Dependabot doesn't update it (the `helm` entry of
+`.github/dependabot.yml` ignores it): to bump it, change the version in
 `Chart.yaml`, run `helm dependency update deployment` (which rewrites
 `Chart.lock`), update `deployment/charts.sha256` (`cd deployment &&
 sha256sum charts/foca-common-X.Y.Z.tgz > charts.sha256`, after checking the
@@ -288,6 +289,14 @@ requires), add values it introduces to `deployment/values.yaml`, update
 the links to the library's docs in `deployment/README.md` (the tests check
 that they point to the pinned version, `chart-vX.Y.Z`), and check the
 rendered chart with the tests and `helm template`.
+
+The chart's values pin the images of MongoDB, RabbitMQ and Flower
+(`mongodb.image`, `broker.image`, `flower.image`), and Docker Compose
+(`docker-compose.yaml`) runs the same image references, as
+`tests/test_repository.py` checks; bump them in both files together.
+Dependabot does so in one pull request (multi-ecosystem group
+`service-images`, with the `docker-compose` and `helm` entries of
+`.github/dependabot.yml`).
 
 ## TES specification
 

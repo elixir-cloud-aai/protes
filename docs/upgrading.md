@@ -42,6 +42,16 @@ changes:
 - **Plugins:** resolving plugins that cap `foca<0.21` against this image fails. Ask
   their authors for a release.
 
+**Docker Compose:** the Compose setup now runs the images of the Helm chart,
+pinned to patch versions: RabbitMQ 4.3.7 (was the latest 4.1) and MongoDB
+7.0.45 (was the latest 7.0). The database is not affected. Before upgrading,
+stop submitting tasks and let the queue drain: if RabbitMQ doesn't start on
+the data of 4.1 (`docker compose logs rabbitmq`), stop the stack and remove
+RabbitMQ's volume, which holds the queued messages and is recreated with the
+credentials on the next start (`docker compose down`, then `docker volume rm
+<project>_rabbitmq-data`, with the Compose project's name, by default the name
+of the directory).
+
 ## To version 0.5.0
 
 **Routing default:** 0.4.0 routed tasks by the distance to their input data

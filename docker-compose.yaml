@@ -3,7 +3,10 @@
 # the Celery worker, MongoDB and RabbitMQ; `--profile monitoring` adds Flower.
 # Only proTES (and Flower) are published, on the host's loopback interface;
 # to publish them on other interfaces, or to reach MongoDB or RabbitMQ from
-# the host, override `ports` in a `docker-compose.override.yaml`
+# the host, override `ports` in a `docker-compose.override.yaml`.
+# MongoDB, RabbitMQ and Flower run the images of the Helm chart (`image` of
+# `mongodb`, `broker` and `flower` in `deployment/values.yaml`), with the same
+# references, as `tests/test_repository.py` checks: bump them in both files
 
 # Settings shared by the app and the Celery worker (same image)
 x-protes: &protes
@@ -81,7 +84,7 @@ services:
             start_period: 30s
 
     rabbitmq:
-        image: rabbitmq:4.1
+        image: docker.io/library/rabbitmq:4.3.7
         hostname: rabbitmq
         restart: unless-stopped
         environment:
@@ -89,6 +92,9 @@ services:
             RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-protes}
         volumes:
             - rabbitmq-data:/var/lib/rabbitmq
+        configs:
+            - source: rabbitmq-foca
+              target: /etc/rabbitmq/conf.d/90-foca.conf
         healthcheck:
             test: ["CMD", "rabbitmq-diagnostics", "--quiet", "ping"]
             interval: 5s
@@ -99,7 +105,7 @@ services:
     mongodb:
         # MongoDB 8.0 refuses to start on Linux kernels 6.19 to 7.0.13
         # (https://jira.mongodb.org/browse/SERVER-121912)
-        image: mongo:7.0
+        image: docker.io/library/mongo:7.0.45
         restart: unless-stopped
         volumes:
             - mongodb-data:/data/db
@@ -114,7 +120,7 @@ services:
     # shows task arguments; requires basic authentication, set on the host as
     # `FLOWER_BASIC_AUTH=<user>:<password>`
     flower:
-        image: mher/flower:2.0.1
+        image: docker.io/mher/flower:2.0.1
         profiles: [monitoring]
         # Not restarted endlessly if `FLOWER_BASIC_AUTH` is unset
         restart: on-failure:3
@@ -133,6 +139,14 @@ services:
             FLOWER_BASIC_AUTH: ${FLOWER_BASIC_AUTH:-}
         ports:
             - "127.0.0.1:5555:5555"
+
+# Config of RabbitMQ, as the chart's (FOCA's library chart): Celery declares
+# transient non-exclusive queues (e.g., for the rpc:// result backend and
+# remote control), which RabbitMQ 4.3 denies by default
+configs:
+    rabbitmq-foca:
+        content: |
+            deprecated_features.permit.transient_nonexcl_queues = true
 
 # Named volumes; data of earlier versions of this file, in
 # `PROTES_DATA_DIR` (default `../data/pro_tes`), is not migrated
