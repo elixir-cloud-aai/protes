@@ -132,8 +132,8 @@ TES_VERSION_LABEL = "tes.version"
 PROBE_TIMEOUT = 5
 # Seconds until the service info of a backend is read again after a failure
 PROBE_RETRY = 60
-# Status codes of backends that refuse requests without (valid) credentials
-REFUSED = frozenset({HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN})
+# Status codes of backends that refuse anonymous reads of their service info
+PROBE_REFUSED = frozenset({HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN})
 # Models of py-tes that hold objects: the model of each such field
 _NESTED_MODELS: dict[type, dict[str, type]] = {
     tes.Task: {
@@ -1300,18 +1300,22 @@ class BackendVersions:
                 else None
             )
         except Exception as exc:
-            response = exc.response if isinstance(exc, requests.HTTPError) else None
-            status = None if response is None else response.status_code
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            hint = ""
+            if status in PROBE_REFUSED and not with_token:
+                # the setting doesn't give backends without credentials any
+                setting = ""
+                if backend.auth != "none":
+                    setting = ", or `custom.tes.probe_with_token`"
+                hint = (
+                    f" (status {status} without credentials: set its label"
+                    f" `{TES_VERSION_LABEL}`{setting})"
+                )
             logger.warning(
                 "Service info of TES backend %s not available: %s%s",
                 backend.url,
                 type(exc).__name__,
-                (
-                    f" (status {status} without credentials: set its label"
-                    f" `{TES_VERSION_LABEL}`, or `custom.tes.probe_with_token`)"
-                    if status in REFUSED and not with_token
-                    else ""
-                ),
+                hint,
             )
             # as it is now: other threads may have read it meanwhile
             previous = self._cache.get(backend.url)

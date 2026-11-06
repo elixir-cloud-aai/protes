@@ -196,7 +196,8 @@ reports no version that proTES supports, or never answered, counts as TES 1.0
 (with a warning in the logs); one that stops answering keeps the version read
 before.
 
-The service info is read for the first task with fields that TES 1.0 can't
+The service info is read when a task needs the version: for the TES instance
+that a task goes to, and, for the first task with fields that TES 1.0 can't
 express, from all TES instances of the list without a label, also from those
 that the task doesn't go to. The service info is public in the TES
 specification, so proTES reads it anonymously by default
@@ -211,7 +212,8 @@ credentials). With it, every TES instance without a label gets proTES' token
 when such a task arrives, also those that the task isn't routed to (e.g.,
 all verified TES instances of a registry; see [Credentials of TES
 instances](access-control.md#credentials-of-tes-instances)), and failing to
-get a token makes them count as TES 1.0 until the next read.
+get a token makes those whose version wasn't read before count as TES 1.0
+until the next read.
 
 **Set the label for Funnel:** Funnel implements TES 1.1, but version 0.11.14
 reports an empty `type.version` (`""`), so it would count as TES 1.0:

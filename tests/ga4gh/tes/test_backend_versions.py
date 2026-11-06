@@ -264,14 +264,15 @@ def test_probe_refused_hints(
     client: type[FakeClient], caplog: pytest.LogCaptureFixture, status: int
 ) -> None:
     """Refused anonymous probes name the label and the setting."""
+    backend = Backend(id=URL, url=URL, auth="client_credentials")
     client.served = refused(status)
-    assert backend_version(BACKEND) == V10
+    assert backend_version(backend) == V10
     assert "tes.version" in caplog.text
     assert "probe_with_token" in caplog.text
     caplog.clear()
     get_custom_config(CustomConfig).tes.probe_with_token = True
     backend_versions.clear()
-    backend_version(BACKEND)
+    backend_version(backend)
     assert "probe_with_token" not in caplog.text
 
 
@@ -285,29 +286,80 @@ def test_probe_failure_no_hint(
     assert "probe_with_token" not in caplog.text
 
 
-def test_service_info_anonymous(app: FlaskApp, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Service infos can be read without the credentials of the backend."""
+@pytest.mark.usefixtures("app_context")
+def test_probe_refused_no_credentials(
+    client: type[FakeClient], caplog: pytest.LogCaptureFixture
+) -> None:
+    """Backends without credentials are only hinted at the label."""
+    client.served = refused(403)
+    backend_version(Backend(id=URL, url=URL, auth="none"))
+    assert "tes.version" in caplog.text
+    assert "probe_with_token" not in caplog.text
+
+
+def test_probe_without_basic_credentials(
+    app: FlaskApp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Anonymous probes send no Basic credentials either."""
+    kwargs_sent: list[dict[str, Any]] = []
+
+    def request(method: str, url: str, timeout: Any, **kwargs: Any) -> Any:
+        """Record the arguments; serve a service info."""
+        kwargs_sent.append(kwargs)
+        response = requests.Response()
+        response.status_code = 200
+        response._content = b"{}"
+        return response
+
+    monkeypatch.setattr(requests, "request", request)
+    monkeypatch.setenv("TES_USER", "protes")
+    monkeypatch.setenv("TES_PASSWORD", "secret")
+    backend = Backend(id=URL, url=URL, auth="basic")
+    with app.app.app_context():
+        get_custom_config(CustomConfig).tes.backends = tes_backends(
+            URL,
+            auth="basic",
+            basic={"username_env": "TES_USER", "password_env": "TES_PASSWORD"},
+        )
+        backend_version(backend)
+    assert "auth" not in kwargs_sent[0]
+
+
+@pytest.mark.parametrize("with_token", [False, True])
+def test_probe_credentials_sent(
+    app: FlaskApp, monkeypatch: pytest.MonkeyPatch, with_token: bool
+) -> None:
+    """Probes send proTES' token only with `probe_with_token`."""
     headers: list[Any] = []
+    tokens: list[str] = []
 
     def request(method: str, url: str, timeout: Any, **kwargs: Any) -> Any:
         """Record the headers; serve a service info."""
         headers.append(kwargs["headers"])
         response = requests.Response()
         response.status_code = 200
-        response._content = b"{}"
+        response._content = b'{"type": {"group": "org.ga4gh", "artifact": "tes"}}'
         return response
 
-    def no_token(*_: Any, **__: Any) -> str:
-        """Fail: no token may be fetched."""
-        raise AssertionError("token fetched")
+    def get_token(*_: Any, **__: Any) -> str:
+        """Record that a token was fetched."""
+        tokens.append("token-1")
+        return "token-1"
 
     monkeypatch.setattr(requests, "request", request)
-    monkeypatch.setattr(backends.token_provider, "get_token", no_token)
+    monkeypatch.setattr(backends.token_provider, "get_token", get_token)
     backend = Backend(id=URL, url=URL, auth="client_credentials")
     with app.app.app_context():
-        get_custom_config(CustomConfig).tes.backends = tes_backends(URL)
-        backends.client_for(backend).service_info(auth="none")
-    assert "Authorization" not in headers[0]
+        config = get_custom_config(CustomConfig).tes
+        config.backends = tes_backends(URL)
+        config.probe_with_token = with_token
+        backend_version(backend)
+    sent = headers[0]
+    if with_token:
+        assert sent["Authorization"] == "Bearer token-1"
+    else:
+        assert "Authorization" not in sent
+        assert not tokens
 
 
 def test_service_info_request(app: FlaskApp, monkeypatch: pytest.MonkeyPatch) -> None:
