@@ -61,6 +61,21 @@ in the logs. Set their label `tes.version`, or set
 as before, which sends proTES' token also to TES instances that tasks
 aren't routed to (see [TES versions](configuration.md#tes-versions)).
 
+**Tasks being canceled:** a task that is still `CANCELING`
+`custom.controllers.post_task.polling.max_cancel_time` seconds after its cancel
+(default 3600) is now set to `SYSTEM_ERROR` and no longer tracked, with a
+warning in the logs of the Celery worker; before, it was polled until its TES
+instance reported a final state, possibly forever. proTES now stores the time of
+each cancel (`tracking.canceled_at`); for tasks that are `CANCELING` when you
+upgrade (or that instances of the earlier version cancel during a rolling
+upgrade), the time counts from when the upgraded workers next resume the
+tracking of tasks (on their start, then every `polling.max_wait` seconds; see
+[Task tracking](operations.md#task-tracking)). If a worker of the earlier
+version stores another state over `SYSTEM_ERROR` during a rolling upgrade,
+the upgraded workers set it back then. Raise the setting for TES
+instances that take longer to cancel tasks (see
+[Tasks](configuration.md#tasks)).
+
 ## To version 0.5.0
 
 **Routing default:** 0.4.0 routed tasks by the distance to their input data

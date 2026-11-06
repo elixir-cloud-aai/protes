@@ -246,6 +246,10 @@ custom:
         wait: 3
         attempts: 100
         max_wait: 600
+        # Seconds after a cancel at which a task still `CANCELING` (its backend
+        # reported no final state) is set to `SYSTEM_ERROR` and no longer
+        # tracked, with a warning; it may still run at its backend
+        max_cancel_time: 3600
       # Tasks with credentials in the URLs of inputs or outputs
       # (`https://user:password@host/...`) are rejected (`reject`), or the
       # credentials are removed (`strip`); they are never stored or forwarded

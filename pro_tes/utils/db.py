@@ -269,6 +269,7 @@ class DbDocumentConnector:
         self,
         state: str = "UNKNOWN",
         if_state: str | Sequence[str] | None = None,
+        fields: Mapping[str, Any] | None = None,
     ) -> bool:
         """Update task status.
 
@@ -276,6 +277,8 @@ class DbDocumentConnector:
             state: New task status; one of `pro_tes.ga4gh.tes.models.TesState`.
             if_state: Update the status only if it is this one, or one of
                 these (atomically); in any case if `None`.
+            fields: Other fields of the document to set with the status (by
+                dotted path), e.g., the time of a cancel.
 
         Returns:
             Whether the status was updated.
@@ -294,7 +297,7 @@ class DbDocumentConnector:
             filter_dict["task.state"] = {"$in": list(if_state)}
         document = self.collection.find_one_and_update(
             filter_dict,
-            {"$set": {"task.state": state}},
+            {"$set": {**(fields or {}), "task.state": state}},
         )
         if document is None:
             return False

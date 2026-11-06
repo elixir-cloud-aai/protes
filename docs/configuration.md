@@ -448,7 +448,14 @@ plugins:
   never make a task fail, as it may still be running (see [Task
   tracking](operations.md#task-tracking)). `wait` and `max_wait` must be
   below 1800 seconds, RabbitMQ's default acknowledgement timeout
-  (`consumer_timeout`), as scheduled polls are acknowledged when they run;
+  (`consumer_timeout`), as scheduled polls are acknowledged when they run.
+  `max_cancel_time` (default 3600, at most 31536000, i.e., a year) is the
+  number of seconds after a cancel at which a task still being canceled
+  (`CANCELING`: its TES instance reported neither a final state nor that it
+  no longer has the task) is set to `SYSTEM_ERROR`, no longer tracked, and
+  logged with a warning, e.g., if its TES instance was decommissioned or keeps
+  failing; the task may still run there. The next poll after that time ends
+  it, so with failing polls, up to `max_wait` seconds later;
 - `post_task.url_credentials`: what happens to tasks with credentials in the
   URLs of their inputs or outputs (`https://user:password@host/...`): they
   are rejected with `400 Bad Request` (`reject`, the default), or the

@@ -55,6 +55,14 @@ POLLED_AT_FIELD = "tracking.polled_at"
 # Field of stored tasks with the number of consecutive failed polls, which
 # resumed polls continue from
 FAILURES_FIELD = "tracking.failures"
+# Field of stored tasks with the time (seconds since the epoch) at which they
+# were canceled, after which their tracking gives up (`max_cancel_time`)
+CANCELED_AT_FIELD = "tracking.canceled_at"
+# Identifier of the poll of tasks whose tracking ended without a final state
+# of their backend (`SYSTEM_ERROR`): no poll claims it, and polls running
+# meanwhile (e.g., another delivery of the same poll) store no unfinished
+# state over it (`_store_state`), so that the task is never resumed
+TRACKING_ENDED = "ended"
 # Tasks not polled for this many times `polling.max_wait` are resumed by
 # `task__resume_tracking`, which runs every `polling.max_wait` seconds
 STALE_FACTOR = 3
@@ -178,13 +186,16 @@ def _store_state(
             `CANCELED` of tasks stored by earlier versions) is kept: backends
             cancel tasks asynchronously, and may report them as running (or
             be unreachable) for a while; also if the task is canceled while
-            it is polled.
+            it is polled. Neither is a task whose tracking ended meanwhile
+            (cf. :py:func:`_cancel_timed_out`), e.g., by another delivery of
+            the poll.
     """
     query: dict[str, Any] = {"worker_id": worker_id}
     if keep_canceled:
         query["task.state"] = {
             "$nin": [TesState.CANCELED.value, TesState.CANCELING.value]
         }
+        query[POLL_FIELD] = {"$ne": TRACKING_ENDED}
     result = collection.update_one(query, {"$set": {"task.state": state}})
     if result.modified_count:
         logger.info("[%s] %s", worker_id, state)
@@ -459,6 +470,50 @@ def _deleted_after_cancel(
     return True
 
 
+def _cancel_timed_out(collection: Collection[dict[str, Any]], worker_id: str) -> bool:
+    """End the tracking of a task still being canceled after `max_cancel_time`.
+
+    That is, of a task in state `CANCELING` that was canceled more than
+    `polling.max_cancel_time` seconds ago, e.g., at a backend that was
+    decommissioned, keeps failing, or keeps reporting the task as running: its
+    state is set to `SYSTEM_ERROR`, as it may still run at its backend, and no
+    poll claims it any longer (also not a poll delivered again).
+
+    Args:
+        collection: Database collection of the tasks.
+        worker_id: Worker identifier of the task.
+
+    Returns:
+        Whether the tracking of the task ended.
+    """
+    max_cancel_time = get_custom_config(
+        CustomConfig
+    ).controllers.post_task.polling.max_cancel_time
+    result = collection.update_one(
+        {
+            "worker_id": worker_id,
+            "task.state": TesState.CANCELING.value,
+            CANCELED_AT_FIELD: {"$lt": time.time() - max_cancel_time},
+        },
+        {
+            "$set": {
+                "task.state": TesState.SYSTEM_ERROR.value,
+                POLL_FIELD: TRACKING_ENDED,
+            }
+        },
+    )
+    if not result.modified_count:
+        return False
+    logger.warning(
+        "[%s] %s: not canceled within %d seconds (`max_cancel_time`); no longer"
+        " tracked, it may still run at its backend",
+        worker_id,
+        TesState.SYSTEM_ERROR.value,
+        max_cancel_time,
+    )
+    return True
+
+
 def _poll(kwargs: dict[str, Any], redelivered: bool = False) -> None:
     """Poll a task at its backend once, and schedule the next poll.
 
@@ -491,7 +546,9 @@ def _poll(kwargs: dict[str, Any], redelivered: bool = False) -> None:
         # retried by the Celery task; not a failed poll
         raise
     except Exception as exc:
-        if _deleted_after_cancel(collection=collection, worker_id=worker_id, exc=exc):
+        if _deleted_after_cancel(
+            collection=collection, worker_id=worker_id, exc=exc
+        ) or _cancel_timed_out(collection=collection, worker_id=worker_id):
             return
         # also if the backend is no longer configured or discovered (for the
         # time being), as the task may still run there
@@ -525,6 +582,10 @@ def _poll(kwargs: dict[str, Any], redelivered: bool = False) -> None:
 
     stored = db_client.get_document(projection={"_id": False, "task.state": True})
     if response.state not in States.FINISHED:
+        if stored.task.state == TesState.CANCELING.value and _cancel_timed_out(
+            collection=collection, worker_id=worker_id
+        ):
+            return
         if response.state != stored.task.state:
             _store_state(
                 collection=collection,
@@ -588,10 +649,12 @@ def task__track_task_progress(
     (the task may still run at its backend), and polls back off (see
     :py:func:`backoff`) until the backend answers again. A task being canceled
     stays `CANCELING` meanwhile, unless its backend answers that it no longer
-    has the task (`404`): then it is `CANCELED`, and tracking ends. Polls that fail
-    because MongoDB is unavailable are retried, with the same arguments,
-    after up to `polling.max_wait` seconds, until it is available again;
-    polls that fail because the broker is unavailable go back to it.
+    has the task (`404`): then it is `CANCELED`, and tracking ends; after
+    `polling.max_cancel_time` seconds, it is `SYSTEM_ERROR`, and tracking ends
+    too. Polls that fail because MongoDB is unavailable are retried, with the
+    same arguments, after up to `polling.max_wait` seconds, until it is
+    available again; polls that fail because the broker is unavailable go back
+    to it.
 
     proTES authenticates at the TES service as configured for it (see
     :py:mod:`pro_tes.ga4gh.tes.backends`), with fresh credentials for each
@@ -667,7 +730,8 @@ def task__resume_tracking() -> int:
     over from the stored one, so that a chain that still tracks the task
     ends. Run when a worker starts, and then periodically (cf.
     :py:func:`resume_tracking_on_start`); idempotent. Tasks whose creation
-    was cut off are set to `SYSTEM_ERROR` first (cf. :py:func:`_fail_cut_off`).
+    was cut off are set to `SYSTEM_ERROR` first (cf. :py:func:`_fail_cut_off`),
+    as are unfinished tasks whose tracking ended (cf. :py:func:`_fail_ended`).
 
     Returns:
         Number of tasks whose tracking is resumed.
@@ -677,10 +741,15 @@ def task__resume_tracking() -> int:
     stale = time.time() - STALE_FACTOR * max(polling.max_wait, polling.wait)
     collection = get_collection(TASK_DB, TASK_COLLECTION)
     _fail_cut_off(collection=collection, max_create_time=post_task.max_create_time)
+    _stamp_earlier_cancels(collection=collection)
+    _fail_ended(collection=collection)
     query = {
         "task.state": {"$in": States.UNFINISHED},
         "tes_endpoint.host": {"$nin": ["", None]},
         "tes_endpoint.task_id": {"$type": "string"},
+        # also if a worker of an earlier version stored a state over the end
+        # since
+        POLL_FIELD: {"$ne": TRACKING_ENDED},
         "$or": [
             {POLLED_AT_FIELD: {"$exists": False}},
             {POLLED_AT_FIELD: {"$lt": stale}},
@@ -713,6 +782,47 @@ def task__resume_tracking() -> int:
         resumed += 1
     logger.info("Resumed the tracking of %d unfinished tasks", resumed)
     return resumed
+
+
+def _stamp_earlier_cancels(collection: Collection[dict[str, Any]]) -> None:
+    """Store a time of cancel for `CANCELING` tasks without one.
+
+    They have none if versions before 0.6.0 canceled them (during a rolling
+    upgrade, instances of the app of an earlier version may still cancel
+    tasks, so this runs with each resume, not only once), or if a poll
+    stored `CANCELING` (as reported by their TES instance) before the
+    cancel did, so that the cancel kept that state. `polling.max_cancel_time`
+    then counts from now.
+
+    Args:
+        collection: Database collection of the tasks.
+    """
+    collection.update_many(
+        {"task.state": TesState.CANCELING.value, CANCELED_AT_FIELD: {"$exists": False}},
+        {"$set": {CANCELED_AT_FIELD: time.time()}},
+    )
+
+
+def _fail_ended(collection: Collection[dict[str, Any]]) -> None:
+    """Set unfinished tasks whose tracking ended to `SYSTEM_ERROR` again.
+
+    Tracking ends with `SYSTEM_ERROR` (cf. :py:func:`_cancel_timed_out`); a
+    worker of a version before 0.6.0 may still store an unfinished state
+    over it during a rolling upgrade, and the task may then be canceled
+    again. No poll tracks such tasks.
+
+    Args:
+        collection: Database collection of the tasks.
+    """
+    result = collection.update_many(
+        {"task.state": {"$in": States.UNFINISHED}, POLL_FIELD: TRACKING_ENDED},
+        {"$set": {"task.state": TesState.SYSTEM_ERROR.value}},
+    )
+    if result.modified_count:
+        logger.warning(
+            "Set %d tasks whose tracking ended to SYSTEM_ERROR again",
+            result.modified_count,
+        )
 
 
 def _fail_cut_off(collection: Collection[dict[str, Any]], max_create_time: int) -> int:
