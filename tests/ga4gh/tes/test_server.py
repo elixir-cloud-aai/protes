@@ -2124,7 +2124,7 @@ def test_task_no_answer_from_backends(
 ) -> None:
     """Clients can retry if backends didn't answer: `503`, not `400`."""
 
-    def service_info(self: FakeBackend) -> dict[str, Any]:
+    def service_info(self: FakeBackend, auth: str | None = None) -> dict[str, Any]:
         """Fail as if the backend was down."""
         raise requests.ConnectionError("down")
 

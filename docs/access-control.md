@@ -297,7 +297,11 @@ instances that you configure yourself, or set `auth: none` for registry
 entries whose TES instances don't need the token of proTES. On startup,
 proTES logs which TES instances get its token (`TES backends with access
 tokens of proTES: ...`), with the registries whose verified TES instances
-get it (`those verified by registry <url>`). Tasks are only
+get it (`those verified by registry <url>`). Service infos, read for the TES
+versions of TES instances, get no credentials, unless
+`custom.tes.probe_with_token` is set, which sends the token also to TES
+instances that a task isn't routed to (see [TES
+versions](configuration.md#tes-versions)). Tasks are only
 forwarded to configured TES instances, and to those discovered in the
 service registries of `custom.tes.backends` (only verified ones, see
 [Discovery in a service

@@ -340,6 +340,11 @@ custom:
     # info, is cached per process; backends can state it instead, with the
     # label `tes.version` (see `docs/configuration.md`)
     version_cache_ttl: 3600
+    # Whether service infos are read (for TES versions) with the credentials
+    # of each backend; by default without any, as they are public. If true,
+    # backends without the label `tes.version` get proTES' token also when
+    # tasks don't go to them (see `docs/configuration.md`)
+    probe_with_token: false
   # Whether the service info, which anyone can read, lists the TES backends
   # (`backends`); its field `gateway` stays either way
   service_info:

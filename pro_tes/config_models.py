@@ -366,6 +366,11 @@ class Tes(ConfigModel):
             read timeout of a reverse proxy in front of proTES.
         version_cache_ttl: Seconds that the TES version of a backend, as read
             from its service info, is cached (per process).
+        probe_with_token: Whether the service info of a backend is read for
+            its TES version with the credentials of the backend (e.g.,
+            proTES' access token); by default, it is read without
+            credentials, as service infos are public, so that backends that
+            tasks don't go to don't get them.
 
     Attributes:
         backends: TES backends that tasks may be forwarded to, in order.
@@ -376,6 +381,8 @@ class Tes(ConfigModel):
         timeout: Timeout of requests to TES backends, in seconds.
         version_cache_ttl: Seconds that the TES version of a backend, as read
             from its service info, is cached (per process).
+        probe_with_token: Whether the service info of a backend is read for
+            its TES version with the credentials of the backend.
     """
 
     backends: BackendListConfig = BackendListConfig([])
@@ -383,6 +390,7 @@ class Tes(ConfigModel):
     client_credentials: ClientCredentials = ClientCredentials()
     timeout: PositiveInt = 15
     version_cache_ttl: PositiveInt = 3600
+    probe_with_token: bool = False
 
     @field_validator("backends", mode="before")
     @classmethod
