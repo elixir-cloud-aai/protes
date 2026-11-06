@@ -342,10 +342,12 @@ custom:
     timeout: 15
     # Seconds that the TES version of a backend, as read from its service
     # info, is cached per process; backends can state it instead, with the
-    # label `tes.version` (see `docs/configuration.md`)
+    # label `tes.version` (see `docs/configuration.md`); also the API path of
+    # each discovered backend, as found at its URL
     version_cache_ttl: 3600
-    # Whether service infos are read (for TES versions) with the credentials
-    # of each backend; by default without any, as they are public. If true,
+    # Whether service infos are read (for TES versions and the API paths of
+    # discovered backends) with the credentials of each backend; by default
+    # without any, as they are public. If true,
     # backends without the label `tes.version` get proTES' token also when
     # tasks don't go to them (see `docs/configuration.md`)
     probe_with_token: false

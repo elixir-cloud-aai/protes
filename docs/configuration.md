@@ -176,9 +176,29 @@ tasks (see [TES versions](tes-versions.md#fields-that-tes-instances-add)).
 Plugins always see the path of the API of proTES (`/ga4gh/tes/v1/tasks` in
 outbound requests, which they can't change): proTES applies `api_path` when it
 sends the request, and [task provenance](operations.md#task-provenance) doesn't
-show it. Service registries list URLs only, so discovered TES
-instances always use the default API path, unless the same URL is also listed
-as an entry of its own, whose settings win.
+show it.
+
+Service registries list the URL of each TES instance, not its API path, so
+proTES takes the URL that the registry lists as the base of the TES API of
+a discovered TES instance: if `GET <url>/service-info` answers with the
+service info of a TES service (`type.group` `org.ga4gh`, `type.artifact`
+`tes`), the TES API is at the URL itself (e.g., TESP listed as
+`https://tesp.example.org/v1`). Otherwise (e.g., `404`, or another service
+info), proTES appends the default API path. FOCA removes the default API
+path from the URLs that registries list, so for a TES instance listed as
+`https://tes.example.org/ga4gh/tes/v1`, proTES first tries
+`https://tes.example.org/service-info`, then uses the default path.
+
+The service info is read as for [TES versions](#tes-versions): without
+credentials unless `custom.tes.probe_with_token` is set, and cached per
+process for `custom.tes.version_cache_ttl` seconds. A TES instance that
+refuses anonymous reads at its URL (`401` or `403`) gets the default path,
+with a hint in the logs. While the service info can't be read (e.g., the
+TES instance doesn't answer, or answers with a server error), no request is
+sent to the TES instance, and nothing is cached: tasks go to other TES
+instances, and tracking tries again with its next poll. A URL that is also
+listed as an entry of its own uses the settings of that entry, including
+its `api_path`.
 
 ### TES versions
 
@@ -186,7 +206,8 @@ proTES serves TES 1.1, and relays tasks to TES instances of TES 1.0 and 1.1
 (see [TES versions](tes-versions.md)). It needs to know which one each TES
 instance implements: the label `tes.version` of its entry (`"1.0"` or `"1.1"`;
 other versions make the app refuse to start) wins; otherwise, proTES reads
-`GET <url>/ga4gh/tes/v1/service-info` (or below its `api_path`), without
+`GET <url>/ga4gh/tes/v1/service-info` (or below its `api_path`, or that
+found for a discovered TES instance; see [API paths](#api-paths)), without
 credentials (see below), with timeouts of 5 seconds (to connect and to
 answer), and caches the result per process for
 `custom.tes.version_cache_ttl` seconds (default: 3600; failures for 60
@@ -346,7 +367,8 @@ following hold:
 - its URL is a valid `https` URL without user info (`url_schemes` of the
   entry applies to the registry only); the URL is normalized, and the API
   path `/ga4gh/tes/v1`, which registries list as part of the URL, is
-  removed;
+  removed (proTES then finds the API path of the TES instance at that URL;
+  see [API paths](#api-paths));
 - its host has public addresses only: hosts with private, loopback,
   link-local or other special-purpose addresses (e.g., `10.0.0.1`,
   `localhost`, `169.254.169.254`) are rejected, unless

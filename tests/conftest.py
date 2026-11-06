@@ -43,7 +43,7 @@ from pymongo import MongoClient, uri_parser
 import pytest
 
 from pro_tes.app import init_app
-from pro_tes.ga4gh.tes.backends import backend_versions
+from pro_tes.ga4gh.tes.backends import api_paths, backend_versions
 
 # Database of the tasks (`db.dbs` of `config.yaml`)
 DB = "taskStore"
@@ -227,9 +227,11 @@ def no_network(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setattr(socket, "getaddrinfo", _no_address_info)
     clear_caches()
     backend_versions.clear()
+    api_paths.clear()
     yield
     clear_caches()
     backend_versions.clear()
+    api_paths.clear()
 
 
 def _check_no_db(client: MongoClient[dict[str, Any]]) -> None:

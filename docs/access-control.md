@@ -298,7 +298,8 @@ entries whose TES instances don't need the token of proTES. On startup,
 proTES logs which TES instances get its token (`TES backends with access
 tokens of proTES: ...`), with the registries whose verified TES instances
 get it (`those verified by registry <url>`). Service infos, read for the TES
-versions of TES instances, get no credentials, unless
+versions of TES instances (and the API paths of discovered ones), get no
+credentials, unless
 `custom.tes.probe_with_token` is set, which sends the token also to TES
 instances that a task isn't routed to (see [TES
 versions](configuration.md#tes-versions)). Tasks are only

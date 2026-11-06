@@ -76,6 +76,18 @@ the upgraded workers set it back then. Raise the setting for TES
 instances that take longer to cancel tasks (see
 [Tasks](configuration.md#tasks)).
 
+**API paths of discovered TES instances:** proTES now takes the URL that a
+service registry lists as the base of the TES API of a discovered TES
+instance if its service info is there (`GET <url>/service-info`), and
+appends `/ga4gh/tes/v1` only otherwise; before, it always appended it. So
+discovered TES instances that serve the TES API elsewhere (e.g., TESP-API,
+listed as `https://tesp.example.org/v1`) no longer need an entry of their
+own with `api_path`. Each process reads that service info once per
+`custom.tes.version_cache_ttl` seconds per discovered TES instance, without
+credentials unless `custom.tes.probe_with_token` is set; while it can't be
+read, tasks go to other TES instances (see [API
+paths](configuration.md#api-paths)).
+
 ## To version 0.5.0
 
 **Routing default:** 0.4.0 routed tasks by the distance to their input data
