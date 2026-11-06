@@ -9,6 +9,7 @@ from http import HTTPStatus
 from itertools import zip_longest
 import logging
 import re
+import time
 from typing import Any, NamedTuple
 
 from bson.errors import InvalidId
@@ -77,7 +78,10 @@ from pro_tes.gateway import (
     relayed_task,
     validate_task,
 )
-from pro_tes.tasks.track_task_progress import task__track_task_progress
+from pro_tes.tasks.track_task_progress import (
+    CANCELED_AT_FIELD,
+    task__track_task_progress,
+)
 from pro_tes.utils.db import (
     FAILED_RUNS_COLLECTION,
     PIPELINES_COLLECTION,
@@ -1003,9 +1007,12 @@ class TaskRuns:
             # unless tracking stored another state meanwhile: the backend
             # may accept cancels of finished tasks (as no-ops); tracking keeps
             # `CANCELING` until the task is final
+            # with the time of the cancel, after which tracking gives up
+            # (`polling.max_cancel_time`)
             if db_connector.update_task_state(
                 state=TesState.CANCELING.value,
                 if_state=States.TO_CANCEL,
+                fields={CANCELED_AT_FIELD: time.time()},
             ):
                 logger.info(
                     "Task '%s' with worker ID '%s' being canceled.",

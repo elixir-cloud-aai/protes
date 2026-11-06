@@ -44,6 +44,12 @@ config:
     controllers:
       list_tasks:
         max_page_size_full: 6
+      # Example: seconds after a cancel at which tasks still `CANCELING` are
+      # set to `SYSTEM_ERROR` and no longer tracked (default: 3600; see
+      # docs/configuration.md, Tasks)
+      # post_task:
+      #   polling:
+      #     max_cancel_time: 7200
     # Examples:
     # tes:
     #   # Identity provider of the client of proTES (credentials from

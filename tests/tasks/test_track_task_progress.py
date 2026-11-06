@@ -1102,6 +1102,117 @@ def test_canceling_backend_gone(
     assert bool(scheduled) is polls_go_on
 
 
+def test_max_cancel_time_default() -> None:
+    """Tracking of tasks being canceled ends after an hour by default."""
+    assert Polling().max_cancel_time == 3600
+    with pytest.raises(ValidationError):
+        Polling(max_cancel_time=0)
+
+
+@pytest.mark.parametrize("states", [["RUNNING"], [None], ["CANCELING"]])
+def test_cancel_time_exceeded(
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+    scheduled: list[dict[str, Any]],
+    polling: Polling,
+    caplog: pytest.LogCaptureFixture,
+    states: list[str | None],
+) -> None:
+    """Tasks still being canceled after `max_cancel_time` fail, untracked.
+
+    Whether the backend reports them as unfinished or doesn't answer; a
+    delivery of the same poll again doesn't track them either.
+    """
+    client_class.states = states
+    canceled_at = time.time() - polling.max_cancel_time - 1
+    tasks.update_one(
+        {},
+        {"$set": {"task.state": "CANCELING", "tracking.canceled_at": canceled_at}},
+    )
+    run(poll="p1")
+    document = tasks.find_one({})
+    assert document is not None
+    assert document["task"]["state"] == "SYSTEM_ERROR"
+    assert not scheduled
+    assert "not canceled within 3600 seconds" in caplog.text
+    client_class.states = ["RUNNING"]
+    run(poll="p1")
+    document = tasks.find_one({})
+    assert document is not None
+    assert document["task"]["state"] == "SYSTEM_ERROR"
+    assert not scheduled
+
+
+@pytest.mark.parametrize("state", ["RUNNING", None])
+def test_cancel_time_not_exceeded(
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+    scheduled: list[dict[str, Any]],
+    polling: Polling,
+    state: str | None,
+) -> None:
+    """Tasks being canceled are tracked until `max_cancel_time` has passed."""
+    client_class.states = [state]
+    canceled_at = time.time() - polling.max_cancel_time + 60
+    tasks.update_one(
+        {},
+        {"$set": {"task.state": "CANCELING", "tracking.canceled_at": canceled_at}},
+    )
+    run()
+    document = tasks.find_one({})
+    assert document is not None
+    assert document["task"]["state"] == "CANCELING"
+    assert len(scheduled) == 1
+
+
+def test_cancel_time_final_state_wins(
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+    scheduled: list[dict[str, Any]],
+) -> None:
+    """A final state reported after `max_cancel_time` is stored as usual."""
+    client_class.states = ["CANCELED"]
+    tasks.update_one(
+        {}, {"$set": {"task.state": "CANCELING", "tracking.canceled_at": 0.0}}
+    )
+    run()
+    document = tasks.find_one({})
+    assert document is not None
+    assert document["task"]["state"] == "CANCELED"
+
+
+def test_cancel_time_of_other_states(
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+    scheduled: list[dict[str, Any]],
+) -> None:
+    """Only tasks being canceled are failed after `max_cancel_time`."""
+    client_class.states = [None]
+    tasks.update_one(
+        {}, {"$set": {"task.state": "RUNNING", "tracking.canceled_at": 0.0}}
+    )
+    run()
+    document = tasks.find_one({})
+    assert document is not None
+    assert document["task"]["state"] == "RUNNING"
+    assert len(scheduled) == 1
+
+
+def test_cancel_time_set_for_earlier_versions(
+    tasks: Collection[dict[str, Any]], scheduled: list[dict[str, Any]]
+) -> None:
+    """Tasks canceled by earlier versions count from when tracking resumes."""
+    insert_task(tasks, "legacy", state="CANCELING")
+    insert_task(tasks, "current", state="CANCELING", tracking={"canceled_at": 1.0})
+    before = time.time()
+    track_task_progress.task__resume_tracking.run()
+    legacy = tasks.find_one({"worker_id": "legacy"})
+    current = tasks.find_one({"worker_id": "current"})
+    assert legacy is not None and current is not None
+    assert legacy["tracking"]["canceled_at"] >= before
+    assert current["tracking"]["canceled_at"] == 1.0
+
+
 def test_cancelation_not_overwritten(tasks: Collection[dict[str, Any]]) -> None:
     """States of polls don't overwrite a cancelation stored meanwhile.
 

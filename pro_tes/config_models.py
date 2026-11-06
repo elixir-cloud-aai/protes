@@ -73,6 +73,10 @@ class Polling(ConfigModel):
             off (values below `wait` count as `wait`); below RabbitMQ's
             default acknowledgement timeout (`consumer_timeout`, 30 minutes),
             as are those of `wait`.
+        max_cancel_time: Seconds after a cancel at which a task that is
+            still being canceled (`CANCELING`: its backend has neither
+            reported a final state nor that it no longer has the task) is set
+            to `SYSTEM_ERROR`, and no longer tracked; at most a year.
 
     Attributes:
         wait: Seconds between polls of the state of a task.
@@ -83,11 +87,15 @@ class Polling(ConfigModel):
             off (values below `wait` count as `wait`); below RabbitMQ's
             default acknowledgement timeout (`consumer_timeout`, 30 minutes),
             as are those of `wait`.
+        max_cancel_time: Seconds after a cancel at which a task that is
+            still being canceled is set to `SYSTEM_ERROR`, and no longer
+            tracked.
     """
 
     wait: Annotated[int, Field(gt=0, lt=CONSUMER_TIMEOUT)] = 3
     attempts: PositiveInt = 100
     max_wait: Annotated[int, Field(gt=0, lt=CONSUMER_TIMEOUT)] = 600
+    max_cancel_time: Annotated[int, Field(gt=0, le=31536000)] = 3600
 
 
 class PostTask(ConfigModel):

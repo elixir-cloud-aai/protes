@@ -33,7 +33,12 @@ task, and long tasks don't keep the others from being tracked. Once a task has
 finished, its state, logs and outputs are stored (tracking writes no other
 fields of a task, so its tags are kept), and tracking ends; a canceled
 task stays `CANCELING` until its TES instance has finished it, or answers that
-it no longer has it (`404`; then `CANCELED`). After
+it no longer has it (`404`; then `CANCELED`), at most `polling.max_cancel_time`
+seconds after the cancel (default 3600): then, e.g., if the TES instance was
+decommissioned, keeps failing or keeps reporting the task as running, the task
+is set to `SYSTEM_ERROR`, its tracking ends, and a warning is logged (`not
+canceled within ... seconds`); it may still run at the TES instance, so check
+there. After
 `polling.attempts` consecutive failed polls (e.g., while the TES instance or
 the identity provider is down), the state of the task is `UNKNOWN` until the
 TES instance answers again, and polls back off to every `polling.max_wait`
@@ -61,8 +66,9 @@ unfinished tasks that were forwarded to a TES instance but haven't been
 polled for three times `polling.max_wait` seconds (or ever), e.g., because
 RabbitMQ lost its data. Upgrades and restarts of the workers therefore don't
 stop the tracking of tasks; they only delay their next polls. Tasks being
-canceled (`CANCELING`) are resumed too; those that earlier versions stored as
-`CANCELED` are not.
+canceled (`CANCELING`) are resumed too (for those canceled by versions before
+0.6.0, which didn't store the time of the cancel, `max_cancel_time` counts
+from then on); those that earlier versions stored as `CANCELED` are not.
 
 Tasks whose creation was cut off (e.g., if a Gunicorn worker was stopped
 while it forwarded them, during an upgrade) stay in state `UNKNOWN`

@@ -55,6 +55,12 @@ POLLED_AT_FIELD = "tracking.polled_at"
 # Field of stored tasks with the number of consecutive failed polls, which
 # resumed polls continue from
 FAILURES_FIELD = "tracking.failures"
+# Field of stored tasks with the time (seconds since the epoch) at which they
+# were canceled, after which their tracking gives up (`max_cancel_time`)
+CANCELED_AT_FIELD = "tracking.canceled_at"
+# Identifier of the poll of tasks whose tracking ended without a final state
+# of their backend, which no poll claims
+TRACKING_ENDED = "ended"
 # Tasks not polled for this many times `polling.max_wait` are resumed by
 # `task__resume_tracking`, which runs every `polling.max_wait` seconds
 STALE_FACTOR = 3
@@ -459,6 +465,50 @@ def _deleted_after_cancel(
     return True
 
 
+def _cancel_timed_out(collection: Collection[dict[str, Any]], worker_id: str) -> bool:
+    """End the tracking of a task still being canceled after `max_cancel_time`.
+
+    That is, of a task in state `CANCELING` that was canceled more than
+    `polling.max_cancel_time` seconds ago, e.g., at a backend that was
+    decommissioned, keeps failing, or keeps reporting the task as running: its
+    state is set to `SYSTEM_ERROR`, as it may still run at its backend, and no
+    poll claims it any longer (also not a poll delivered again).
+
+    Args:
+        collection: Database collection of the tasks.
+        worker_id: Worker identifier of the task.
+
+    Returns:
+        Whether the tracking of the task ended.
+    """
+    max_cancel_time = get_custom_config(
+        CustomConfig
+    ).controllers.post_task.polling.max_cancel_time
+    result = collection.update_one(
+        {
+            "worker_id": worker_id,
+            "task.state": TesState.CANCELING.value,
+            CANCELED_AT_FIELD: {"$lt": time.time() - max_cancel_time},
+        },
+        {
+            "$set": {
+                "task.state": TesState.SYSTEM_ERROR.value,
+                POLL_FIELD: TRACKING_ENDED,
+            }
+        },
+    )
+    if not result.modified_count:
+        return False
+    logger.warning(
+        "[%s] %s: not canceled within %d seconds (`max_cancel_time`); no longer"
+        " tracked, it may still run at its backend",
+        worker_id,
+        TesState.SYSTEM_ERROR.value,
+        max_cancel_time,
+    )
+    return True
+
+
 def _poll(kwargs: dict[str, Any], redelivered: bool = False) -> None:
     """Poll a task at its backend once, and schedule the next poll.
 
@@ -491,7 +541,9 @@ def _poll(kwargs: dict[str, Any], redelivered: bool = False) -> None:
         # retried by the Celery task; not a failed poll
         raise
     except Exception as exc:
-        if _deleted_after_cancel(collection=collection, worker_id=worker_id, exc=exc):
+        if _deleted_after_cancel(
+            collection=collection, worker_id=worker_id, exc=exc
+        ) or _cancel_timed_out(collection=collection, worker_id=worker_id):
             return
         # also if the backend is no longer configured or discovered (for the
         # time being), as the task may still run there
@@ -525,6 +577,10 @@ def _poll(kwargs: dict[str, Any], redelivered: bool = False) -> None:
 
     stored = db_client.get_document(projection={"_id": False, "task.state": True})
     if response.state not in States.FINISHED:
+        if stored.task.state == TesState.CANCELING.value and _cancel_timed_out(
+            collection=collection, worker_id=worker_id
+        ):
+            return
         if response.state != stored.task.state:
             _store_state(
                 collection=collection,
@@ -588,7 +644,9 @@ def task__track_task_progress(
     (the task may still run at its backend), and polls back off (see
     :py:func:`backoff`) until the backend answers again. A task being canceled
     stays `CANCELING` meanwhile, unless its backend answers that it no longer
-    has the task (`404`): then it is `CANCELED`, and tracking ends. Polls that fail
+    has the task (`404`): then it is `CANCELED`, and tracking ends; after
+    `polling.max_cancel_time` seconds, it is `SYSTEM_ERROR`, and tracking ends
+    too (cf. :py:func:`_cancel_timed_out`). Polls that fail
     because MongoDB is unavailable are retried, with the same arguments,
     after up to `polling.max_wait` seconds, until it is available again;
     polls that fail because the broker is unavailable go back to it.
@@ -677,6 +735,12 @@ def task__resume_tracking() -> int:
     stale = time.time() - STALE_FACTOR * max(polling.max_wait, polling.wait)
     collection = get_collection(TASK_DB, TASK_COLLECTION)
     _fail_cut_off(collection=collection, max_create_time=post_task.max_create_time)
+    # tasks canceled by earlier versions, without the time of their cancel:
+    # `max_cancel_time` counts from now
+    collection.update_many(
+        {"task.state": TesState.CANCELING.value, CANCELED_AT_FIELD: {"$exists": False}},
+        {"$set": {CANCELED_AT_FIELD: time.time()}},
+    )
     query = {
         "task.state": {"$in": States.UNFINISHED},
         "tes_endpoint.host": {"$nin": ["", None]},

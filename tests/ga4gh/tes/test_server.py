@@ -4,6 +4,7 @@ import base64
 from collections.abc import Callable
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
+import time
 from types import SimpleNamespace
 from typing import Any, Literal
 from unittest.mock import ANY
@@ -418,6 +419,18 @@ def test_cancel_task(
         f"{BASE_PATH}/tasks/{task_id}", query_string={"view": "MINIMAL"}
     )
     assert response.get_json()["state"] == "CANCELING"
+
+
+def test_cancel_time_stored(
+    client: FlaskClient,
+    task_id: str,
+    mongo_client: MongoClient[dict[str, Any]],
+) -> None:
+    """The time of a cancel is stored, so that its tracking can end."""
+    set_state(mongo_client, task_id, "QUEUED")
+    before = time.time()
+    client.post(f"{BASE_PATH}/tasks/{task_id}:cancel")
+    assert stored(mongo_client, task_id)["tracking"]["canceled_at"] >= before
 
 
 def test_create_task_state_stored(
