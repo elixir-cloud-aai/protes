@@ -52,6 +52,15 @@ credentials on the next start (`docker compose down`, then `docker volume rm
 <project>_rabbitmq-data`, with the Compose project's name, by default the name
 of the directory).
 
+**Service infos of TES instances:** proTES now reads the service infos of TES
+instances (for their TES versions) without credentials, as they are public,
+instead of with its access token or Basic credentials. TES instances that
+refuse anonymous reads with `401` or `403` count as TES 1.0, with a warning
+in the logs. Set their label `tes.version`, or set
+`custom.tes.probe_with_token: true` to read service infos with credentials
+as before, which sends proTES' token also to TES instances that tasks
+aren't routed to (see [TES versions](configuration.md#tes-versions)).
+
 ## To version 0.5.0
 
 **Routing default:** 0.4.0 routed tasks by the distance to their input data

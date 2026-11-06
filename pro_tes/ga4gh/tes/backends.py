@@ -44,7 +44,8 @@ a request (e.g., because the response timed out), the request is not sent
 again (cf. :py:class:`pro_tes.exceptions.BackendOutcomeUnknown`).
 
 The TES version of a backend (:py:func:`backend_version`) is the label
-`tes.version` of its entry; otherwise, what its service info reports, read
+`tes.version` of its entry; otherwise, what its service info reports (read
+without credentials, unless `custom.tes.probe_with_token` is set), read
 leniently and cached per process. Backends of unknown versions count as the
 oldest supported version.
 """
@@ -131,6 +132,8 @@ TES_VERSION_LABEL = "tes.version"
 PROBE_TIMEOUT = 5
 # Seconds until the service info of a backend is read again after a failure
 PROBE_RETRY = 60
+# Status codes of backends that refuse requests without (valid) credentials
+REFUSED = frozenset({HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN})
 # Models of py-tes that hold objects: the model of each such field
 _NESTED_MODELS: dict[type, dict[str, type]] = {
     tes.Task: {
@@ -755,8 +758,12 @@ class TesClient(tes.HTTPClient):
         task: tes.Task = unmarshal(known_fields(body), tes.Task)
         return task
 
-    def service_info(self) -> Any:
+    def service_info(self, auth: str | None = None) -> Any:
         """Get the service info (`GET /service-info`), with a single request.
+
+        Args:
+            auth: Name of the credentials to use (e.g., `none`, as service
+                infos are public); `None` for those of the backend.
 
         Returns:
             The service info, as the backend serves it.
@@ -768,7 +775,7 @@ class TesClient(tes.HTTPClient):
                 available.
             ValueError: The response is no JSON.
         """
-        kwargs = self._request_params()
+        kwargs = self._request_params(auth=auth)
         timeout = kwargs.pop("timeout")
         url = f"{self.url}{self.api_path}/service-info"
         response = self._request("GET", url, timeout=timeout, **kwargs)
@@ -1267,9 +1274,13 @@ class BackendVersions:
     def _probe(self, backend: Backend) -> _Probe:
         """Read the TES version of a backend from its service info.
 
-        A failure doesn't change what is known: a version that was read before
-        stays, so that one failed request doesn't make a backend count as
-        another version. An answer without a valid version does.
+        The service info is read without credentials, unless
+        `custom.tes.probe_with_token` is set (then with those of the backend),
+        so that backends that tasks don't go to don't get proTES' token, and
+        probes don't depend on the identity provider. A failure doesn't change
+        what is known: a version that was read before stays, so that one
+        failed request doesn't make a backend count as another version. An
+        answer without a valid version does.
 
         Args:
             backend: Backend.
@@ -1277,8 +1288,11 @@ class BackendVersions:
         Returns:
             What the service info says, and when to read it again.
         """
+        with_token = get_custom_config(CustomConfig).tes.probe_with_token
         try:
-            service_info = client_for(backend, timeout=PROBE_TIMEOUT).service_info()
+            service_info = client_for(backend, timeout=PROBE_TIMEOUT).service_info(
+                auth=None if with_token else "none"
+            )
             version = reported_version(service_info)
             listed: Any = (
                 service_info.get("tesResources_backend_parameters")
@@ -1286,10 +1300,18 @@ class BackendVersions:
                 else None
             )
         except Exception as exc:
+            response = exc.response if isinstance(exc, requests.HTTPError) else None
+            status = None if response is None else response.status_code
             logger.warning(
-                "Service info of TES backend %s not available: %s",
+                "Service info of TES backend %s not available: %s%s",
                 backend.url,
                 type(exc).__name__,
+                (
+                    f" (status {status} without credentials: set its label"
+                    f" `{TES_VERSION_LABEL}`, or `custom.tes.probe_with_token`)"
+                    if status in REFUSED and not with_token
+                    else ""
+                ),
             )
             # as it is now: other threads may have read it meanwhile
             previous = self._cache.get(backend.url)

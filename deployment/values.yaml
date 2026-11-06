@@ -51,6 +51,11 @@ config:
     #   # deployment/README.md, Secrets)
     #   client_credentials:
     #     issuer: "https://login.example.org/oidc/"
+    #   # Read service infos of TES backends (for their TES versions) with
+    #   # their credentials, not anonymously (default: false); backends
+    #   # without the label `tes.version` then get proTES' token also when
+    #   # tasks don't go to them (see docs/configuration.md, TES versions)
+    #   probe_with_token: false
 # Examples:
 #   security:
 #     auth:

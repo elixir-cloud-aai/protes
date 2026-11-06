@@ -38,14 +38,18 @@ class FakeClient:
     Attributes:
         served: Service info, or the error to raise.
         calls: Number of requests.
+        auths: Credentials asked for by each request (`None`: those of the
+            backend).
     """
 
     served: ClassVar[Any] = info(version="1.1.0")
     calls: ClassVar[int] = 0
+    auths: ClassVar[list[str | None]] = []
 
-    def service_info(self) -> Any:
+    def service_info(self, auth: str | None = None) -> Any:
         """Get the service info."""
         type(self).calls += 1
+        type(self).auths.append(auth)
         if isinstance(self.served, Exception):
             raise self.served
         return self.served
@@ -63,6 +67,7 @@ def client(monkeypatch: pytest.MonkeyPatch) -> type[FakeClient]:
     """Backends get the fake client."""
     monkeypatch.setattr(FakeClient, "served", info(version="1.1.0"))
     monkeypatch.setattr(FakeClient, "calls", 0)
+    monkeypatch.setattr(FakeClient, "auths", [])
     monkeypatch.setattr(backends, "client_for", lambda *_, **__: FakeClient())
     return FakeClient
 
@@ -162,7 +167,7 @@ def test_probe_failure_keeps_version_read_meanwhile(
 ) -> None:
     """Failures don't undo what another thread has read in the meantime."""
 
-    def service_info(self: FakeClient) -> Any:
+    def service_info(self: FakeClient, auth: str | None = None) -> Any:
         """Fail, after another thread has read the version."""
         backend_versions._cache[URL] = _Probe(V11, 0.0, ("a",))
         raise requests.ConnectionError("down")
@@ -233,6 +238,76 @@ def test_no_probe(client: type[FakeClient]) -> None:
     backend_versions._cache[URL] = _Probe(V11, 0.0)
     assert backend_version(BACKEND, probe=False) == V11
     assert client.calls == 0
+
+
+@pytest.mark.usefixtures("app_context")
+def test_probe_anonymous_by_default(client: type[FakeClient]) -> None:
+    """Probes send no credentials, unless `probe_with_token` is set."""
+    assert not get_custom_config(CustomConfig).tes.probe_with_token
+    backend_version(BACKEND)
+    get_custom_config(CustomConfig).tes.probe_with_token = True
+    backend_versions.clear()
+    backend_version(BACKEND)
+    assert client.auths == ["none", None]
+
+
+def refused(status: int) -> requests.HTTPError:
+    """Get the error of a response with a status."""
+    response = requests.Response()
+    response.status_code = status
+    return requests.HTTPError(str(status), response=response)
+
+
+@pytest.mark.usefixtures("app_context")
+@pytest.mark.parametrize("status", [401, 403])
+def test_probe_refused_hints(
+    client: type[FakeClient], caplog: pytest.LogCaptureFixture, status: int
+) -> None:
+    """Refused anonymous probes name the label and the setting."""
+    client.served = refused(status)
+    assert backend_version(BACKEND) == V10
+    assert "tes.version" in caplog.text
+    assert "probe_with_token" in caplog.text
+    caplog.clear()
+    get_custom_config(CustomConfig).tes.probe_with_token = True
+    backend_versions.clear()
+    backend_version(BACKEND)
+    assert "probe_with_token" not in caplog.text
+
+
+@pytest.mark.usefixtures("app_context")
+def test_probe_failure_no_hint(
+    client: type[FakeClient], caplog: pytest.LogCaptureFixture
+) -> None:
+    """Other failures of anonymous probes get no hint at credentials."""
+    client.served = refused(404)
+    backend_version(BACKEND)
+    assert "probe_with_token" not in caplog.text
+
+
+def test_service_info_anonymous(app: FlaskApp, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Service infos can be read without the credentials of the backend."""
+    headers: list[Any] = []
+
+    def request(method: str, url: str, timeout: Any, **kwargs: Any) -> Any:
+        """Record the headers; serve a service info."""
+        headers.append(kwargs["headers"])
+        response = requests.Response()
+        response.status_code = 200
+        response._content = b"{}"
+        return response
+
+    def no_token(*_: Any, **__: Any) -> str:
+        """Fail: no token may be fetched."""
+        raise AssertionError("token fetched")
+
+    monkeypatch.setattr(requests, "request", request)
+    monkeypatch.setattr(backends.token_provider, "get_token", no_token)
+    backend = Backend(id=URL, url=URL, auth="client_credentials")
+    with app.app.app_context():
+        get_custom_config(CustomConfig).tes.backends = tes_backends(URL)
+        backends.client_for(backend).service_info(auth="none")
+    assert "Authorization" not in headers[0]
 
 
 def test_service_info_request(app: FlaskApp, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -109,7 +109,7 @@ class FakeBackend:
         task_id = self.create_task(task)
         return task_id, BackendResponse(status=200, payload={"id": task_id})
 
-    def service_info(self) -> dict[str, Any]:
+    def service_info(self, auth: str | None = None) -> dict[str, Any]:
         """Get the service info, with the TES version of the backend."""
         return {
             "type": {

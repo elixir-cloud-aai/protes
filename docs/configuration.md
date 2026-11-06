@@ -186,8 +186,8 @@ proTES serves TES 1.1, and relays tasks to TES instances of TES 1.0 and 1.1
 (see [TES versions](tes-versions.md)). It needs to know which one each TES
 instance implements: the label `tes.version` of its entry (`"1.0"` or `"1.1"`;
 other versions make the app refuse to start) wins; otherwise, proTES reads
-`GET <url>/ga4gh/tes/v1/service-info` (or below its `api_path`), with its
-credentials for the TES instance and timeouts of 5 seconds (to connect and to
+`GET <url>/ga4gh/tes/v1/service-info` (or below its `api_path`), without
+credentials (see below), with timeouts of 5 seconds (to connect and to
 answer), and caches the result per process for
 `custom.tes.version_cache_ttl` seconds (default: 3600; failures for 60
 seconds). It reads `type.version` leniently (e.g., `TES`, `1.0`, `v1.1.0`), if
@@ -195,6 +195,23 @@ seconds). It reads `type.version` leniently (e.g., `TES`, `1.0`, `v1.1.0`), if
 reports no version that proTES supports, or never answered, counts as TES 1.0
 (with a warning in the logs); one that stops answering keeps the version read
 before.
+
+The service info is read for the first task with fields that TES 1.0 can't
+express, from all TES instances of the list without a label, also from those
+that the task doesn't go to. The service info is public in the TES
+specification, so proTES reads it anonymously by default
+(`custom.tes.probe_with_token: false`): TES instances that tasks don't go to
+don't get proTES' access token, and an outage of the identity provider
+doesn't make TES instances of TES 1.1 count as TES 1.0. A TES instance that
+refuses anonymous reads (`401` or `403`, logged with a hint) counts as TES
+1.0: set its label `tes.version` (preferred), or set
+`custom.tes.probe_with_token: true`, so that proTES reads service infos with
+the credentials of each TES instance (its access token, or Basic
+credentials). With it, every TES instance without a label gets proTES' token
+when such a task arrives, also those that the task isn't routed to (e.g.,
+all verified TES instances of a registry; see [Credentials of TES
+instances](access-control.md#credentials-of-tes-instances)), and failing to
+get a token makes them count as TES 1.0 until the next read.
 
 **Set the label for Funnel:** Funnel implements TES 1.1, but version 0.11.14
 reports an empty `type.version` (`""`), so it would count as TES 1.0:
