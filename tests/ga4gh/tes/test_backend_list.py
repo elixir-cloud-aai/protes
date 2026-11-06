@@ -29,11 +29,13 @@ from urllib3.exceptions import ConnectTimeoutError, NewConnectionError
 from pro_tes.config_models import DEFAULT_API_PATH, ClientCredentials, CustomConfig
 from pro_tes.exceptions import (
     BackendAddressNotAllowed,
+    BackendAuthError,
     BackendNotConfigured,
     BackendOutcomeUnknown,
     BackendRequestNotSent,
 )
 from pro_tes.ga4gh.tes import backends
+from pro_tes.ga4gh.tes.versions import TesVersion
 from tests.ga4gh.tes.conftest import BASE_PATH, TASK, FakeBackend, relayed
 
 REGISTRY = "https://registry.example.org/ga4gh/registry/v1"
@@ -436,7 +438,7 @@ def test_client_private_allowed(rebinding: tuple[str, Listener]) -> None:
     assert listener.accepted == 1
 
 
-def resolved(client: backends.TesClient) -> None:
+def seed_api_path(client: backends.TesClient) -> None:
     """Take the API path of a discovered backend as read: the default one.
 
     So that requests go to the backend at once.
@@ -471,7 +473,7 @@ def test_client_guarded_errors(
 
     assert client.guarded is not None
     monkeypatch.setattr(client.guarded, "request", fail)
-    resolved(client)
+    seed_api_path(client)
     with pytest.raises(expected) as info:
         client.get_task("r1")
     assert isinstance(info.value, requests.RequestException)
@@ -503,7 +505,7 @@ def test_client_guarded_tls_error(
 
     assert client.guarded is not None
     monkeypatch.setattr(client.guarded, "request", fail)
-    resolved(client)
+    seed_api_path(client)
     request = OutboundRequest(
         backend=client.backend, method="POST", path="/ga4gh/tes/v1/tasks"
     )
@@ -524,7 +526,7 @@ def test_client_guarded_tls_error_after_sending(
 
     assert client.guarded is not None
     monkeypatch.setattr(client.guarded, "request", fail)
-    resolved(client)
+    seed_api_path(client)
     request = OutboundRequest(
         backend=client.backend, method="POST", path="/ga4gh/tes/v1/tasks"
     )
@@ -555,7 +557,7 @@ def test_client_guarded_connect_errors(
 
     assert client.guarded is not None
     monkeypatch.setattr(client.guarded, "request", fail)
-    resolved(client)
+    seed_api_path(client)
     with pytest.raises(BackendRequestNotSent) as info:
         client.get_task("r1")
     assert backends.not_sent(info.value)
@@ -661,7 +663,7 @@ def test_client_guarded_response(
 
     assert client.guarded is not None
     monkeypatch.setattr(client.guarded, "request", answer)
-    resolved(client)
+    seed_api_path(client)
     assert client.get_task("r1").state == "RUNNING"
     request = OutboundRequest(
         backend=client.backend,
@@ -767,12 +769,10 @@ def test_api_path_discovered_at_url(
     "answer",
     [
         http.HttpResponse(status=404),
-        http.HttpResponse(status=405),
-        http.HttpResponse(status=301, headers={"location": "https://x"}),
+        http.HttpResponse(status=410),
         json_response({"type": {**TES_TYPE, "artifact": "service-registry"}}),
         json_response({"id": "no-type"}),
         json_response([]),
-        http.HttpResponse(status=200, content=b"<html></html>"),
     ],
 )
 def test_api_path_discovered_default(
@@ -780,8 +780,9 @@ def test_api_path_discovered_default(
 ) -> None:
     """Otherwise, they serve it at the API path of the TES specification.
 
-    Registries list it as part of the URL; FOCA removes it, so the service
-    info is looked for at the URL without it first.
+    If the answer settles that there is no TES service info at the URL.
+    Registries list the default path as part of the URL; FOCA removes it,
+    so the service info is looked for at the URL without it first.
     """
     discovering.add("a", "https://tes1.example.org/ga4gh/tes/v1")
     base = "https://tes1.example.org"
@@ -795,18 +796,55 @@ def test_api_path_discovered_default(
     ]
 
 
+@pytest.mark.parametrize("status", [401, 403])
+@pytest.mark.parametrize("auth, hint", [("none", False), ("client_credentials", True)])
 def test_api_path_discovered_refused(
-    discovering: FakeRegistry, fake_tes: FakeTes, caplog: pytest.LogCaptureFixture
+    discovering: FakeRegistry,
+    fake_tes: FakeTes,
+    clock: Clock,
+    caplog: pytest.LogCaptureFixture,
+    status: int,
+    auth: str,
+    hint: bool,
 ) -> None:
-    """A service info that needs credentials is not found, with a hint."""
+    """Refusals mean the default path, with a hint; read again after a minute.
+
+    The hint names `probe_with_token` only for TES instances with
+    credentials.
+    """
+    get_custom_config(CustomConfig).tes.backends = backend_list(auth=auth)
+    discovering.add("a", "https://tes1.example.org")
+    fake_tes.answers["https://tes1.example.org/service-info"] = http.HttpResponse(
+        status=status
+    )
+    assert backends.create_client(host="https://tes1.example.org").api_path == (
+        "/ga4gh/tes/v1"
+    )
+    assert f"status {status} without credentials" in caplog.text
+    assert "api_path" in caplog.text
+    assert ("probe_with_token" in caplog.text) is hint
+    clock.now += backends.PROBE_RETRY
+    backends.create_client(host="https://tes1.example.org").api_path  # noqa: B018
+    assert len(fake_tes.sent) == 2
+
+
+def test_api_path_discovered_refused_with_token(
+    discovering: FakeRegistry,
+    fake_tes: FakeTes,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Refusals of reads with credentials get no hint at reading without."""
+    config = get_custom_config(CustomConfig).tes
+    config.probe_with_token = True
     discovering.add("a", "https://tes1.example.org")
     fake_tes.answers["https://tes1.example.org/service-info"] = http.HttpResponse(
         status=401
     )
-    client = backends.create_client(host="https://tes1.example.org")
-    assert client.api_path == "/ga4gh/tes/v1"
-    assert "status 401 without credentials" in caplog.text
-    assert "api_path" in caplog.text
+    assert backends.create_client(host="https://tes1.example.org").api_path == (
+        "/ga4gh/tes/v1"
+    )
+    assert "without credentials" not in caplog.text
 
 
 def test_api_path_discovered_cached(
@@ -816,34 +854,41 @@ def test_api_path_discovered_cached(
     url = "https://tes1.example.org/v1"
     discovering.add("a", url)
     fake_tes.answers[f"{url}/service-info"] = json_response(SERVICE_INFO)
-    assert backends.create_client(host=url).api_path == ""
+    client = backends.create_client(host=url)
+    assert client.api_path == ""
     assert backends.create_client(host=url).api_path == ""
     assert len(fake_tes.sent) == 1
     clock.now += get_custom_config(CustomConfig).tes.version_cache_ttl
     del fake_tes.answers[f"{url}/service-info"]
+    # each client keeps the path it read
+    assert client.api_path == ""
     assert backends.create_client(host=url).api_path == "/ga4gh/tes/v1"
     assert len(fake_tes.sent) == 2
 
 
-@pytest.mark.parametrize(
-    "answer, expected",
-    [
-        (http.HttpResponse(status=503), BackendRequestNotSent),
-        (http.HttpResponse(status=500), BackendRequestNotSent),
-        (http.RequestMaybeSent("lost"), BackendRequestNotSent),
-        (http.RequestMaybeSent("slow", reason="read_timeout"), BackendRequestNotSent),
-        (http.ResponseTooLarge("large"), BackendRequestNotSent),
-        (http.RequestNotSent("not reached"), BackendRequestNotSent),
-        (AddressNotAllowed("not public"), BackendAddressNotAllowed),
-    ],
-)
+UNKNOWN_ANSWERS = [
+    (http.HttpResponse(status=503), "status 503"),
+    (http.HttpResponse(status=500), "status 500"),
+    (http.HttpResponse(status=429), "status 429"),
+    (http.HttpResponse(status=408), "status 408"),
+    (http.HttpResponse(status=405), "status 405"),
+    (http.HttpResponse(status=302, headers={"location": "https://x"}), "status 302"),
+    (http.HttpResponse(status=200, content=b"<html></html>"), "status 200"),
+    (http.RequestMaybeSent("lost"), "ConnectionError"),
+    (http.RequestMaybeSent("slow", reason="read_timeout"), "ReadTimeout"),
+    (http.ResponseTooLarge("large"), "ConnectionError"),
+    (http.RequestNotSent("not reached"), "not reached"),
+]
+
+
+@pytest.mark.parametrize("answer, message", UNKNOWN_ANSWERS)
 def test_api_path_discovered_unknown(
     discovering: FakeRegistry,
     fake_tes: FakeTes,
     answer: http.HttpResponse | Exception,
-    expected: type[requests.RequestException],
+    message: str,
 ) -> None:
-    """Requests are not sent while the API path can't be read; it isn't cached.
+    """Requests are not sent while the API path is unknown; it isn't cached.
 
     So that tasks go to other TES instances, and are not taken for gone
     (`404`) at a wrong path.
@@ -852,17 +897,69 @@ def test_api_path_discovered_unknown(
     base = "https://tes1.example.org"
     fake_tes.answers[f"{base}/service-info"] = answer
     client = backends.create_client(host=base)
-    with pytest.raises(expected) as info:
+    with pytest.raises(BackendRequestNotSent, match=message) as info:
         client.get_task("r1")
     assert backends.not_sent(info.value)
     request = OutboundRequest(
         backend=client.backend, method="POST", path="/ga4gh/tes/v1/tasks"
     )
-    with pytest.raises(expected):
+    with pytest.raises(BackendRequestNotSent):
         client.forward(request, tes.Task(executors=[]))
     assert fake_tes.urls == [f"{base}/service-info"] * 2
     fake_tes.answers[f"{base}/service-info"] = json_response(SERVICE_INFO)
     assert backends.create_client(host=base).api_path == ""
+
+
+def test_api_path_discovered_not_public(
+    discovering: FakeRegistry, fake_tes: FakeTes
+) -> None:
+    """Hosts that turn out not to be public are reported as such."""
+    discovering.add("a", "https://tes1.example.org")
+    fake_tes.answers["https://tes1.example.org/service-info"] = AddressNotAllowed(
+        "not public"
+    )
+    client = backends.create_client(host="https://tes1.example.org")
+    with pytest.raises(BackendAddressNotAllowed):
+        client.get_task("r1")
+
+
+@pytest.mark.parametrize("answer, message", UNKNOWN_ANSWERS)
+def test_api_path_discovered_kept(
+    discovering: FakeRegistry,
+    fake_tes: FakeTes,
+    clock: Clock,
+    answer: http.HttpResponse | Exception,
+    message: str,
+) -> None:
+    """A path that was settled is kept while it is unknown, for a minute each.
+
+    E.g., if a gateway in front of the TES instance redirects for a while.
+    """
+    url = "https://tes1.example.org/v1"
+    discovering.add("a", url)
+    fake_tes.answers[f"{url}/service-info"] = json_response(SERVICE_INFO)
+    assert backends.create_client(host=url).api_path == ""
+    clock.now += get_custom_config(CustomConfig).tes.version_cache_ttl
+    fake_tes.answers[f"{url}/service-info"] = answer
+    assert backends.create_client(host=url).api_path == ""
+    assert backends.create_client(host=url).api_path == ""
+    assert len(fake_tes.sent) == 2
+    clock.now += backends.PROBE_RETRY
+    fake_tes.answers[f"{url}/service-info"] = http.HttpResponse(status=404)
+    assert backends.create_client(host=url).api_path == "/ga4gh/tes/v1"
+
+
+def test_api_path_discovered_refusal_keeps_path(
+    discovering: FakeRegistry, fake_tes: FakeTes, clock: Clock
+) -> None:
+    """Refusals don't replace a path that was settled."""
+    url = "https://tes1.example.org/v1"
+    discovering.add("a", url)
+    fake_tes.answers[f"{url}/service-info"] = json_response(SERVICE_INFO)
+    assert backends.create_client(host=url).api_path == ""
+    clock.now += get_custom_config(CustomConfig).tes.version_cache_ttl
+    fake_tes.answers[f"{url}/service-info"] = http.HttpResponse(status=403)
+    assert backends.create_client(host=url).api_path == ""
 
 
 @pytest.mark.parametrize("probe_with_token", [False, True])
@@ -887,6 +984,73 @@ def test_api_path_discovered_token(
     assert client.api_path == "/ga4gh/tes/v1"
     headers = fake_tes.sent[0][2]["headers"]
     assert ("Authorization" in headers) is probe_with_token
+
+
+def test_api_path_discovered_no_token(
+    discovering: FakeRegistry, fake_tes: FakeTes, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without a token for `probe_with_token`, the path is unknown, uncached."""
+    config = get_custom_config(CustomConfig).tes
+    config.backends = backend_list(auth="client_credentials")
+    config.client_credentials = ClientCredentials(
+        token_endpoint="https://idp.example.org/token"  # noqa: S106 (a URL)
+    )
+    config.probe_with_token = True
+
+    def no_token(config: Any) -> str:
+        """Fail to get a token."""
+        raise BackendAuthError("no token")
+
+    monkeypatch.setattr(backends.token_provider, "get_token", no_token)
+    discovering.add("a", "https://tes1.example.org")
+    with pytest.raises(BackendAuthError):
+        backends.create_client(host="https://tes1.example.org").api_path  # noqa: B018
+    assert not fake_tes.sent
+    assert not backends.api_paths._cache
+
+
+def test_api_path_discovered_time_left(
+    discovering: FakeRegistry, fake_tes: FakeTes, clock: Clock
+) -> None:
+    """Reading the API path while forwarding takes from the time left."""
+    discovering.add("a", "https://tes1.example.org")
+    base = "https://tes1.example.org"
+    answer = fake_tes.request
+
+    def slow(method: str, url: str, **kwargs: Any) -> http.HttpResponse:
+        """Answer after 3 seconds."""
+        clock.now += 3
+        return answer(method, url, **kwargs)
+
+    fake_tes.request = slow  # type: ignore[method-assign]
+    client = backends.create_client(host=base)
+    request = OutboundRequest(
+        backend=client.backend, method="POST", path="/ga4gh/tes/v1/tasks"
+    )
+    with pytest.raises(requests.ConnectTimeout) as info:
+        client.forward(request, tes.Task(executors=[]), connect_timeout=2)
+    assert backends.not_sent(info.value)
+    assert fake_tes.urls == [f"{base}/service-info"]
+
+
+def test_api_path_discovered_version(
+    discovering: FakeRegistry, fake_tes: FakeTes
+) -> None:
+    """The TES version of a discovered TES instance is read below its path.
+
+    Its service info is read twice the first time: for the path, then for
+    the version (cached separately).
+    """
+    url = "https://tes1.example.org/v1"
+    discovering.add("a", url)
+    fake_tes.answers[f"{url}/service-info"] = json_response(
+        {"type": {**TES_TYPE, "version": "1.0.1"}}
+    )
+    (backend,) = [b for b in backends.get_backends() if b.url == url]
+    assert backends.backend_version(backend) == TesVersion(1, 0)
+    assert fake_tes.urls == [f"{url}/service-info"] * 2
+    assert backends.backend_version(backend) == TesVersion(1, 0)
+    assert len(fake_tes.sent) == 2
 
 
 def test_api_path_configured_not_read(

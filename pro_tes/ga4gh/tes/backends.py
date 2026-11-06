@@ -133,6 +133,8 @@ TES_VERSION_LABEL = "tes.version"
 PROBE_TIMEOUT = 5
 # Seconds until the service info of a backend is read again after a failure
 PROBE_RETRY = 60
+# Status codes that tell that there is no service info at a URL
+API_PATH_NOT_FOUND = frozenset({HTTPStatus.NOT_FOUND, HTTPStatus.GONE})
 # Status codes of backends that refuse anonymous reads of their service info
 PROBE_REFUSED = frozenset({HTTPStatus.UNAUTHORIZED, HTTPStatus.FORBIDDEN})
 # Models of py-tes that hold objects: the model of each such field
@@ -610,15 +612,17 @@ class TesClient(tes.HTTPClient):
     Credentials are looked up for each request (cf.
     :py:meth:`TesClient._request_params`). Tasks are created, got and
     canceled with a single request each, to the API path of the backend
-    (`api_path` of its entry; unlike py-tes, which tries other paths too, and
-    so may create a task more than once); redirects of `POST` requests are
-    not followed.
+    (`api_path` of its entry, or the one found for discovered backends;
+    unlike py-tes, which tries other paths too, and so may create a task
+    more than once); redirects of `POST` requests are not followed.
 
     Attributes:
         backend: The backend.
         entry: Entry of the backend in `custom.tes.backends` (the registry
             entry, for discovered backends).
-        api_path: Path of the TES API, relative to the URL of the backend.
+        api_path: Path of the TES API, relative to the URL of the backend;
+            read on first use for discovered backends, which may raise
+            :py:class:`pro_tes.exceptions.BackendRequestNotSent`.
     """
 
     def __init__(
@@ -719,7 +723,12 @@ class TesClient(tes.HTTPClient):
         """
         path = outbound.path
         if path.startswith(f"{DEFAULT_API_PATH}/"):
-            path = f"{self.api_path}{path.removeprefix(DEFAULT_API_PATH)}"
+            started = time.monotonic()
+            # discovered backends: may be read first, within the time left
+            api_path = self.api_path
+            if connect_timeout is not None:
+                connect_timeout -= time.monotonic() - started
+            path = f"{api_path}{path.removeprefix(DEFAULT_API_PATH)}"
         response = self._send(
             method=outbound.method,
             url=f"{self.url}{path}",
@@ -797,12 +806,31 @@ class TesClient(tes.HTTPClient):
                 available.
             ValueError: The response is no JSON.
         """
-        kwargs = self._request_params(auth=auth)
-        timeout = kwargs.pop("timeout")
-        url = f"{self.url}{self.api_path}/service-info"
-        response = self._request("GET", url, timeout=timeout, **kwargs)
+        response = self.get_service_info(
+            f"{self.url}{self.api_path}/service-info", auth=auth
+        )
         response.raise_for_status()
         return response.json()
+
+    def get_service_info(self, url: str, auth: str | None = None) -> requests.Response:
+        """Send a single `GET` request for a service info, whatever the answer.
+
+        Args:
+            url: URL of the service info.
+            auth: Name of the credentials to use; `None` for those of the
+                backend.
+
+        Returns:
+            The response, with any status.
+
+        Raises:
+            requests.RequestException: The request failed.
+            pro_tes.exceptions.BackendAuthError: No credentials are
+                available.
+        """
+        kwargs = self._request_params(auth=auth)
+        timeout = kwargs.pop("timeout")
+        return self._request("GET", url, timeout=timeout, **kwargs)
 
     def cancel_task(self, task_id: str) -> None:
         """Cancel a task (`POST /tasks/{id}:cancel`), with a single request.
@@ -1339,13 +1367,9 @@ class BackendVersions:
             status = getattr(getattr(exc, "response", None), "status_code", None)
             hint = ""
             if status in PROBE_REFUSED and not with_token:
-                # the setting doesn't give backends without credentials any
-                setting = ""
-                if backend.auth != "none":
-                    setting = ", or `custom.tes.probe_with_token`"
                 hint = (
                     f" (status {status} without credentials: set its label"
-                    f" `{TES_VERSION_LABEL}`{setting})"
+                    f" `{TES_VERSION_LABEL}`{token_hint(backend)})"
                 )
             logger.warning(
                 "Service info of TES backend %s not available: %s%s",
@@ -1385,6 +1409,34 @@ class BackendVersions:
 backend_versions = BackendVersions()
 
 
+def token_hint(backend: Backend) -> str:
+    """Get the hint at `custom.tes.probe_with_token`, for refused reads.
+
+    The setting doesn't give backends without credentials any.
+
+    Args:
+        backend: Backend whose service info was refused without credentials.
+
+    Returns:
+        The hint (to append to others), or nothing for `auth: none`.
+    """
+    return ", or `custom.tes.probe_with_token`" if backend.auth != "none" else ""
+
+
+class _ApiPath(NamedTuple):
+    """API path of a discovered backend, as read.
+
+    Attributes:
+        path: The API path, relative to the URL of the backend.
+        expires_at: When to read it again (`time.monotonic()`).
+        confirmed: Whether the backend's answer settled it.
+    """
+
+    path: str
+    expires_at: float
+    confirmed: bool
+
+
 class ApiPaths:
     """API paths of discovered backends, read from their URLs, cached.
 
@@ -1393,18 +1445,24 @@ class ApiPaths:
     :py:mod:`foca.plugins.backends`). The TES API of a discovered backend
     is at that URL if its service info is there (`GET <url>/service-info`
     answers with that of a TES service), else at the default API path below
-    it. The service info is read as for TES versions (cf.
+    it, if the answer settles that: `404` or `410`, or another service info.
+    Refusals (`401` or `403`) mean the default path too, as before 0.6.0,
+    but are read again after `PROBE_RETRY` seconds. Other answers (e.g.,
+    redirects, `429`, server errors, pages that aren't JSON) and failed
+    requests leave the path unknown: the path read before is kept for
+    `PROBE_RETRY` seconds, if any was settled; otherwise, no request is sent
+    (no path is guessed, as requests to a wrong path could take a task for
+    gone, `404`). The service info is read as for TES versions (cf.
     :py:meth:`BackendVersions._probe`): without credentials, unless
-    `custom.tes.probe_with_token` is set. Paths are cached per process for
-    `custom.tes.version_cache_ttl` seconds; failures are not cached, and no
-    path is assumed meanwhile, as requests to a wrong path could take a task
-    for gone (`404`). Thread-safe (a lost update only reads a service info
-    once more).
+    `custom.tes.probe_with_token` is set, within `PROBE_TIMEOUT` seconds.
+    Settled paths are cached per process for `custom.tes.version_cache_ttl`
+    seconds. Thread-safe (a lost update only reads a service info once
+    more).
     """
 
     def __init__(self) -> None:
         """Create an empty cache."""
-        self._cache: dict[str, tuple[str, float]] = {}
+        self._cache: dict[str, _ApiPath] = {}
 
     def clear(self) -> None:
         """Remove all cached paths."""
@@ -1421,44 +1479,62 @@ class ApiPaths:
             the URL, else `DEFAULT_API_PATH`.
 
         Raises:
-            pro_tes.exceptions.BackendRequestNotSent: The service info can't
-                be read now (e.g., it timed out, or the backend answered
-                with a server error).
+            pro_tes.exceptions.BackendRequestNotSent: The path is unknown
+                (e.g., the service info timed out, or the backend answered
+                with a server error), and none was settled before.
             pro_tes.exceptions.BackendAuthError: No credentials are
                 available (with `custom.tes.probe_with_token`).
         """
         cached = self._cache.get(client.url)
-        if cached is not None and time.monotonic() < cached[1]:
-            return cached[0]
-        path = self._read(client)
-        self._cache[client.url] = (
-            path,
-            time.monotonic() + get_custom_config(CustomConfig).tes.version_cache_ttl,
+        now = time.monotonic()
+        if cached is not None and now < cached.expires_at:
+            return cached.path
+        try:
+            path, confirmed = self._read(client)
+        except BackendRequestNotSent:
+            if cached is None or not cached.confirmed:
+                raise
+            path, confirmed = cached.path, False
+        if not confirmed and cached is not None and cached.confirmed:
+            # e.g., a redirect of a gateway in maintenance
+            self._cache[client.url] = cached._replace(expires_at=now + PROBE_RETRY)
+            return cached.path
+        ttl = (
+            get_custom_config(CustomConfig).tes.version_cache_ttl
+            if confirmed
+            else PROBE_RETRY
         )
+        self._cache[client.url] = _ApiPath(path, time.monotonic() + ttl, confirmed)
         return path
 
     @staticmethod
-    def _read(client: TesClient) -> str:
+    def _read(client: TesClient) -> tuple[str, bool]:
         """Read the API path of a discovered backend from its URL.
 
         Args:
             client: Client of the backend, at its URL.
 
         Returns:
-            The API path, relative to the URL.
+            The API path, relative to the URL, and whether the answer
+            settled it.
 
         Raises:
-            pro_tes.exceptions.BackendRequestNotSent: The service info can't
-                be read now.
+            pro_tes.exceptions.BackendRequestNotSent: The answer leaves the
+                path unknown.
             pro_tes.exceptions.BackendAuthError: No credentials are
                 available.
         """
         with_token = get_custom_config(CustomConfig).tes.probe_with_token
-        kwargs = client._request_params(auth=None if with_token else "none")
-        timeout = kwargs.pop("timeout")
-        url = f"{client.url}/service-info"
+        prober = TesClient(
+            url=client.url,
+            backend=client.backend,
+            entry=client.entry,
+            timeout=PROBE_TIMEOUT,
+        )
         try:
-            response = client._request("GET", url, timeout=timeout, **kwargs)
+            response = prober.get_service_info(
+                f"{client.url}/service-info", auth=None if with_token else "none"
+            )
         except BackendRequestNotSent:
             raise
         except requests.RequestException as exc:
@@ -1466,31 +1542,33 @@ class ApiPaths:
                 f"API path of TES backend {client.url} unknown: {type(exc).__name__}"
             ) from exc
         status = response.status_code
-        if status >= HTTPStatus.INTERNAL_SERVER_ERROR:
-            raise BackendRequestNotSent(
-                f"API path of TES backend {client.url} unknown: status {status}"
-            )
         try:
-            found = 200 <= status < 300 and is_tes(response.json())
+            service_info = response.json() if 200 <= status < 300 else None
         except (ValueError, RecursionError):
-            found = False
-        if found:
-            logger.debug("TES API of backend %s at its URL", client.url)
-            return ""
-        if status in PROBE_REFUSED and not with_token:
-            setting = ""
-            if client.backend.auth != "none":
-                setting = ", or `custom.tes.probe_with_token`"
-            logger.warning(
-                "Service info of TES backend %s not found at its URL (status %d"
-                " without credentials), using %s: list it as an entry of its"
-                " own, with its `api_path`%s",
-                client.url,
-                status,
-                DEFAULT_API_PATH,
-                setting,
-            )
-        return DEFAULT_API_PATH
+            service_info = None
+        if service_info is not None:
+            if is_tes(service_info):
+                logger.debug("TES API of backend %s at its URL", client.url)
+                return "", True
+            # e.g., the service info of a gateway in front of the backend
+            return DEFAULT_API_PATH, True
+        if status in API_PATH_NOT_FOUND:
+            return DEFAULT_API_PATH, True
+        if status in PROBE_REFUSED:
+            if not with_token:
+                logger.warning(
+                    "Service info of TES backend %s refused at its URL (status"
+                    " %d without credentials), using %s: list it as an entry of"
+                    " its own, with its `api_path`%s",
+                    client.url,
+                    status,
+                    DEFAULT_API_PATH,
+                    token_hint(client.backend),
+                )
+            return DEFAULT_API_PATH, False
+        raise BackendRequestNotSent(
+            f"API path of TES backend {client.url} unknown: status {status}"
+        )
 
 
 api_paths = ApiPaths()
