@@ -79,6 +79,14 @@ updates:
     directory: /
     patterns: ["*"]
     multi-ecosystem-group: service-images
+    ignore:
+      # MongoDB stays on 7.0: 8.0 refuses to start on Linux kernels 6.19 to
+      # 7.0.13 (https://jira.mongodb.org/browse/SERVER-121912); patches still
+      # come
+      - dependency-name: "*mongo"
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
   # Images in the chart's values (`deployment/values.yaml`; see the group)
   - package-ecosystem: helm
     directory: /deployment
@@ -88,6 +96,13 @@ updates:
       # FOCA's library chart is bumped by hand, with `Chart.lock` and
       # `charts.sha256` (see "Helm chart" in `docs/development.md`)
       - dependency-name: foca-common
+      # MongoDB stays on 7.0: 8.0 refuses to start on Linux kernels 6.19 to
+      # 7.0.13 (https://jira.mongodb.org/browse/SERVER-121912); patches still
+      # come
+      - dependency-name: "*mongo"
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
   # Hook revisions in `.pre-commit-config.yaml`
   - package-ecosystem: pre-commit
     directory: /
