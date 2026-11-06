@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from connexion import FlaskApp
-from foca import get_custom_config
+from foca import get_config, get_custom_config
 from foca.models.config import Config
 from foca.plugins import GatewayError, Headers, OutboundRequest
 from foca.plugins.api import SPEC_PATH
@@ -41,8 +41,8 @@ def test_settings() -> None:
 def test_backend_entries(app: FlaskApp) -> None:
     """The backend list is that of `custom.tes.backends`."""
     with app.app.app_context():
-        config = app.app.config.foca
-        assert gateway.backend_entries(config) is config.custom.tes.backends
+        backends = gateway.backend_entries(get_config())
+        assert backends is get_custom_config(CustomConfig).tes.backends
 
 
 @pytest.mark.parametrize("payload", [None, [], "task", UserDict({"executors": []})])
