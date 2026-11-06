@@ -1105,37 +1105,62 @@ def test_canceling_backend_gone(
 def test_max_cancel_time_default() -> None:
     """Tracking of tasks being canceled ends after an hour by default."""
     assert Polling().max_cancel_time == 3600
-    with pytest.raises(ValidationError):
-        Polling(max_cancel_time=0)
 
 
-@pytest.mark.parametrize("states", [["RUNNING"], [None], ["CANCELING"]])
+@pytest.mark.parametrize(
+    ("seconds", "valid"), [(0, False), (31536000, True), (31536001, False)]
+)
+def test_max_cancel_time_limits(seconds: int, valid: bool) -> None:
+    """The limit is positive, and at most a year."""
+    if valid:
+        assert Polling(max_cancel_time=seconds).max_cancel_time == seconds
+    else:
+        with pytest.raises(ValidationError):
+            Polling(max_cancel_time=seconds)
+
+
+def cancel_expired(tasks: Collection[dict[str, Any]], polling: Polling) -> None:
+    """Store the task as canceled longer than `max_cancel_time` ago."""
+    canceled_at = time.time() - polling.max_cancel_time - 1
+    tasks.update_one(
+        {},
+        {"$set": {"task.state": "CANCELING", "tracking.canceled_at": canceled_at}},
+    )
+
+
+@pytest.mark.parametrize("state", ["RUNNING", None])
 def test_cancel_time_exceeded(
     tasks: Collection[dict[str, Any]],
     client_class: type[FakeClient],
     scheduled: list[dict[str, Any]],
     polling: Polling,
     caplog: pytest.LogCaptureFixture,
-    states: list[str | None],
+    state: str | None,
 ) -> None:
     """Tasks still being canceled after `max_cancel_time` fail, untracked.
 
-    Whether the backend reports them as unfinished or doesn't answer; a
-    delivery of the same poll again doesn't track them either.
+    Whether the backend reports them as unfinished or doesn't answer.
     """
-    client_class.states = states
-    canceled_at = time.time() - polling.max_cancel_time - 1
-    tasks.update_one(
-        {},
-        {"$set": {"task.state": "CANCELING", "tracking.canceled_at": canceled_at}},
-    )
-    run(poll="p1")
+    client_class.states = [state]
+    cancel_expired(tasks, polling)
+    run()
     document = tasks.find_one({})
     assert document is not None
     assert document["task"]["state"] == "SYSTEM_ERROR"
     assert not scheduled
     assert "not canceled within 3600 seconds" in caplog.text
+
+
+def test_cancel_time_exceeded_redelivered(
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+    scheduled: list[dict[str, Any]],
+    polling: Polling,
+) -> None:
+    """A poll delivered again after the tracking ended doesn't resume it."""
     client_class.states = ["RUNNING"]
+    cancel_expired(tasks, polling)
+    run(poll="p1")
     run(poll="p1")
     document = tasks.find_one({})
     assert document is not None
@@ -1163,6 +1188,67 @@ def test_cancel_time_not_exceeded(
     assert document is not None
     assert document["task"]["state"] == "CANCELING"
     assert len(scheduled) == 1
+
+
+@pytest.mark.parametrize("state", ["RUNNING", None])
+def test_cancel_time_exceeded_concurrently(
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+    scheduled: list[dict[str, Any]],
+    polling: Polling,
+    monkeypatch: pytest.MonkeyPatch,
+    state: str | None,
+) -> None:
+    """A delivery of the poll that runs meanwhile doesn't resume the tracking.
+
+    E.g., a delivery of the same poll that ends the tracking while this one
+    waits for the backend: neither its state nor a failure is stored over
+    `SYSTEM_ERROR`, and the task is not resumed.
+    """
+    polling.attempts = 1
+    get_task = client_class.get_task
+
+    def ended_meanwhile(self: FakeClient, task_id: str, **kwargs: Any) -> tes.Task:
+        """End the tracking, as another delivery would, then answer."""
+        track_task_progress._cancel_timed_out(
+            collection=tasks, worker_id=ARGS["worker_id"]
+        )
+        return get_task(self, task_id, **kwargs)
+
+    monkeypatch.setattr(client_class, "get_task", ended_meanwhile)
+    client_class.states = [state]
+    cancel_expired(tasks, polling)
+    run(poll="p1")
+    document = tasks.find_one({})
+    assert document is not None
+    assert document["task"]["state"] == "SYSTEM_ERROR"
+    tasks.update_one({}, {"$set": {"tracking.polled_at": 0.0}})
+    scheduled.clear()
+    assert track_task_progress.task__resume_tracking.run() == 0
+
+
+def test_cancel_time_backend_gone_wins(
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+    scheduled: list[dict[str, Any]],
+    polling: Polling,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A backend that no longer has the task makes it `CANCELED`, also late."""
+
+    def get_task(self: FakeClient, task_id: str, **kwargs: Any) -> tes.Task:
+        """Answer that the task is gone."""
+        response = requests.Response()
+        response.status_code = 404
+        raise requests.HTTPError("404", response=response)
+
+    monkeypatch.setattr(client_class, "get_task", get_task)
+    cancel_expired(tasks, polling)
+    run()
+    document = tasks.find_one({})
+    assert document is not None
+    assert document["task"]["state"] == "CANCELED"
+    assert not scheduled
 
 
 def test_cancel_time_final_state_wins(

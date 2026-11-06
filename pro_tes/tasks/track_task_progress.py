@@ -59,7 +59,9 @@ FAILURES_FIELD = "tracking.failures"
 # were canceled, after which their tracking gives up (`max_cancel_time`)
 CANCELED_AT_FIELD = "tracking.canceled_at"
 # Identifier of the poll of tasks whose tracking ended without a final state
-# of their backend, which no poll claims
+# of their backend (`SYSTEM_ERROR`): no poll claims it, and polls running
+# meanwhile (e.g., another delivery of the same poll) store no unfinished
+# state over it (`_store_state`), so that the task is never resumed
 TRACKING_ENDED = "ended"
 # Tasks not polled for this many times `polling.max_wait` are resumed by
 # `task__resume_tracking`, which runs every `polling.max_wait` seconds
@@ -184,13 +186,16 @@ def _store_state(
             `CANCELED` of tasks stored by earlier versions) is kept: backends
             cancel tasks asynchronously, and may report them as running (or
             be unreachable) for a while; also if the task is canceled while
-            it is polled.
+            it is polled. Neither is a task whose tracking ended meanwhile
+            (cf. :py:func:`_cancel_timed_out`), e.g., by another delivery of
+            the poll.
     """
     query: dict[str, Any] = {"worker_id": worker_id}
     if keep_canceled:
         query["task.state"] = {
             "$nin": [TesState.CANCELED.value, TesState.CANCELING.value]
         }
+        query[POLL_FIELD] = {"$ne": TRACKING_ENDED}
     result = collection.update_one(query, {"$set": {"task.state": state}})
     if result.modified_count:
         logger.info("[%s] %s", worker_id, state)
@@ -646,10 +651,10 @@ def task__track_task_progress(
     stays `CANCELING` meanwhile, unless its backend answers that it no longer
     has the task (`404`): then it is `CANCELED`, and tracking ends; after
     `polling.max_cancel_time` seconds, it is `SYSTEM_ERROR`, and tracking ends
-    too (cf. :py:func:`_cancel_timed_out`). Polls that fail
-    because MongoDB is unavailable are retried, with the same arguments,
-    after up to `polling.max_wait` seconds, until it is available again;
-    polls that fail because the broker is unavailable go back to it.
+    too. Polls that fail because MongoDB is unavailable are retried, with the
+    same arguments, after up to `polling.max_wait` seconds, until it is
+    available again; polls that fail because the broker is unavailable go back
+    to it.
 
     proTES authenticates at the TES service as configured for it (see
     :py:mod:`pro_tes.ga4gh.tes.backends`), with fresh credentials for each
@@ -735,12 +740,7 @@ def task__resume_tracking() -> int:
     stale = time.time() - STALE_FACTOR * max(polling.max_wait, polling.wait)
     collection = get_collection(TASK_DB, TASK_COLLECTION)
     _fail_cut_off(collection=collection, max_create_time=post_task.max_create_time)
-    # tasks canceled by earlier versions, without the time of their cancel:
-    # `max_cancel_time` counts from now
-    collection.update_many(
-        {"task.state": TesState.CANCELING.value, CANCELED_AT_FIELD: {"$exists": False}},
-        {"$set": {CANCELED_AT_FIELD: time.time()}},
-    )
+    _stamp_earlier_cancels(collection=collection)
     query = {
         "task.state": {"$in": States.UNFINISHED},
         "tes_endpoint.host": {"$nin": ["", None]},
@@ -777,6 +777,23 @@ def task__resume_tracking() -> int:
         resumed += 1
     logger.info("Resumed the tracking of %d unfinished tasks", resumed)
     return resumed
+
+
+def _stamp_earlier_cancels(collection: Collection[dict[str, Any]]) -> None:
+    """Store a time of cancel for tasks canceled by versions before 0.6.0.
+
+    They have none, so `polling.max_cancel_time` counts from now. Runs with
+    each resume, not only once: during a rolling upgrade, instances of the app
+    of an earlier version may still cancel tasks. Can be removed once upgrades
+    from earlier versions are no longer supported.
+
+    Args:
+        collection: Database collection of the tasks.
+    """
+    collection.update_many(
+        {"task.state": TesState.CANCELING.value, CANCELED_AT_FIELD: {"$exists": False}},
+        {"$set": {CANCELED_AT_FIELD: time.time()}},
+    )
 
 
 def _fail_cut_off(collection: Collection[dict[str, Any]], max_create_time: int) -> int:
