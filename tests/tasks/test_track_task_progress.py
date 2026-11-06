@@ -1299,6 +1299,34 @@ def test_cancel_time_set_for_earlier_versions(
     assert current["tracking"]["canceled_at"] == 1.0
 
 
+@pytest.mark.parametrize("state", ["RUNNING", "CANCELING"])
+def test_ended_tracking_stays_failed(
+    tasks: Collection[dict[str, Any]], scheduled: list[dict[str, Any]], state: str
+) -> None:
+    """Unfinished tasks whose tracking ended are set to `SYSTEM_ERROR` again.
+
+    E.g., if a worker of an earlier version stored a state over the end
+    during a rolling upgrade, and the task was canceled again then; their
+    tracking isn't resumed.
+    """
+    endpoint = {"host": ARGS["remote_host"], "base_path": "", "task_id": "remote-1"}
+    tasks.update_one(
+        {},
+        {
+            "$set": {
+                "task.state": state,
+                "tes_endpoint": endpoint,
+                "tracking": {"poll": track_task_progress.TRACKING_ENDED},
+            }
+        },
+    )
+    assert track_task_progress.task__resume_tracking.run() == 0
+    assert not scheduled
+    document = tasks.find_one({})
+    assert document is not None
+    assert document["task"]["state"] == "SYSTEM_ERROR"
+
+
 def test_cancelation_not_overwritten(tasks: Collection[dict[str, Any]]) -> None:
     """States of polls don't overwrite a cancelation stored meanwhile.
 

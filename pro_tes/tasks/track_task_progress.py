@@ -730,7 +730,8 @@ def task__resume_tracking() -> int:
     over from the stored one, so that a chain that still tracks the task
     ends. Run when a worker starts, and then periodically (cf.
     :py:func:`resume_tracking_on_start`); idempotent. Tasks whose creation
-    was cut off are set to `SYSTEM_ERROR` first (cf. :py:func:`_fail_cut_off`).
+    was cut off are set to `SYSTEM_ERROR` first (cf. :py:func:`_fail_cut_off`),
+    as are unfinished tasks whose tracking ended (cf. :py:func:`_fail_ended`).
 
     Returns:
         Number of tasks whose tracking is resumed.
@@ -741,11 +742,13 @@ def task__resume_tracking() -> int:
     collection = get_collection(TASK_DB, TASK_COLLECTION)
     _fail_cut_off(collection=collection, max_create_time=post_task.max_create_time)
     _stamp_earlier_cancels(collection=collection)
+    _fail_ended(collection=collection)
     query = {
         "task.state": {"$in": States.UNFINISHED},
         "tes_endpoint.host": {"$nin": ["", None]},
         "tes_endpoint.task_id": {"$type": "string"},
         # also if a worker of an earlier version stored a state over the end
+        # since
         POLL_FIELD: {"$ne": TRACKING_ENDED},
         "$or": [
             {POLLED_AT_FIELD: {"$exists": False}},
@@ -782,12 +785,14 @@ def task__resume_tracking() -> int:
 
 
 def _stamp_earlier_cancels(collection: Collection[dict[str, Any]]) -> None:
-    """Store a time of cancel for tasks canceled by versions before 0.6.0.
+    """Store a time of cancel for `CANCELING` tasks without one.
 
-    They have none, so `polling.max_cancel_time` counts from now. Runs with
-    each resume, not only once: during a rolling upgrade, instances of the app
-    of an earlier version may still cancel tasks. Can be removed once upgrades
-    from earlier versions are no longer supported.
+    They have none if versions before 0.6.0 canceled them (during a rolling
+    upgrade, instances of the app of an earlier version may still cancel
+    tasks, so this runs with each resume, not only once), or if a poll
+    stored `CANCELING` (as reported by their TES instance) before the
+    cancel did, so that the cancel kept that state. `polling.max_cancel_time`
+    then counts from now.
 
     Args:
         collection: Database collection of the tasks.
@@ -796,6 +801,28 @@ def _stamp_earlier_cancels(collection: Collection[dict[str, Any]]) -> None:
         {"task.state": TesState.CANCELING.value, CANCELED_AT_FIELD: {"$exists": False}},
         {"$set": {CANCELED_AT_FIELD: time.time()}},
     )
+
+
+def _fail_ended(collection: Collection[dict[str, Any]]) -> None:
+    """Set unfinished tasks whose tracking ended to `SYSTEM_ERROR` again.
+
+    Tracking ends with `SYSTEM_ERROR` (cf. :py:func:`_cancel_timed_out`); a
+    worker of a version before 0.6.0 may still store an unfinished state
+    over it during a rolling upgrade, and the task may then be canceled
+    again. No poll tracks such tasks.
+
+    Args:
+        collection: Database collection of the tasks.
+    """
+    result = collection.update_many(
+        {"task.state": {"$in": States.UNFINISHED}, POLL_FIELD: TRACKING_ENDED},
+        {"$set": {"task.state": TesState.SYSTEM_ERROR.value}},
+    )
+    if result.modified_count:
+        logger.warning(
+            "Set %d tasks whose tracking ended to SYSTEM_ERROR again",
+            result.modified_count,
+        )
 
 
 def _fail_cut_off(collection: Collection[dict[str, Any]], max_create_time: int) -> int:
