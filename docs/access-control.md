@@ -244,7 +244,8 @@ the registry's entry, `client_credentials` or `none`):
   transitional mode for TES instances that don't accept tokens yet, and will
   be removed once all of them do;
 - `none`: without credentials, e.g., for TES instances on an internal
-  network that need none.
+  network that need none (also none from a `.netrc` file of the
+  environment).
 
 The client ID and secret of proTES are read from the environment variables
 `PROTES_CLIENT_ID` and `PROTES_CLIENT_SECRET`, and Basic credentials from

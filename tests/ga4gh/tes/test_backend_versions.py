@@ -1,6 +1,7 @@
 """Tests of the TES versions of backends."""
 
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any, ClassVar
 
 from connexion import FlaskApp
@@ -297,6 +298,42 @@ def test_probe_refused_no_credentials(
     assert "probe_with_token" not in caplog.text
 
 
+def test_probe_without_config(
+    client: type[FakeClient], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without the config, the version is the oldest one, as for failures."""
+
+    def no_config(*_: Any, **__: Any) -> Any:
+        """Fail, as outside of an app context."""
+        raise RuntimeError("no app context")
+
+    monkeypatch.setattr(backends, "get_custom_config", no_config)
+    assert backend_version(BACKEND) == V10
+    assert client.calls == 0
+
+
+def test_probe_without_netrc_credentials(
+    app: FlaskApp, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Requests without credentials don't get those of a `.netrc` file."""
+    netrc = tmp_path / "netrc"
+    netrc.write_text("machine tes.example.org login user password secret\n")
+    netrc.chmod(0o600)
+    monkeypatch.setenv("NETRC", str(netrc))
+    session = requests.Session()
+    with app.app.app_context():
+        get_custom_config(CustomConfig).tes.backends = tes_backends(URL)
+        client = backends.client_for(Backend(id=URL, url=URL, auth="none"))
+        kwargs = client._request_params(auth="none")
+    # `requests` would use the file without credentials of the request
+    ambient = session.prepare_request(requests.Request("GET", f"{URL}/x"))
+    assert "Authorization" in ambient.headers
+    prepared = session.prepare_request(
+        requests.Request("GET", f"{URL}/x", auth=kwargs.get("auth"))
+    )
+    assert "Authorization" not in prepared.headers
+
+
 def test_probe_without_basic_credentials(
     app: FlaskApp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -322,7 +359,7 @@ def test_probe_without_basic_credentials(
             basic={"username_env": "TES_USER", "password_env": "TES_PASSWORD"},
         )
         backend_version(backend)
-    assert "auth" not in kwargs_sent[0]
+    assert kwargs_sent[0]["auth"] is backends.no_auth
 
 
 @pytest.mark.parametrize("with_token", [False, True])
