@@ -1055,6 +1055,8 @@ def test_response_size_limit(
     """
     client = backends.create_client(host=task_server)
     assert client.get_task("remote-1", view=view).name == "x" * 5000
+    # below the minimum of the setting, so that the task is too large (the
+    # config of each test is new)
     get_custom_config(CustomConfig).tes.max_response_size = 1000
     client = backends.create_client(host=task_server)
     with pytest.raises(BackendResponseTooLarge, match="larger than 1000 bytes"):
@@ -1065,7 +1067,9 @@ def test_response_size_limit(
     assert task_server in record.getMessage()
 
 
-def test_response_size_limit_post(task_server: str) -> None:
+def test_response_size_limit_post(
+    task_server: str, caplog: pytest.LogCaptureFixture
+) -> None:
     """Tasks whose creation is answered with too much are of unknown outcome."""
     get_custom_config(CustomConfig).tes.max_response_size = 1000
     client = backends.create_client(host=task_server)
@@ -1073,6 +1077,31 @@ def test_response_size_limit_post(task_server: str) -> None:
         create_task(client)
     assert info.value.reason == "response_too_large"
     assert isinstance(info.value.__cause__, BackendResponseTooLarge)
+    (record,) = [r for r in caplog.records if r.levelname == "ERROR"]
+    assert "larger than 1000 bytes" in record.getMessage()
+
+
+def test_read_limited_stops() -> None:
+    """Bodies are read up to the limit and a part more, not to their end."""
+    response = FakeResponse({"name": "x" * 10 * backends.RESPONSE_CHUNK_SIZE})
+    with pytest.raises(BackendResponseTooLarge):
+        backends.read_limited(
+            response,  # type: ignore[arg-type]
+            max_size=backends.RESPONSE_CHUNK_SIZE,
+        )
+    assert len(response.raw.data) > 7 * backends.RESPONSE_CHUNK_SIZE
+
+
+@pytest.mark.parametrize("status", [302, 400, 404, 413, 500])
+def test_read_limited_error_status(status: int) -> None:
+    """Large answers with error statuses are cut off; their status decides.
+
+    E.g., error pages of gateways, so that refusals stay refusals.
+    """
+    response = FakeResponse({"error": "x" * 5000}, status_code=status)
+    read = backends.read_limited(response, max_size=1000)  # type: ignore[arg-type]
+    assert read is response
+    assert len(response._content) == 1000  # type: ignore[attr-defined]
 
 
 class DrippingHandler(BaseHTTPRequestHandler):
@@ -1283,6 +1312,20 @@ def test_post_rejected(
         action(backends.create_client(host=NONE_URL))
     assert info.value.response.status_code == status
     assert len(fake.sent) == 1
+
+
+@pytest.mark.parametrize("status", [400, 413])
+@pytest.mark.parametrize("action", [create, cancel])
+def test_post_rejected_large(
+    post: Callable[..., FakePost],
+    status: int,
+    action: Callable[[backends.TesClient], None],
+) -> None:
+    """Refusals with bodies over the limit are refusals, not unknown outcomes."""
+    get_custom_config(CustomConfig).tes.max_response_size = 1000
+    post(FakeResponse({"error": "x" * 5000}, status_code=status))
+    with pytest.raises(requests.HTTPError, match=f"status {status}"):
+        action(backends.create_client(host=NONE_URL))
 
 
 @pytest.mark.parametrize("body", [None, [], {}, {"id": ""}, {"id": 1}])

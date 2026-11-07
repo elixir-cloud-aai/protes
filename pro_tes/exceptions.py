@@ -81,7 +81,8 @@ class BackendOutcomeUnknown(RuntimeError):
     backend nor to other backends, so that tasks are never created twice.
 
     Attributes:
-        reason: Reason code, e.g., `read_timeout` or `http_502` (cf.
+        reason: Reason code, e.g., `read_timeout`, `http_502` or
+            `response_too_large` (cf.
             :py:class:`foca.plugins.OutcomeUnknown`).
     """
 

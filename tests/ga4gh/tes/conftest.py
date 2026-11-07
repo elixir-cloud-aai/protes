@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 from importlib.metadata import entry_points
+import io
 from pathlib import Path
 import socket
 from typing import Any, ClassVar
@@ -24,6 +25,7 @@ from pymongo import MongoClient
 import pytest
 import requests
 import tes
+from urllib3 import HTTPResponse
 import yaml
 
 from pro_tes.app import init_app
@@ -178,6 +180,22 @@ def backend(
     with app.app.app_context():
         get_custom_config(CustomConfig).tes.backends = tes_backends(*BACKENDS)
     return FakeBackend
+
+
+def raw_body(body: bytes) -> HTTPResponse:
+    """Get the raw body of a response of `requests`, as sent by a backend.
+
+    proTES streams the responses of backends (cf.
+    :py:func:`pro_tes.ga4gh.tes.backends.read_limited`), so fake responses
+    need one.
+
+    Args:
+        body: The body.
+
+    Returns:
+        The raw body.
+    """
+    return HTTPResponse(body=io.BytesIO(body), preload_content=False)
 
 
 def tes_backends(*urls: str, **settings: Any) -> BackendListConfig:

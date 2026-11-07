@@ -99,13 +99,19 @@ forwards tasks to itself: proTES refuses to start if a configured one is.
 proTES reads at most `custom.tes.max_response_size` bytes of each response
 of a TES instance (default: 10485760, i.e., 10 MiB; from 1 MiB to 256 MiB),
 configured or discovered: a larger response fails, with an error in the logs
-(`Response of TES backend larger than ...`), and the rest of it is not read.
+(`Response of TES backend larger than ...`), and the rest of it is not read
+(error answers of configured TES instances, with statuses other than 2xx,
+are cut off instead, as their status decides; compressed responses count
+with their decompressed size).
 This bounds the memory that each request takes, as a response is held in
 memory while it is parsed, which takes about 7 times its size. A larger
 response to a request to create a task counts as an unknown outcome, as the
-TES instance got the request (see below); one to a request for a task's
-state counts as a failed poll; one with the logs of a finished task leaves
-the task without them (see [Tasks](#tasks)). Raise the limit, and the memory
+TES instance got the request (see below), and so does one to a request to
+cancel a task; one to a request for a task's state counts as a failed poll;
+one with the logs of a finished task leaves the task without them (see
+[Tasks](#tasks)); one with the service info of a discovered TES instance,
+read for its API path, means that the API path is unknown, so that tasks go
+to other TES instances (see [API paths](#api-paths)). Raise the limit, and the memory
 of the app and of the Celery worker with it, for TES instances whose logs
 proTES should store in full (`post_task.max_log_size`).
 

@@ -1,7 +1,6 @@
 """Tests of the TES versions of backends."""
 
 from collections.abc import Iterator
-import io
 from typing import Any, ClassVar
 
 from connexion import FlaskApp
@@ -10,7 +9,6 @@ from foca.plugins import Backend
 import pydantic
 import pytest
 import requests
-from urllib3 import HTTPResponse
 
 from pro_tes.config_models import CustomConfig, Tes
 from pro_tes.ga4gh.tes import backends
@@ -21,7 +19,7 @@ from pro_tes.ga4gh.tes.backends import (
     reported_version,
 )
 from pro_tes.ga4gh.tes.versions import TesVersion
-from tests.ga4gh.tes.conftest import tes_backends
+from tests.ga4gh.tes.conftest import raw_body, tes_backends
 
 URL = "https://tes.example.org"
 V10 = TesVersion(1, 0)
@@ -324,7 +322,7 @@ def test_probe_without_basic_credentials(
         kwargs_sent.append(kwargs)
         response = requests.Response()
         response.status_code = 200
-        response.raw = HTTPResponse(body=io.BytesIO(b"{}"), preload_content=False)
+        response.raw = raw_body(b"{}")
         return response
 
     monkeypatch.setattr(requests, "request", request)
@@ -354,10 +352,7 @@ def test_probe_credentials_sent(
         headers.append(kwargs["headers"])
         response = requests.Response()
         response.status_code = 200
-        response.raw = HTTPResponse(
-            body=io.BytesIO(b'{"type": {"group": "org.ga4gh", "artifact": "tes"}}'),
-            preload_content=False,
-        )
+        response.raw = raw_body(b'{"type": {"group": "org.ga4gh", "artifact": "tes"}}')
         return response
 
     def get_token(*_: Any, **__: Any) -> str:
@@ -390,9 +385,7 @@ def test_service_info_request(app: FlaskApp, monkeypatch: pytest.MonkeyPatch) ->
         calls.append((method, url, timeout))
         response = requests.Response()
         response.status_code = 200
-        response.raw = HTTPResponse(
-            body=io.BytesIO(b'{"type": {}}'), preload_content=False
-        )
+        response.raw = raw_body(b'{"type": {}}')
         return response
 
     monkeypatch.setattr(requests, "request", request)
@@ -480,10 +473,7 @@ def test_get_task_upgraded(app: FlaskApp, monkeypatch: pytest.MonkeyPatch) -> No
         """Serve a task."""
         response = requests.Response()
         response.status_code = 200
-        response.raw = HTTPResponse(
-            body=io.BytesIO(b'{"id": "a", "state": "QUEUED", "executors": []}'),
-            preload_content=False,
-        )
+        response.raw = raw_body(b'{"id": "a", "state": "QUEUED", "executors": []}')
         return response
 
     monkeypatch.setattr(requests, "request", request)
@@ -507,10 +497,7 @@ def test_get_task_reads_no_service_info(
         urls.append(url)
         response = requests.Response()
         response.status_code = 200
-        response.raw = HTTPResponse(
-            body=io.BytesIO(b'{"id": "a", "state": "QUEUED", "executors": []}'),
-            preload_content=False,
-        )
+        response.raw = raw_body(b'{"id": "a", "state": "QUEUED", "executors": []}')
         return response
 
     monkeypatch.setattr(requests, "request", request)

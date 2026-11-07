@@ -972,9 +972,11 @@ class TesClient(tes.HTTPClient):
             url: URL of the request.
             timeout: Timeouts of connecting and of reading, in seconds
                 (configured backends only).
-            limited: Whether the response of a configured backend must also be
+            limited: Whether the response of a configured backend must be
                 read within the timeout as a whole, like all of discovered
-                backends (e.g., tasks in the view `FULL`).
+                backends (e.g., tasks in the view `FULL`); otherwise the
+                timeout counts time without data. The size of responses is
+                limited either way (`max_response_size`).
             **kwargs: Other arguments of `requests.request()`; for discovered
                 backends, only `params`, `headers`, `data` and `auth`.
 
@@ -1107,6 +1109,9 @@ def read_limited(
 ) -> requests.Response:
     """Read the body of a streamed response, up to a size.
 
+    Bodies of answers with other statuses than 2xx are cut off at the size
+    instead, as their status decides how they are handled.
+
     Args:
         response: Streamed response.
         max_size: Maximum size of the body (decoded), in bytes.
@@ -1117,8 +1122,8 @@ def read_limited(
         The response, with its body.
 
     Raises:
-        pro_tes.exceptions.BackendResponseTooLarge: The body is larger (logged
-            as an error).
+        pro_tes.exceptions.BackendResponseTooLarge: The body of a 2xx answer
+            is larger (logged as an error).
         requests.ConnectionError: The body can't be read.
         requests.Timeout: Reading the body takes longer.
     """
@@ -1130,6 +1135,11 @@ def read_limited(
             while chunk := response.raw.read1(RESPONSE_CHUNK_SIZE, decode_content=True):
                 content += chunk
                 if len(content) > max_size:
+                    if not 200 <= response.status_code < 300:
+                        # error answers (e.g., pages of gateways): their
+                        # status decides, so that refusals stay refusals
+                        del content[max_size:]
+                        break
                     raise too_large(response.url, max_size)
                 if deadline is not None and time.monotonic() >= deadline:
                     raise requests.Timeout(
@@ -1680,7 +1690,6 @@ _REASONS: tuple[tuple[type[Exception], str], ...] = (
     (BackendAddressNotAllowed, "address_not_allowed"),
     (requests.ConnectTimeout, "connect_timeout"),
     (BackendRequestNotSent, "connect_error"),
-    (BackendResponseTooLarge, "response_too_large"),
 )
 
 

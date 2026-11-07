@@ -448,15 +448,27 @@ def seed_api_path(client: backends.TesClient) -> None:
 
 
 @pytest.mark.parametrize(
-    "error, expected",
+    "error, expected, reason",
     [
-        (HostNotResolved("x not resolved"), BackendAddressNotAllowed),
-        (http.RequestNotSent("x not reached"), BackendRequestNotSent),
-        (http.InvalidRequest("x", reason="invalid_header"), BackendRequestNotSent),
-        (http.InvalidRequestURL("x"), BackendRequestNotSent),
-        (http.RequestMaybeSent("x", reason="read_timeout"), requests.ReadTimeout),
-        (http.RequestMaybeSent("x lost"), requests.ConnectionError),
-        (http.ResponseTooLarge("x large"), BackendResponseTooLarge),
+        (
+            HostNotResolved("x not resolved"),
+            BackendAddressNotAllowed,
+            "address_not_allowed",
+        ),
+        (http.RequestNotSent("x not reached"), BackendRequestNotSent, "connect_error"),
+        (
+            http.InvalidRequest("x", reason="invalid_header"),
+            BackendRequestNotSent,
+            "connect_error",
+        ),
+        (http.InvalidRequestURL("x"), BackendRequestNotSent, "connect_error"),
+        (
+            http.RequestMaybeSent("x", reason="read_timeout"),
+            requests.ReadTimeout,
+            "connect_error",
+        ),
+        (http.RequestMaybeSent("x lost"), requests.ConnectionError, "connect_error"),
+        (http.ResponseTooLarge("x large"), BackendResponseTooLarge, "connect_error"),
     ],
 )
 def test_client_guarded_errors(
@@ -464,6 +476,7 @@ def test_client_guarded_errors(
     monkeypatch: pytest.MonkeyPatch,
     error: Exception,
     expected: type[Exception],
+    reason: str,
 ) -> None:
     """Errors of the guarded client are those of `requests`, as classified."""
     discovering.add("a", "https://tes1.example.org")
@@ -480,11 +493,31 @@ def test_client_guarded_errors(
         client.get_task("r1")
     assert isinstance(info.value, requests.RequestException)
     assert backends.not_sent(info.value) is issubclass(expected, BackendRequestNotSent)
-    assert backends.forward_reason(info.value) in {
-        "address_not_allowed",
-        "response_too_large",
-        "connect_error",
-    }
+    assert backends.forward_reason(info.value) == reason
+
+
+@pytest.mark.parametrize("method", ["GET", "POST"])
+def test_client_guarded_too_large_logged(
+    discovering: FakeRegistry,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    method: str,
+) -> None:
+    """Answers over the limit of discovered backends are logged as errors."""
+    discovering.add("a", "https://tes1.example.org")
+    client = backends.create_client(host="https://tes1.example.org")
+
+    def fail(*args: Any, **kwargs: Any) -> Any:
+        """Fail as the guarded client does."""
+        raise http.ResponseTooLarge("too large")
+
+    assert client.guarded is not None
+    monkeypatch.setattr(client.guarded, "request", fail)
+    with pytest.raises(BackendResponseTooLarge):
+        client._request(method, "https://tes1.example.org/x", timeout=(1, 1))
+    (record,) = [r for r in caplog.records if r.levelname == "ERROR"]
+    assert "custom.tes.max_response_size" in record.getMessage()
+    assert "https://tes1.example.org/x" in record.getMessage()
 
 
 @pytest.mark.parametrize(
