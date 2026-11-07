@@ -160,7 +160,15 @@ def test_rejection_logged(
 ) -> None:
     """Rejections are logged with the limit, without the user."""
     store_tasks(mongo_client, OWNER, "RUNNING")
-    with caplog.at_level("INFO"), pytest.raises(TaskLimitReached):
+    with (
+        caplog.at_level("INFO", logger="pro_tes.limits"),
+        pytest.raises(TaskLimitReached),
+    ):
         check(mongo_client, max_unfinished=1)
-    assert "`max_unfinished`" in caplog.text
-    assert OWNER not in caplog.text
+    (message,) = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name.startswith("pro_tes.limits")
+    ]
+    assert "`max_unfinished`" in message
+    assert OWNER not in message
