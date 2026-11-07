@@ -723,6 +723,8 @@ class TesClient(tes.HTTPClient):
         """
         path = outbound.path
         if path.startswith(f"{DEFAULT_API_PATH}/"):
+            if connect_timeout is not None and connect_timeout <= 0:
+                raise requests.ConnectTimeout(f"No time left to connect to {self.url}")
             started = time.monotonic()
             # discovered backends: may be read first, within the time left
             api_path = self.api_path
@@ -1224,16 +1226,27 @@ def is_tes(service_info: Any) -> bool:
     Returns:
         Whether its type is `org.ga4gh` `tes` (ignoring case), of any version.
     """
+    service_type = _service_type(service_info)
+    return service_type is not None and service_type == ("org.ga4gh", "tes")
+
+
+def _service_type(service_info: Any) -> tuple[str, str] | None:
+    """Get the group and artifact of a GA4GH service info, lowercase.
+
+    Args:
+        service_info: Service info, or any other answer of a backend.
+
+    Returns:
+        Its `type.group` and `type.artifact`; `None` if it isn't a service
+        info (e.g., a JSON page of a gateway in maintenance).
+    """
     service_type = service_info.get("type") if isinstance(service_info, dict) else None
     if not isinstance(service_type, dict):
-        return False
+        return None
     group, artifact = service_type.get("group"), service_type.get("artifact")
-    return (
-        isinstance(group, str)
-        and isinstance(artifact, str)
-        and group.lower() == "org.ga4gh"
-        and artifact.lower() == "tes"
-    )
+    if not isinstance(group, str) or not isinstance(artifact, str):
+        return None
+    return group.lower(), artifact.lower()
 
 
 class _Probe(NamedTuple):
@@ -1447,10 +1460,11 @@ class ApiPaths:
     answers with that of a TES service), else at the default API path below
     it, if the answer settles that: `404` or `410`, or another service info.
     Refusals (`401` or `403`) mean the default path too, as before 0.6.0,
-    but are read again after `PROBE_RETRY` seconds. Other answers (e.g.,
-    redirects, `429`, server errors, pages that aren't JSON) and failed
-    requests leave the path unknown: the path read before is kept for
-    `PROBE_RETRY` seconds, if any was settled; otherwise, no request is sent
+    but are read again after `PROBE_RETRY` seconds, and don't replace a
+    path settled before. Other answers (e.g., redirects, `429`, server
+    errors, pages that aren't JSON) and failed requests leave the path
+    unknown: the path read before is kept for `PROBE_RETRY` seconds, if any
+    was settled; otherwise, no request is sent
     (no path is guessed, as requests to a wrong path could take a task for
     gone, `404`). The service info is read as for TES versions (cf.
     :py:meth:`BackendVersions._probe`): without credentials, unless
@@ -1486,19 +1500,21 @@ class ApiPaths:
                 available (with `custom.tes.probe_with_token`).
         """
         cached = self._cache.get(client.url)
-        now = time.monotonic()
-        if cached is not None and now < cached.expires_at:
+        if cached is not None and time.monotonic() < cached.expires_at:
             return cached.path
+        settled = cached if cached is not None and cached.confirmed else None
         try:
             path, confirmed = self._read(client)
         except BackendRequestNotSent:
-            if cached is None or not cached.confirmed:
+            if settled is None:
                 raise
-            path, confirmed = cached.path, False
-        if not confirmed and cached is not None and cached.confirmed:
-            # e.g., a redirect of a gateway in maintenance
-            self._cache[client.url] = cached._replace(expires_at=now + PROBE_RETRY)
-            return cached.path
+            confirmed = False
+        if not confirmed and settled is not None:
+            # e.g., a redirect of a gateway in maintenance: keep it a while
+            self._cache[client.url] = settled._replace(
+                expires_at=time.monotonic() + PROBE_RETRY
+            )
+            return settled.path
         ttl = (
             get_custom_config(CustomConfig).tes.version_cache_ttl
             if confirmed
@@ -1546,23 +1562,21 @@ class ApiPaths:
             service_info = response.json() if 200 <= status < 300 else None
         except (ValueError, RecursionError):
             service_info = None
-        if service_info is not None:
-            if is_tes(service_info):
-                logger.debug("TES API of backend %s at its URL", client.url)
-                return "", True
+        service_type = _service_type(service_info)
+        if service_type == ("org.ga4gh", "tes"):
+            logger.debug("TES API of backend %s at its URL", client.url)
+            return "", True
+        if service_type is not None or status in API_PATH_NOT_FOUND:
             # e.g., the service info of a gateway in front of the backend
-            return DEFAULT_API_PATH, True
-        if status in API_PATH_NOT_FOUND:
             return DEFAULT_API_PATH, True
         if status in PROBE_REFUSED:
             if not with_token:
                 logger.warning(
                     "Service info of TES backend %s refused at its URL (status"
-                    " %d without credentials), using %s: list it as an entry of"
-                    " its own, with its `api_path`%s",
+                    " %d without credentials): list it as an entry of its own,"
+                    " with its `api_path`%s, if it serves the TES API there",
                     client.url,
                     status,
-                    DEFAULT_API_PATH,
                     token_hint(client.backend),
                 )
             return DEFAULT_API_PATH, False

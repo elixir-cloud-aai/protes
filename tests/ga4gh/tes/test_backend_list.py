@@ -771,8 +771,7 @@ def test_api_path_discovered_at_url(
         http.HttpResponse(status=404),
         http.HttpResponse(status=410),
         json_response({"type": {**TES_TYPE, "artifact": "service-registry"}}),
-        json_response({"id": "no-type"}),
-        json_response([]),
+        json_response({"type": {"group": "org.example", "artifact": "gateway"}}),
     ],
 )
 def test_api_path_discovered_default(
@@ -874,6 +873,9 @@ UNKNOWN_ANSWERS = [
     (http.HttpResponse(status=405), "status 405"),
     (http.HttpResponse(status=302, headers={"location": "https://x"}), "status 302"),
     (http.HttpResponse(status=200, content=b"<html></html>"), "status 200"),
+    (json_response({"status": "maintenance"}), "status 200"),
+    (json_response({"type": {"group": "org.ga4gh"}}), "status 200"),
+    (json_response([]), "status 200"),
     (http.RequestMaybeSent("lost"), "ConnectionError"),
     (http.RequestMaybeSent("slow", reason="read_timeout"), "ReadTimeout"),
     (http.ResponseTooLarge("large"), "ConnectionError"),
@@ -952,7 +954,7 @@ def test_api_path_discovered_kept(
 def test_api_path_discovered_refusal_keeps_path(
     discovering: FakeRegistry, fake_tes: FakeTes, clock: Clock
 ) -> None:
-    """Refusals don't replace a path that was settled."""
+    """Refusals don't replace a path that was settled; read again in a minute."""
     url = "https://tes1.example.org/v1"
     discovering.add("a", url)
     fake_tes.answers[f"{url}/service-info"] = json_response(SERVICE_INFO)
@@ -960,6 +962,11 @@ def test_api_path_discovered_refusal_keeps_path(
     clock.now += get_custom_config(CustomConfig).tes.version_cache_ttl
     fake_tes.answers[f"{url}/service-info"] = http.HttpResponse(status=403)
     assert backends.create_client(host=url).api_path == ""
+    assert backends.create_client(host=url).api_path == ""
+    assert len(fake_tes.sent) == 2
+    clock.now += backends.PROBE_RETRY
+    fake_tes.answers[f"{url}/service-info"] = http.HttpResponse(status=404)
+    assert backends.create_client(host=url).api_path == "/ga4gh/tes/v1"
 
 
 @pytest.mark.parametrize("probe_with_token", [False, True])
@@ -1031,6 +1038,21 @@ def test_api_path_discovered_time_left(
         client.forward(request, tes.Task(executors=[]), connect_timeout=2)
     assert backends.not_sent(info.value)
     assert fake_tes.urls == [f"{base}/service-info"]
+
+
+def test_api_path_discovered_no_time_left(
+    discovering: FakeRegistry, fake_tes: FakeTes
+) -> None:
+    """Without time left to forward, the API path isn't read either."""
+    discovering.add("a", "https://tes1.example.org")
+    client = backends.create_client(host="https://tes1.example.org")
+    request = OutboundRequest(
+        backend=client.backend, method="POST", path="/ga4gh/tes/v1/tasks"
+    )
+    with pytest.raises(requests.ConnectTimeout) as info:
+        client.forward(request, tes.Task(executors=[]), connect_timeout=0)
+    assert backends.not_sent(info.value)
+    assert not fake_tes.sent
 
 
 def test_api_path_discovered_version(

@@ -176,8 +176,8 @@ path in `url` is no alternative, as the default API path is appended to it
 [TESP](https://github.com/CESNET/tesp-api) (TESP-API with Pulsar) serves the
 TES API at `/v1` only, so a configured TESP needs `api_path: /v1`, unless a
 proxy in front of it rewrites the default path; one listed in a service
-registry with its path (e.g., `https://tesp.example.org/v1`) is found there. proTES also ignores the fields that TESP adds to
-tasks (see [TES versions](tes-versions.md#fields-that-tes-instances-add)).
+registry with its path (e.g., `https://tesp.example.org/v1`) is found there.
+proTES also ignores the fields that TESP adds to tasks (see [TES versions](tes-versions.md#fields-that-tes-instances-add)).
 
 Plugins always see the path of the API of proTES (`/ga4gh/tes/v1/tasks` in
 outbound requests, which they can't change): proTES applies `api_path` when it
@@ -202,9 +202,13 @@ and the path is cached per process for `custom.tes.version_cache_ttl`
 seconds. A TES instance that refuses anonymous reads at its URL (`401` or
 `403`) gets the default path, with a hint in the logs, and is asked again
 after 60 seconds. Other answers (e.g., redirects, `429`, server errors, or
-pages that aren't JSON) and failed requests leave the path unknown: proTES
-keeps the path it found before for another 60 seconds, if any; otherwise,
-it sends no request to the TES instance, and caches nothing, so that tasks
+JSON that isn't a service info) and failed requests leave the path unknown.
+While a refusal or an unknown answer follows a path that was settled
+before (by a TES service info, `404` or `410`, or another service info),
+proTES keeps that path, and asks again every 60 seconds; a default path
+taken after a refusal is not kept this way. Otherwise, while the path is
+unknown, proTES sends no request to the TES instance, and caches nothing,
+so that tasks
 go to other TES instances, and tracking tries again with its next poll (a
 request to a wrong path could make a task count as gone). The version of a
 discovered TES instance is then read below the path found, so its first

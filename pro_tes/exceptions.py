@@ -46,7 +46,10 @@ class BackendRequestNotSent(requests.ConnectionError):
     """Raised when a request to a discovered TES backend was certainly not sent.
 
     E.g., because connecting failed or timed out (cf.
-    :py:class:`foca.utils.http.RequestNotSent`). A connection error, so that
+    :py:class:`foca.utils.http.RequestNotSent`), or because the API path of
+    the backend is unknown, so that the request was not made (cf.
+    :py:class:`pro_tes.ga4gh.tes.backends.ApiPaths`; reading the service
+    info for it may have reached the backend). A connection error, so that
     proTES handles it as it handles unreachable backends.
     """
 
