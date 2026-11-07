@@ -704,11 +704,119 @@ def test_list_tasks_last_page_full(client: FlaskClient, task_id: str) -> None:
     assert page["next_page_token"] == ""
 
 
+def full_size(task: dict[str, Any]) -> int:
+    """Get the size of a task as counted against `max_page_bytes_full`.
+
+    Args:
+        task: Task, as served.
+
+    Returns:
+        Size of the task in the response body, in bytes.
+    """
+    return task_runs.served_size(task)
+
+
+def test_list_tasks_served_size(
+    client: FlaskClient, backend: type[FakeBackend]
+) -> None:
+    """Tasks are counted with their size in the response body.
+
+    The body is indented JSON; the tasks, with non-ASCII characters, take
+    the body less the envelope of the page and the separators of the tasks.
+    """
+    create_tasks(client, ["\u00e9t\u00e9", "b" * 100])
+    empty = client.get(
+        f"{BASE_PATH}/tasks", query_string={"view": "FULL", "state": "COMPLETE"}
+    )
+    response = client.get(f"{BASE_PATH}/tasks", query_string={"view": "FULL"})
+    tasks = response.get_json()["tasks"]
+    envelope = len(empty.data) + len("\n    ") + len("\n  ")
+    separators = len(",\n    ") * (len(tasks) - 1)
+    assert len(response.data) == envelope + separators + sum(
+        full_size(task) for task in tasks
+    )
+
+
+def test_list_tasks_full_batches(
+    client: FlaskClient,
+    backend: type[FakeBackend],
+    mongo_client: MongoClient[dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tasks of the view `FULL` are fetched one at a time.
+
+    So that the driver loads no task beyond the end of a page.
+    """
+    create_tasks(client, ["a", "b"])
+    cursor_class = type(mongo_client[DB]["tasks"].find())
+    batch_sizes: list[int] = []
+    batch_size = cursor_class.batch_size
+
+    def spy(cursor: Any, size: int) -> Any:
+        batch_sizes.append(size)
+        return batch_size(cursor, size)
+
+    monkeypatch.setattr(cursor_class, "batch_size", spy)
+    list_tasks(client, view="BASIC")
+    assert batch_sizes == []
+    assert len(list_tasks(client, view="FULL")["tasks"]) == 2
+    assert batch_sizes == [1]
+
+
+def test_list_tasks_page_bytes_full(
+    app: FlaskApp, client: FlaskClient, backend: type[FakeBackend]
+) -> None:
+    """Pages of the view `FULL` end before their tasks exceed a size in bytes.
+
+    The next page continues after the last task served; the number of tasks
+    is still limited by `max_page_size_full`, and other views by count
+    only.
+    """
+    # the newest task is larger than the others, which are of equal size: a
+    # page of it and two others fits the bound exactly, a third would not
+    ids = create_tasks(client, ["e", "d", "c", "b", "a" * 100])
+    first, *others = list_tasks(client, view="FULL")["tasks"]
+    assert first["id"] == ids[0]
+    size = full_size(others[0])
+    assert all(full_size(task) == size for task in others[1:])
+    with app.app.app_context():
+        config = get_custom_config(CustomConfig).controllers.list_tasks
+        config.max_page_bytes_full = full_size(first) + 2 * size
+    page = list_tasks(client, view="FULL")
+    assert [task["id"] for task in page["tasks"]] == ids[:3]
+    page = list_tasks(client, view="FULL", page_token=page["next_page_token"])
+    assert [task["id"] for task in page["tasks"]] == ids[3:]
+    assert page["next_page_token"] == ""
+    with app.app.app_context():
+        config.max_page_size_full = 2
+    page = list_tasks(client, view="FULL")
+    assert [task["id"] for task in page["tasks"]] == ids[:2]
+    assert len(list_tasks(client, view="BASIC")["tasks"]) == 5
+
+
+def test_list_tasks_page_bytes_one_task(
+    app: FlaskApp, client: FlaskClient, backend: type[FakeBackend]
+) -> None:
+    """Pages of the view `FULL` hold at least one task, however large."""
+    ids = create_tasks(client, ["a", "b"])
+    with app.app.app_context():
+        config = get_custom_config(CustomConfig).controllers.list_tasks
+        config.max_page_bytes_full = 1
+    page = list_tasks(client, view="FULL")
+    assert [task["id"] for task in page["tasks"]] == [ids[0]]
+    page = list_tasks(client, view="FULL", page_token=page["next_page_token"])
+    assert [task["id"] for task in page["tasks"]] == [ids[1]]
+    assert page["next_page_token"] == ""
+
+
 def test_page_size_config() -> None:
     """The default page size must not exceed the maximum."""
     assert ListTasks().default_page_size == 256
     assert ListTasks().max_page_size == 2047
     assert ListTasks().max_page_size_full == 64
+    assert ListTasks().max_page_bytes_full == 10485760
+    with pytest.raises(ValidationError):
+        ListTasks(max_page_bytes_full=0)
     with pytest.raises(ValidationError):
         ListTasks(max_page_size_full=0)
     with pytest.raises(ValidationError, match="exceeds max_page_size"):

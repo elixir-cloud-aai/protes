@@ -361,7 +361,12 @@ def test_values_of_library() -> None:
 
 
 # The custom config that the chart sets by default
-FULL_PAGE_DEFAULT = {"controllers": {"list_tasks": {"max_page_size_full": 6}}}
+# (pages of the view `FULL` within the memory limit, for 4 threads)
+FULL_PAGE_DEFAULT = {
+    "controllers": {
+        "list_tasks": {"max_page_size_full": 6, "max_page_bytes_full": 4194304}
+    }
+}
 
 
 def test_config_overlay() -> None:

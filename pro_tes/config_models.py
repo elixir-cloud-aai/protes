@@ -171,6 +171,9 @@ class ListTasks(ConfigModel):
         max_page_size_full: Maximum number of tasks per page of the view
             `FULL` (with the logs and the contents of inputs); larger page
             sizes are reduced to it (and to `max_page_size`).
+        max_page_bytes_full: Maximum size of the tasks of a page of the view
+            `FULL`, in bytes of the response body; a page ends before the task that
+            would exceed it, but has at least one task.
 
     Attributes:
         default_page_size: Number of tasks per page if the request sets no
@@ -179,6 +182,8 @@ class ListTasks(ConfigModel):
             page sizes are reduced to it.
         max_page_size_full: Maximum number of tasks per page of the view
             `FULL`.
+        max_page_bytes_full: Maximum size of the tasks of a page of the view
+            `FULL`, in bytes of the response body.
     """
 
     default_page_size: PositiveInt = 256
@@ -186,6 +191,8 @@ class ListTasks(ConfigModel):
     max_page_size: PositiveInt = Field(default=2047, le=2047)
     # full tasks may be large (e.g., with inline contents of inputs)
     max_page_size_full: PositiveInt = 64
+    # full tasks may be large also in few numbers (e.g., with long logs)
+    max_page_bytes_full: PositiveInt = 10485760
 
     @model_validator(mode="after")
     def check_default_page_size(self) -> "ListTasks":

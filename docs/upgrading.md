@@ -136,6 +136,17 @@ count from when they were forwarded or created, not from when they
 finished: set `finished_days` with that in mind. proTES creates a new index
 on the tasks (`task.state`, `_id`) on its first start, for the retention.
 
+**Size of pages of the view `FULL`:** pages of `GET /tasks?view=FULL` now
+also end before their tasks exceed
+`custom.controllers.list_tasks.max_page_bytes_full` bytes (default
+10 MiB, and 4 MiB in the Helm chart; a page has at least one task), besides
+`max_page_size_full` tasks.
+So pages with large tasks (e.g., long logs) hold fewer tasks than before,
+and clients that page with `next_page_token` get all tasks as before; a
+client that reads only the first page may get fewer tasks. Raise the setting
+with the memory of the app to keep larger pages (see
+[Tasks](configuration.md#tasks)).
+
 ## To version 0.5.0
 
 **Routing default:** 0.4.0 routed tasks by the distance to their input data

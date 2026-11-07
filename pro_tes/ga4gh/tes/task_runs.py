@@ -7,6 +7,7 @@ from dataclasses import replace
 from functools import cached_property
 from http import HTTPStatus
 from itertools import zip_longest
+import json
 import logging
 import re
 import time
@@ -260,6 +261,23 @@ def _after_refusal(
     if state == TesState.CANCELING.value:
         return True
     raise BackendRefused(REFUSED) from cause
+
+
+def served_size(task: dict[str, Any]) -> int:
+    """Get the size of a task in a page of tasks, as served.
+
+    Pages are served as JSON indented by 2 spaces, with non-ASCII characters
+    escaped (one byte per character); in a page, each line of a task after
+    the first is indented by 4 more spaces than in the task alone.
+
+    Args:
+        task: Task, as served.
+
+    Returns:
+        Size of the task in the response body, in bytes.
+    """
+    text = json.dumps(task, indent=2)
+    return len(text) + 4 * text.count("\n")
 
 
 class TaskRuns:
@@ -872,20 +890,34 @@ class TaskRuns:
             .sort("_id", -1)
             .limit(page_size + 1)
         )
+        if view == "FULL":
+            # the driver decodes whole batches: fetch tasks of the view
+            # `FULL` one at a time, so that none is loaded beyond the page
+            cursor = cursor.batch_size(1)
         tasks: list[dict[str, Any]] = []
         next_page_token = ""
         last_id: Any = None
+        # pages of the view `FULL` are also limited by the size of their tasks
+        max_bytes = self.custom_config.controllers.list_tasks.max_page_bytes_full
+        page_bytes = 0
         for document in cursor:
             if len(tasks) == page_size:
                 next_page_token = str(last_id)
                 break
-            last_id = document["_id"]
             if view == "MINIMAL":
                 tasks.append(
                     {"id": document["task"]["id"], "state": document["task"]["state"]}
                 )
             else:
-                tasks.append(self._string_metadata(document["task"]))
+                task = self._string_metadata(document["task"])
+                if view == "FULL":
+                    page_bytes += served_size(task)
+                    if tasks and page_bytes > max_bytes:
+                        # the next page continues after the last task served
+                        next_page_token = str(last_id)
+                        break
+                tasks.append(task)
+            last_id = document["_id"]
         cursor.close()
         logger.debug("Listed %s tasks", len(tasks))
         return {"next_page_token": next_page_token, "tasks": tasks}
