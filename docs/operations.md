@@ -96,8 +96,11 @@ tokens; with several trusted issuers, they are namespaced by issuer
 ```js
 // tasks of a user
 db.tasks.find({ user_id: "<sub>" }, { "task.id": 1, "task.state": 1 })
-// tasks without owner, e.g., created by earlier versions
-db.tasks.find({ user_id: { $exists: false } }, { "task.id": 1 })
+// tasks without owner, e.g., created by earlier versions (not tombstones)
+db.tasks.find(
+  { user_id: { $exists: false }, deleted_at: { $exists: false } },
+  { "task.id": 1 }
+)
 ```
 
 Tasks created before owners were recorded have no owner, so nobody can see
@@ -114,11 +117,18 @@ done
 
 and set `user_id` of the task to the user's `sub` in the database. To purge
 tasks, delete their documents and their owner roles, e.g., those without
-owner:
+owner (leave tombstones, `deleted_at`, in place: see below):
 
 ```js
-db.tasks.deleteMany({ user_id: { $exists: false } })
+db.tasks.deleteMany({ user_id: { $exists: false }, deleted_at: { $exists: false } })
 ```
+
+To delete finished tasks regularly, set a [retention of finished
+tasks](configuration.md#retention-of-finished-tasks) instead: it removes their
+owner roles, and leaves tombstones (documents with `task.id` and
+`deleted_at` only) that keep their identifiers from being used again.
+Tombstones are not tasks: never delete them, and leave them out of queries of
+tasks (`deleted_at: { $exists: false }`), as above.
 
 Owner roles left by deleted tasks don't give access to other tasks (their
 owners get `404 Not Found`, and their identifiers are not used for new

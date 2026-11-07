@@ -86,6 +86,7 @@ from pro_tes.tasks.track_task_progress import (
 )
 from pro_tes.utils.db import (
     FAILED_RUNS_COLLECTION,
+    NOT_DELETED,
     PIPELINES_COLLECTION,
     PLUGIN_BUILDS_COLLECTION,
     TASK_COLLECTION,
@@ -800,7 +801,8 @@ class TaskRuns:
             pro_tes.exceptions.TaskNotFound: The task is not available.
         """
         document = self.db_client.find_one(
-            filter={"task.id": id}, projection={"_id": False, "provenance": True}
+            filter={"task.id": id, **NOT_DELETED},
+            projection={"_id": False, "provenance": True},
         )
         if document is None:
             logger.error("Task '%s' not found.", id)
@@ -848,7 +850,10 @@ class TaskRuns:
         """
         view = kwargs.get("view", DEFAULT_VIEW)
         page_size = self._page_size(page_size=kwargs.get("page_size"), view=view)
-        filter_dict: dict[str, Any] = {**owned_tasks_filter(collection=collection)}
+        filter_dict: dict[str, Any] = {
+            **owned_tasks_filter(collection=collection),
+            **NOT_DELETED,
+        }
 
         # an empty token (of the last page) is taken as no token
         page_token = kwargs.get("page_token")
@@ -936,7 +941,7 @@ class TaskRuns:
         """
         projection = self._set_projection(view=kwargs.get("view", DEFAULT_VIEW))
         document = self.db_client.find_one(
-            filter={"task.id": id}, projection=projection
+            filter={"task.id": id, **NOT_DELETED}, projection=projection
         )
         if document is None:
             logger.error("Task '%s' not found.", id)
@@ -1085,7 +1090,7 @@ class TaskRuns:
             pro_tes.exceptions.TaskNotFound: The task is not available.
         """
         document = self.db_client.find_one(
-            filter={"task.id": id},
+            filter={"task.id": id, **NOT_DELETED},
             projection=TASK_PROJECTION,
         )
         if document is None:

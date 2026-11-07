@@ -36,6 +36,13 @@ FAILED_RUNS_COLLECTION = "failed_runs"
 # provenance, which may be large (up to 1 MiB) and is not needed to process
 # tasks
 TASK_PROJECTION: dict[str, bool] = {"_id": False, "provenance": False}
+# Field of tombstones of deleted tasks (e.g., by the retention of finished
+# tasks, cf. `pro_tes.retention`): documents with the task's identifier
+# (`task.id`) and this field (the time of the deletion) only, so that the
+# identifier is never used again; the API treats them as not found
+DELETED_FIELD = "deleted_at"
+# Filter of stored tasks that are no tombstones
+NOT_DELETED: dict[str, Any] = {DELETED_FIELD: {"$exists": False}}
 # Number of shared task identifiers named when proTES refuses to start
 MAX_REPORTED_DUPLICATES = 10
 # Name of the index of the tasks of earlier versions (`task_id`, `worker_id`)
