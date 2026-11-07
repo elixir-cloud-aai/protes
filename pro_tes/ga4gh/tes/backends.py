@@ -726,7 +726,14 @@ class TesClient(tes.HTTPClient):
             if connect_timeout is not None and connect_timeout <= 0:
                 raise requests.ConnectTimeout(f"No time left to connect to {self.url}")
             started = time.monotonic()
-            # discovered backends: may be read first, within the time left
+            if self._api_path is None:
+                # discovered backends: read first, within the time left
+                self._api_path = api_paths.get(
+                    self,
+                    timeout=PROBE_TIMEOUT
+                    if connect_timeout is None
+                    else min(PROBE_TIMEOUT, connect_timeout),
+                )
             api_path = self.api_path
             if connect_timeout is not None:
                 connect_timeout -= time.monotonic() - started
@@ -1482,11 +1489,13 @@ class ApiPaths:
         """Remove all cached paths."""
         self._cache.clear()
 
-    def get(self, client: TesClient) -> str:
+    def get(self, client: TesClient, timeout: float = PROBE_TIMEOUT) -> str:
         """Get the API path of a discovered backend.
 
         Args:
             client: Client of the backend, at its URL.
+            timeout: Time to read the service info, in seconds, as a whole
+                (e.g., at most the time left to forward a task).
 
         Returns:
             The API path, relative to the URL: empty if the TES API is at
@@ -1504,7 +1513,7 @@ class ApiPaths:
             return cached.path
         settled = cached if cached is not None and cached.confirmed else None
         try:
-            path, confirmed = self._read(client)
+            path, confirmed = self._read(client, timeout=timeout)
         except BackendRequestNotSent:
             if settled is None:
                 raise
@@ -1524,11 +1533,12 @@ class ApiPaths:
         return path
 
     @staticmethod
-    def _read(client: TesClient) -> tuple[str, bool]:
+    def _read(client: TesClient, timeout: float) -> tuple[str, bool]:
         """Read the API path of a discovered backend from its URL.
 
         Args:
             client: Client of the backend, at its URL.
+            timeout: Time to read the service info, in seconds, as a whole.
 
         Returns:
             The API path, relative to the URL, and whether the answer
@@ -1547,6 +1557,9 @@ class ApiPaths:
             entry=client.entry,
             timeout=PROBE_TIMEOUT,
         )
+        if prober.guarded is not None:
+            # e.g., less than `PROBE_TIMEOUT` left to forward a task
+            prober.guarded.timeout = timeout
         try:
             response = prober.get_service_info(
                 f"{client.url}/service-info", auth=None if with_token else "none"

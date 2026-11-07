@@ -86,7 +86,10 @@ own with `api_path`. Each process reads that service info once per
 `custom.tes.version_cache_ttl` seconds per discovered TES instance, without
 credentials unless `custom.tes.probe_with_token` is set; while it can't be
 read, tasks go to other TES instances (see [API
-paths](configuration.md#api-paths)).
+paths](configuration.md#api-paths)). During a rolling upgrade, workers of
+the earlier version poll tasks that upgraded instances forwarded to such a
+TES instance at the default path, which fails: the tasks may become
+`UNKNOWN` meanwhile, until upgraded workers poll them again.
 
 ## To version 0.5.0
 

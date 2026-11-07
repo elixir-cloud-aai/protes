@@ -701,12 +701,14 @@ class FakeTes:
     Attributes:
         answers: Responses, or errors to raise, by URL; others are `404`.
         sent: Method, URL and options of the requests.
+        timeouts: Timeouts of the guarded clients that sent them.
     """
 
     def __init__(self) -> None:
         """Answer all requests with `404`."""
         self.answers: dict[str, http.HttpResponse | Exception] = {}
         self.sent: list[tuple[str, str, dict[str, Any]]] = []
+        self.timeouts: list[float] = []
 
     def request(self, method: str, url: str, **kwargs: Any) -> http.HttpResponse:
         """Record a request and answer it.
@@ -735,6 +737,7 @@ def fake_tes(discovering: FakeRegistry, monkeypatch: pytest.MonkeyPatch) -> Fake
         self: http.GuardedClient, method: str, url: str, **kwargs: Any
     ) -> http.HttpResponse:
         """Send a guarded request to the fake."""
+        fake.timeouts.append(self.timeout)
         return fake.request(method, url, **kwargs)
 
     monkeypatch.setattr(http.GuardedClient, "request", request)
@@ -835,7 +838,14 @@ def test_api_path_discovered_refused_with_token(
 ) -> None:
     """Refusals of reads with credentials get no hint at reading without."""
     config = get_custom_config(CustomConfig).tes
+    config.backends = backend_list(auth="client_credentials")
+    config.client_credentials = ClientCredentials(
+        token_endpoint="https://idp.example.org/token"  # noqa: S106 (a URL)
+    )
     config.probe_with_token = True
+    monkeypatch.setattr(
+        backends.token_provider, "get_token", lambda config: "token-of-protes"
+    )
     discovering.add("a", "https://tes1.example.org")
     fake_tes.answers["https://tes1.example.org/service-info"] = http.HttpResponse(
         status=401
@@ -843,7 +853,8 @@ def test_api_path_discovered_refused_with_token(
     assert backends.create_client(host="https://tes1.example.org").api_path == (
         "/ga4gh/tes/v1"
     )
-    assert "without credentials" not in caplog.text
+    assert fake_tes.sent[0][2]["headers"]["Authorization"] == "Bearer token-of-protes"
+    assert "refused" not in caplog.text
 
 
 def test_api_path_discovered_cached(
@@ -1038,6 +1049,7 @@ def test_api_path_discovered_time_left(
         client.forward(request, tes.Task(executors=[]), connect_timeout=2)
     assert backends.not_sent(info.value)
     assert fake_tes.urls == [f"{base}/service-info"]
+    assert fake_tes.timeouts == [2]
 
 
 def test_api_path_discovered_no_time_left(
