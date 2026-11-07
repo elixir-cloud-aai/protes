@@ -143,9 +143,9 @@ cancel it at the TES instance that runs it: its URL is in
 it on their side. If a worker still tracks the task, proTES records its new
 state; otherwise, set `task.state` of the document to `CANCELED`. To keep a
 user from creating more tasks, remove them from the groups with the role
-`user` at the identity provider, or limit the tasks of each user (see
-[Task limits](configuration.md#task-limits)); to keep proTES from sending tasks to a TES
-instance, remove it from `custom.tes.backends`, or, if it was discovered
+`user` at the identity provider; to cap the number of tasks that each user
+can have, set [task limits](configuration.md#task-limits). To keep proTES
+from sending tasks to a TES instance, remove it from `custom.tes.backends`, or, if it was discovered
 in a service registry, have a registry admin remove its verification (it is
 no longer used once the registry has been read again, see `refresh_interval`
 in [Discovery in a service

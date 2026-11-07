@@ -75,15 +75,15 @@ def check_task_limits(
             "max_unfinished",
             limits.max_unfinished,
             {"user_id": owner, "task.state": {"$in": States.UNFINISHED}},
-            "unfinished",
         ),
-        ("max_stored", limits.max_stored, {"user_id": owner}, "stored"),
+        ("max_stored", limits.max_stored, {"user_id": owner}),
     )
-    for name, limit, query, kind in checks:
+    for name, limit, query in checks:
         if limit is None:
             continue
         if collection.count_documents(query, limit=limit) >= limit:
             logger.info("Task rejected: limit `%s` reached", name)
+            kind = name.removeprefix("max_")
             raise TaskLimitReached(
                 f"Limit of {kind} tasks per user reached: at most {limit} (`{name}`)",
                 limit=name,

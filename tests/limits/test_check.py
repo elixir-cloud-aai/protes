@@ -1,16 +1,20 @@
 """Unit tests of the limits of the tasks per user (`pro_tes.limits`)."""
 
+from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
 from pymongo import MongoClient
 import pytest
+import yaml
 
 from pro_tes.config_models import CustomConfig, PostTask
 from pro_tes.ga4gh.tes.states import States
 from pro_tes.limits import TaskLimitReached, TaskLimits, check_task_limits
 from pro_tes.limits.check import PROBLEM_TYPE
 from tests.conftest import DB
+
+ROOT = Path(__file__).parents[2]
 
 OWNER = "alice"
 
@@ -73,6 +77,20 @@ def test_config_invalid(settings: dict[str, Any]) -> None:
         )
 
 
+def test_base_config() -> None:
+    """The base config sets the limits as the model does: off."""
+    config = yaml.safe_load((ROOT / "pro_tes" / "config.yaml").read_text())
+    limits = config["custom"]["controllers"]["post_task"]["limits"]
+    assert TaskLimits.model_validate(limits) == TaskLimits()
+
+
+def test_problem_type_documented() -> None:
+    """The problem type of the errors points to a section of the docs."""
+    assert PROBLEM_TYPE.endswith("/configuration/#task-limits")
+    text = (ROOT / "docs" / "configuration.md").read_text()
+    assert "\n### Task limits\n" in text
+
+
 def test_no_limits(mongo_client: MongoClient[dict[str, Any]]) -> None:
     """Without limits, any number of tasks is accepted."""
     store_tasks(mongo_client, OWNER, *(["RUNNING"] * 5))
@@ -118,3 +136,31 @@ def test_exempt_roles(mongo_client: MongoClient[dict[str, Any]]) -> None:
     check(mongo_client, roles=("user", "admin"), max_stored=1, exempt_roles=["admin"])
     with pytest.raises(TaskLimitReached):
         check(mongo_client, roles=("user",), max_stored=1, exempt_roles=["admin"])
+
+
+def test_both_limits(mongo_client: MongoClient[dict[str, Any]]) -> None:
+    """If both limits are reached, the error names `max_unfinished`."""
+    store_tasks(mongo_client, OWNER, "RUNNING")
+    with pytest.raises(TaskLimitReached) as info:
+        check(mongo_client, max_unfinished=1, max_stored=1)
+    assert info.value.limit == "max_unfinished"
+    assert "unfinished tasks" in info.value.detail
+
+
+def test_no_roles(mongo_client: MongoClient[dict[str, Any]]) -> None:
+    """Users without roles are limited, also with exempt roles configured."""
+    store_tasks(mongo_client, OWNER, "COMPLETE")
+    with pytest.raises(TaskLimitReached) as info:
+        check(mongo_client, roles=(), max_stored=1, exempt_roles=["admin"])
+    assert "stored tasks" in info.value.detail
+
+
+def test_rejection_logged(
+    mongo_client: MongoClient[dict[str, Any]], caplog: pytest.LogCaptureFixture
+) -> None:
+    """Rejections are logged with the limit, without the user."""
+    store_tasks(mongo_client, OWNER, "RUNNING")
+    with caplog.at_level("INFO"), pytest.raises(TaskLimitReached):
+        check(mongo_client, max_unfinished=1)
+    assert "`max_unfinished`" in caplog.text
+    assert OWNER not in caplog.text

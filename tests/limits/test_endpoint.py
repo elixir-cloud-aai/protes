@@ -1,4 +1,8 @@
-"""Tests of the limits of the tasks per user at `POST /tasks` (`pro_tes.limits`)."""
+"""Tests of the limits of the tasks per user at `POST /tasks` (`pro_tes.limits`).
+
+With the fake TES backends of the tests of the TES API (cf.
+`tests/limits/conftest.py`).
+"""
 
 from typing import Any
 
