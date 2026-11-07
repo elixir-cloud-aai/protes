@@ -333,8 +333,10 @@ protes:
   # large as the request size limit, 1 MiB, plus its logs, 1 MiB: with
   # `config.custom.controllers.list_tasks.max_page_size_full` at 6, about 36
   # MiB per request, and 144 MiB with 4 threads, on top of about 90 MiB of the
-  # app; more if logs hold text that JSON escapes). Set `max_page_size_full`
-  # and the memory together (see docs/configuration.md, Tasks)
+  # app; more if logs hold text that JSON escapes, up to about 3 times
+  # `config.custom.controllers.list_tasks.max_page_bytes_full`, 10 MiB, per
+  # request). Set `max_page_size_full`, `max_page_bytes_full` and the memory
+  # together (see docs/configuration.md, Tasks)
   resources:
     limits:
       cpu: 200m
