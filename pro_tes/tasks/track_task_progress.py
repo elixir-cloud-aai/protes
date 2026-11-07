@@ -58,6 +58,10 @@ FAILURES_FIELD = "tracking.failures"
 # Field of stored tasks with the time (seconds since the epoch) at which they
 # were canceled, after which their tracking gives up (`max_cancel_time`)
 CANCELED_AT_FIELD = "tracking.canceled_at"
+# Field of stored tasks with the time (seconds since the epoch) at which a
+# final state was stored without a poll (`SYSTEM_ERROR` after recovery), as
+# the retention of finished tasks counts from it (`pro_tes.retention`)
+FINISHED_AT_FIELD = "tracking.finished_at"
 # Identifier of the poll of tasks whose tracking ended without a final state
 # of their backend (`SYSTEM_ERROR`): no poll claims it, and polls running
 # meanwhile (e.g., another delivery of the same poll) store no unfinished
@@ -499,6 +503,7 @@ def _cancel_timed_out(collection: Collection[dict[str, Any]], worker_id: str) ->
             "$set": {
                 "task.state": TesState.SYSTEM_ERROR.value,
                 POLL_FIELD: TRACKING_ENDED,
+                FINISHED_AT_FIELD: time.time(),
             }
         },
     )
@@ -816,7 +821,12 @@ def _fail_ended(collection: Collection[dict[str, Any]]) -> None:
     """
     result = collection.update_many(
         {"task.state": {"$in": States.UNFINISHED}, POLL_FIELD: TRACKING_ENDED},
-        {"$set": {"task.state": TesState.SYSTEM_ERROR.value}},
+        {
+            "$set": {
+                "task.state": TesState.SYSTEM_ERROR.value,
+                FINISHED_AT_FIELD: time.time(),
+            }
+        },
     )
     if result.modified_count:
         logger.warning(
@@ -865,7 +875,12 @@ def _fail_cut_off(collection: Collection[dict[str, Any]], max_create_time: int) 
     ):
         result = collection.update_one(
             {"_id": document["_id"], **unconfirmed},
-            {"$set": {"task.state": TesState.SYSTEM_ERROR.value}},
+            {
+                "$set": {
+                    "task.state": TesState.SYSTEM_ERROR.value,
+                    FINISHED_AT_FIELD: time.time(),
+                }
+            },
         )
         if result.modified_count:
             logger.warning(

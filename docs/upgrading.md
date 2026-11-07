@@ -120,6 +120,22 @@ unless you set them (see [Task limits](configuration.md#task-limits)). proTES
 creates a new index on the tasks (`user_id`, `task.state`) on its first start,
 which takes a moment for large collections.
 
+**Retention of finished tasks (opt-in):** the Celery workers can now delete
+finished tasks `custom.retention.finished_days` days after they finished,
+with their owner roles; off by default, so nothing changes unless you set it
+(see [Retention of finished
+tasks](configuration.md#retention-of-finished-tasks)). Deleted tasks leave
+tombstones (documents with `task.id` and `deleted_at` only): exclude them
+from your own queries of the tasks. Retention needs the image's base config
+(`jobs.include` lists `pro_tes.retention.tasks`): overlays that replace
+`jobs.include` must list it too. During a rolling upgrade, instances of the
+earlier version don't know tombstones: until they are replaced, a request of
+the owner of a deleted task to such an instance may fail with `500`. Tasks
+tracked before version 0.3.0, and tasks failed by recovery before 0.6.0,
+count from when they were forwarded or created, not from when they
+finished: set `finished_days` with that in mind. proTES creates a new index
+on the tasks (`task.state`, `_id`) on its first start, for the retention.
+
 ## To version 0.5.0
 
 **Routing default:** 0.4.0 routed tasks by the distance to their input data

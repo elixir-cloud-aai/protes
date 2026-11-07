@@ -625,6 +625,68 @@ and exceed a limit by up to one task per concurrent request. Each check counts
 the tasks of the user up to the limit, using the index on owner and state of
 the tasks (`db` in `config.yaml`).
 
+## Retention of finished tasks
+
+Deployments can delete finished tasks some days after they finished, so that
+the database and the rules of access control stay bounded: each task has two
+owner roles, and their number slows down every request. Retention is off by
+default (`finished_days: null`), as many deployments must keep all tasks,
+e.g., for accounting and audits:
+
+```yaml
+custom:
+  retention:
+    finished_days: 90
+    interval: 3600
+    batch_size: 500
+```
+
+- `finished_days`: the number of days after which finished tasks
+  (`COMPLETE`, `CANCELED`, `EXECUTOR_ERROR`, `SYSTEM_ERROR` and
+  `PREEMPTED`) are deleted, counted from the end time of their last log
+  (`logs[].end_time`), or, without one, from their creation
+  (`creation_time`), but at the earliest from when their tracking stored
+  their final state (the last poll, `tracking.polled_at`, or recovery,
+  `tracking.finished_at`, e.g., for tasks whose creation was cut off): the
+  log of proTES ends when a task is forwarded, so tasks that ran for longer
+  than `finished_days` are kept that long after they finished, too. Tasks
+  tracked by proTES before version 0.3.0 have no last poll, so their time
+  counts from when they were forwarded, and that of tasks failed by
+  recovery before version 0.6.0 from when they were forwarded or created.
+  Unfinished tasks are never deleted;
+- `interval`: seconds between runs of the purge in each Celery worker
+  (default 3600); the first run is when the worker starts;
+- `batch_size`: the maximum number of tasks deleted per run (default 500),
+  the oldest first, so that a first run on a large database doesn't hold a
+  worker for long. Each deleted task is 2 changes of the rules of access
+  control, and app instances that miss more than the last 100 changes (FOCA)
+  load all rules again on their next request: with many tasks to delete
+  (e.g., on the first run), a smaller `batch_size` (at most 50) avoids
+  that, at the cost of more runs.
+
+The Celery workers delete the tasks:
+
+- **Several workers:** each worker purges every `interval` seconds, so with
+  several workers, the purge runs that many times more often and deletes up
+  to that many times `batch_size` tasks per `interval`. Runs of several
+  workers don't interfere, as a task is only replaced while it is still
+  finished and not yet deleted; runs at the same time (e.g., when workers
+  start together) may remove the same owner roles more than once, which
+  adds changes of the rules (see `batch_size`).
+- **Deletion:** for each task, the workers remove its owner roles, on the
+  default path of the TES API (`/ga4gh/tes/v1/tasks/...`), as the policies
+  of `config.yaml` grant them. Then they replace its document by a
+  tombstone that keeps only the task's identifier (`task.id`) and the time
+  of the deletion (`deleted_at`), so that the identifier is never used for
+  another task. The API treats tombstones as tasks that don't exist
+  (`404 Not Found`, never listed).
+- **What is kept:** tasks are deleted, not archived: keep a backup of the
+  database if you need them later. The provenance of a deleted task goes
+  with it; the plugin builds and pipelines that tasks refer to are kept.
+- **Cost:** each run reads only finished tasks stored more than
+  `finished_days` days ago, oldest first, by an index (`task.state`,
+  `_id`) that leaves out unfinished tasks and tombstones.
+
 ## Security
 
 The TES API requires access tokens of the trusted issuers
