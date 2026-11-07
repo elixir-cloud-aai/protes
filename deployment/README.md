@@ -75,7 +75,8 @@ TES instances (`type: ga4gh-tes`) and service registries whose verified TES
 instances are used in their place (`type: ga4gh-service-registry`).
 Rendering fails if `config.custom.tes.backends` is set, too, and on
 `config.custom.tes.service_list` and `discovery`, which the list replaces.
-The service infos of TES instances, read for their TES versions, are read
+The service infos of TES instances, read for their TES versions (and the API
+paths of discovered ones), are read
 without credentials unless `config.custom.tes.probe_with_token` is `true`,
 which sends proTES' token also to TES instances that tasks don't go to (see
 [TES versions](https://protes.readthedocs.io/en/latest/configuration/#tes-versions)).
