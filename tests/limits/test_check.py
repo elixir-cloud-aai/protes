@@ -1,6 +1,7 @@
 """Unit tests of the limits of the tasks per user (`pro_tes.limits`)."""
 
 from pathlib import Path
+import re
 from typing import Any
 
 from pydantic import ValidationError
@@ -85,8 +86,14 @@ def test_base_config() -> None:
 
 
 def test_problem_type_documented() -> None:
-    """The problem type of the errors points to a section of the docs."""
-    assert PROBLEM_TYPE.endswith("/configuration/#task-limits")
+    """The problem type of the errors points to a section of the docs.
+
+    On the docs site of `mkdocs.yml` (its default `site_url`).
+    """
+    mkdocs = (ROOT / "mkdocs.yml").read_text()
+    site_url = re.search(r'^site_url: .*"(https://[^"]+)"', mkdocs, re.MULTILINE)
+    assert site_url is not None
+    assert f"{site_url.group(1)}configuration/#task-limits" == PROBLEM_TYPE
     text = (ROOT / "docs" / "configuration.md").read_text()
     assert "\n### Task limits\n" in text
 
