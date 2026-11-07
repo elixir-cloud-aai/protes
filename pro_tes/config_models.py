@@ -171,7 +171,7 @@ class ListTasks(ConfigModel):
             `FULL` (with the logs and the contents of inputs); larger page
             sizes are reduced to it (and to `max_page_size`).
         max_page_bytes_full: Maximum size of the tasks of a page of the view
-            `FULL`, in bytes of their JSON; a page ends before the task that
+            `FULL`, in bytes of the response body; a page ends before the task that
             would exceed it, but has at least one task.
 
     Attributes:
@@ -182,7 +182,7 @@ class ListTasks(ConfigModel):
         max_page_size_full: Maximum number of tasks per page of the view
             `FULL`.
         max_page_bytes_full: Maximum size of the tasks of a page of the view
-            `FULL`, in bytes of their JSON.
+            `FULL`, in bytes of the response body.
     """
 
     default_page_size: PositiveInt = 256

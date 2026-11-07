@@ -4,7 +4,6 @@ import base64
 from collections.abc import Callable
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
-import json
 import time
 from types import SimpleNamespace
 from typing import Any, Literal
@@ -712,9 +711,56 @@ def full_size(task: dict[str, Any]) -> int:
         task: Task, as served.
 
     Returns:
-        Size of its JSON, in bytes.
+        Size of the task in the response body, in bytes.
     """
-    return len(json.dumps(task).encode())
+    return task_runs.served_size(task)
+
+
+def test_list_tasks_served_size(
+    client: FlaskClient, backend: type[FakeBackend]
+) -> None:
+    """Tasks are counted with their size in the response body.
+
+    The body is indented JSON; the tasks, with non-ASCII characters, take
+    the body less the envelope of the page and the separators of the tasks.
+    """
+    create_tasks(client, ["\u00e9t\u00e9", "b" * 100])
+    empty = client.get(
+        f"{BASE_PATH}/tasks", query_string={"view": "FULL", "state": "COMPLETE"}
+    )
+    response = client.get(f"{BASE_PATH}/tasks", query_string={"view": "FULL"})
+    tasks = response.get_json()["tasks"]
+    envelope = len(empty.data) + len("\n    ") + len("\n  ")
+    separators = len(",\n    ") * (len(tasks) - 1)
+    assert len(response.data) == envelope + separators + sum(
+        full_size(task) for task in tasks
+    )
+
+
+def test_list_tasks_full_batches(
+    client: FlaskClient,
+    backend: type[FakeBackend],
+    mongo_client: MongoClient[dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tasks of the view `FULL` are fetched one at a time.
+
+    So that the driver loads no task beyond the end of a page.
+    """
+    create_tasks(client, ["a", "b"])
+    cursor_class = type(mongo_client[DB]["tasks"].find())
+    batch_sizes: list[int] = []
+    batch_size = cursor_class.batch_size
+
+    def spy(cursor: Any, size: int) -> Any:
+        batch_sizes.append(size)
+        return batch_size(cursor, size)
+
+    monkeypatch.setattr(cursor_class, "batch_size", spy)
+    list_tasks(client, view="BASIC")
+    assert batch_sizes == []
+    assert len(list_tasks(client, view="FULL")["tasks"]) == 2
+    assert batch_sizes == [1]
 
 
 def test_list_tasks_page_bytes_full(
@@ -726,6 +772,8 @@ def test_list_tasks_page_bytes_full(
     is still limited by `max_page_size_full`, and other views by count
     only.
     """
+    # the newest task is larger than the others, which are of equal size: a
+    # page of it and two others fits the bound exactly, a third would not
     ids = create_tasks(client, ["e", "d", "c", "b", "a" * 100])
     first, *others = list_tasks(client, view="FULL")["tasks"]
     assert first["id"] == ids[0]

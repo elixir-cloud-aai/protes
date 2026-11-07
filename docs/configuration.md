@@ -580,15 +580,16 @@ plugins:
   thread). Set it and the memory limit together: about 36 MiB per request with
   6, and about 384 MiB with 64, on top of about 90 MiB of the app; more if logs
   hold text that JSON escapes (up to 6 times its size, e.g., control
-  characters), up to `max_page_bytes_full`;
+  characters), but never much more than `max_page_bytes_full` allows;
 - `list_tasks.max_page_bytes_full`: the maximum size of the tasks of a page
-  of the view `FULL`, in bytes of their JSON (default 10485760, i.e., 10
-  MiB), whatever their number: a page ends before the task that would exceed
-  it, and its `next_page_token` continues with that task. A page always has
-  at least one task, which may be larger (up to the size of a stored task).
-  With it, a request of a page of the view `FULL` takes at most about 3 times
-  this size in memory (about 30 MiB by default), also for logs with text that
-  JSON escapes; lower it with the memory limit;
+  of the view `FULL`, in bytes of the response body (indented JSON; default
+  10485760, i.e., 10 MiB), whatever their number: a page ends before the task
+  that would exceed it, and its `next_page_token` continues with that task.
+  A page always has at least one task, which may be larger (up to the size
+  of a stored task). With it, a request of a page of the view `FULL` takes
+  at most about 3 times this size in memory, plus one task (about 30 MiB by
+  default), also for logs with text that JSON escapes; lower it with the
+  memory limit;
 - `post_task.limits`: limits of the tasks per user, off by default (see [Task
   limits](#task-limits)).
 

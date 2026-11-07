@@ -289,7 +289,8 @@ custom:
     # times its size in memory, per request; lower it for small memory limits
     # (the Helm chart sets 6; see `docs/configuration.md`)
     # Pages of the view `FULL` also end before their tasks exceed
-    # `max_page_bytes_full` bytes of JSON (10 MiB); a page has at least one task
+    # `max_page_bytes_full` bytes of the response (10 MiB); a page has at least
+    # one task
     list_tasks:
       default_page_size: 256
       max_page_size: 2047

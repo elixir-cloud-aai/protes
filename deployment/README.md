@@ -30,7 +30,8 @@ config on startup (via `FOCA_CONFIG_OVERLAY`), for the app and the worker:
   broker](#celery-worker-and-broker)). By default, the chart sets
   `config.custom.controllers.list_tasks.max_page_size_full` to 6 (the app's
   default is 64), so that pages of the view `FULL` fit its memory limit; to
-  raise it, also raise `protes.resources` (see
+  raise it, or `max_page_bytes_full` (10 MiB), also raise
+  `protes.resources` (see
   [Tasks](https://protes.readthedocs.io/en/latest/configuration/#tasks)).
 
 The identity provider is deployment configuration, without defaults (see
