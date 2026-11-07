@@ -50,6 +50,12 @@ config:
       # post_task:
       #   polling:
       #     max_cancel_time: 7200
+      #   # Example: limits of the tasks per user, off by default (see
+      #   # docs/configuration.md, Task limits)
+      #   limits:
+      #     max_unfinished: 100
+      #     max_stored: 10000
+      #     exempt_roles: [admin]
     # Examples:
     # tes:
     #   # Identity provider of the client of proTES (credentials from
