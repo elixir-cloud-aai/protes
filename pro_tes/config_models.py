@@ -382,6 +382,11 @@ class Tes(ConfigModel):
             credentials of the backend (e.g., proTES' access token); by
             default, it is read without credentials, as service infos are
             public, so that backends that tasks don't go to don't get them.
+        max_response_size: Maximum size of each response of a backend that
+            proTES reads, in bytes (1 MiB to 256 MiB); larger responses fail,
+            with an error in the logs. Bounds the memory of each request
+            (e.g., tasks in the view `FULL`, whose logs can be of any size,
+            which take a Celery worker process about 7 times their size).
 
     Attributes:
         backends: TES backends that tasks may be forwarded to, in order.
@@ -396,6 +401,8 @@ class Tes(ConfigModel):
         probe_with_token: Whether the service info of a backend is read for
             its TES version (and API path, if discovered) with the
             credentials of the backend.
+        max_response_size: Maximum size of each response of a backend that
+            proTES reads, in bytes.
     """
 
     backends: BackendListConfig = BackendListConfig([])
@@ -404,6 +411,7 @@ class Tes(ConfigModel):
     timeout: PositiveInt = 15
     version_cache_ttl: PositiveInt = 3600
     probe_with_token: bool = False
+    max_response_size: Annotated[int, Field(ge=1048576, le=268435456)] = 10485760
 
     @field_validator("backends", mode="before")
     @classmethod

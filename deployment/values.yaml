@@ -63,6 +63,10 @@ config:
     #   # backends without the label `tes.version` get proTES' token also
     #   # when tasks don't go to them (see docs/configuration.md, TES versions)
     #   probe_with_token: true
+    #   # Maximum size of each response of a TES backend, in bytes (default
+    #   # 10 MiB, at most 256 MiB); a response takes about 7 times its size in
+    #   # memory, so raise `protes.resources` and `worker.resources` with it
+    #   max_response_size: 67108864
 # Examples:
 #   security:
 #     auth:

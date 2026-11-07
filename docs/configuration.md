@@ -96,6 +96,19 @@ instances at or below the public URL of proTES (`server.public_url`, if set;
 the Helm chart sets it from `hostName`) are never used, so that proTES never
 forwards tasks to itself: proTES refuses to start if a configured one is.
 
+proTES reads at most `custom.tes.max_response_size` bytes of each response
+of a TES instance (default: 10485760, i.e., 10 MiB; from 1 MiB to 256 MiB),
+configured or discovered: a larger response fails, with an error in the logs
+(`Response of TES backend larger than ...`), and the rest of it is not read.
+This bounds the memory that each request takes, as a response is held in
+memory while it is parsed, which takes about 7 times its size. A larger
+response to a request to create a task counts as an unknown outcome, as the
+TES instance got the request (see below); one to a request for a task's
+state counts as a failed poll; one with the logs of a finished task leaves
+the task without them (see [Tasks](#tasks)). Raise the limit, and the memory
+of the app and of the Celery worker with it, for TES instances whose logs
+proTES should store in full (`post_task.max_log_size`).
+
 Requests to configured TES instances time out after `custom.tes.timeout`
 seconds without data (default: 15), and after 5 seconds while connecting.
 Requests to discovered TES instances must end within `custom.tes.timeout`
@@ -392,7 +405,8 @@ following hold:
   (FOCA's guarded HTTP client), so that hosts whose addresses change after
   the check (DNS rebinding) can't lead requests, and proTES's credentials,
   to such addresses. Requests to discovered TES instances don't follow
-  redirects, and their responses are limited to 64 MiB.
+  redirects, and their responses are limited as those of configured TES
+  instances are (`custom.tes.max_response_size`).
 
 The registry is read without access token (its reads are public), over a
 URL with a scheme of the entry's `url_schemes`, at public addresses (unless
@@ -512,11 +526,13 @@ plugins:
   among the longer ones, which keep their end, where errors usually are. proTES
   gets them once when a task has finished (`GET /tasks/{id}?view=FULL` at the TES
   instance), and holds them in memory in the Celery worker meanwhile: a task
-  whose response is larger than 64 MiB, or takes longer than `custom.tes.timeout`
-  as a whole, stays without them. Such a response takes a worker process up to
-  about 420 MiB, so that two at once can exceed the 512 MiB of the [Helm
-  chart](deployment.md)'s worker: the broker then delivers the poll again, and
-  proTES finishes the task without its logs. If a task would still exceed the
+  whose response is larger than `custom.tes.max_response_size` (10 MiB by
+  default), or takes longer than `custom.tes.timeout` as a whole, stays without
+  them, with an error in the logs. A response takes a worker process about 7
+  times its size, so that two of 64 MiB at once would exceed the 512 MiB of the
+  [Helm chart](deployment.md)'s worker: raise its memory with the limit (if a
+  worker process runs out of memory, the broker delivers the poll again, and
+  proTES finishes the task without its logs). If a task would still exceed the
   limit of MongoDB (e.g., with very many short logs), proTES stores it without
   these logs, or if need be also without the executors' logs and the outputs, and
   logs an error. Their owners can read them in the view `FULL`, so

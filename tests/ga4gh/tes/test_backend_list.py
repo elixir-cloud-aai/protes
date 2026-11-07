@@ -33,6 +33,7 @@ from pro_tes.exceptions import (
     BackendNotConfigured,
     BackendOutcomeUnknown,
     BackendRequestNotSent,
+    BackendResponseTooLarge,
 )
 from pro_tes.ga4gh.tes import backends
 from pro_tes.ga4gh.tes.versions import TesVersion
@@ -404,7 +405,7 @@ def test_client_connection_checked(rebinding: tuple[str, Listener]) -> None:
     assert client.guarded is not None
     assert not client.guarded.allow_private_addresses
     assert not client.guarded.allow_http
-    assert client.guarded.max_response_size == backends.MAX_RESPONSE_SIZE
+    assert client.guarded.max_response_size == 10 * 1024 * 1024
     assert client.guarded.timeout == client.timeout
     with pytest.raises(BackendAddressNotAllowed, match="not public"):
         client.get_task("r1")
@@ -455,6 +456,7 @@ def seed_api_path(client: backends.TesClient) -> None:
         (http.InvalidRequestURL("x"), BackendRequestNotSent),
         (http.RequestMaybeSent("x", reason="read_timeout"), requests.ReadTimeout),
         (http.RequestMaybeSent("x lost"), requests.ConnectionError),
+        (http.ResponseTooLarge("x large"), BackendResponseTooLarge),
     ],
 )
 def test_client_guarded_errors(
@@ -480,6 +482,7 @@ def test_client_guarded_errors(
     assert backends.not_sent(info.value) is issubclass(expected, BackendRequestNotSent)
     assert backends.forward_reason(info.value) in {
         "address_not_allowed",
+        "response_too_large",
         "connect_error",
     }
 
@@ -585,6 +588,15 @@ def test_as_response(status: int, reason: str, encoding: str | None) -> None:
     assert (response.status_code, response.reason) == (status, reason)
     assert response.encoding == encoding
     assert response.json() == {}
+
+
+def test_client_guarded_size_limit(discovering: FakeRegistry) -> None:
+    """Responses of discovered backends are limited as configured."""
+    get_custom_config(CustomConfig).tes.max_response_size = 2 * 1024 * 1024
+    discovering.add("a", "https://tes1.example.org")
+    client = backends.create_client(host="https://tes1.example.org")
+    assert client.guarded is not None
+    assert client.guarded.max_response_size == 2 * 1024 * 1024
 
 
 def test_client_configured_not_checked(discovering: FakeRegistry) -> None:
@@ -889,7 +901,7 @@ UNKNOWN_ANSWERS = [
     (json_response([]), "status 200"),
     (http.RequestMaybeSent("lost"), "ConnectionError"),
     (http.RequestMaybeSent("slow", reason="read_timeout"), "ReadTimeout"),
-    (http.ResponseTooLarge("large"), "ConnectionError"),
+    (http.ResponseTooLarge("large"), "BackendResponseTooLarge"),
     (http.RequestNotSent("not reached"), "not reached"),
 ]
 

@@ -31,7 +31,8 @@ identifier and state), `BASIC` (without the contents of inputs, the system
 logs and the executors' standard output and error) and `FULL` (`view`), as
 the TES specification describes. The view `FULL` has the logs of the TES
 instance once the task has finished, as proTES gets them once then: earlier, it
-has none, and if that one request fails (also for responses over 64 MiB), the task
+has none, and if that one request fails (also for responses over
+`custom.tes.max_response_size`, 10 MiB by default), the task
 stays without them. The final state appears together with them. proTES
 stores at most `max_log_size` of them per task, and keeps the end of longer ones
 (see [Tasks](configuration.md#tasks)). Times (`creation_time`, and `start_time`

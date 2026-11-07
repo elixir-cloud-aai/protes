@@ -351,6 +351,12 @@ custom:
     # backends without the label `tes.version` get proTES' token also when
     # tasks don't go to them (see `docs/configuration.md`)
     probe_with_token: false
+    # Maximum size of each response of a backend that proTES reads, in bytes
+    # (1 MiB to 256 MiB); larger responses fail, with an error in the logs.
+    # A response takes about 7 times its size in memory while it is parsed:
+    # raise the memory of the app and the Celery worker with the limit (see
+    # `docs/configuration.md`)
+    max_response_size: 10485760
   # Whether the service info, which anyone can read, lists the TES backends
   # (`backends`); its field `gateway` stays either way
   service_info:
