@@ -113,6 +113,13 @@ request to create a task with more than that leaves the task in
 limit per worker process), to keep larger logs (see [TES
 instances](configuration.md#tes-instances)).
 
+**Limits of the tasks per user (opt-in):** proTES can now limit the number
+of unfinished and of stored tasks of each user
+(`custom.controllers.post_task.limits`); off by default, so nothing changes
+unless you set them (see [Task limits](configuration.md#task-limits)). proTES
+creates a new index on the tasks (`user_id`, `task.state`) on its first start,
+which takes a moment for large collections.
+
 ## To version 0.5.0
 
 **Routing default:** 0.4.0 routed tasks by the distance to their input data

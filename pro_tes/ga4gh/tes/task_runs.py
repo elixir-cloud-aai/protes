@@ -78,6 +78,7 @@ from pro_tes.gateway import (
     relayed_task,
     validate_task,
 )
+from pro_tes.limits import check_task_limits
 from pro_tes.tasks.track_task_progress import (
     CANCELED_AT_FIELD,
     task__track_task_progress,
@@ -364,6 +365,8 @@ class TaskRuns:
                 changed the task.
             pro_tes.exceptions.Unauthorized: The user of the request could
                 not be identified.
+            pro_tes.limits.TaskLimitReached: The user has as many tasks as
+                a limit of `custom.controllers.post_task.limits` allows.
         """
         # create task document
         start_time = utc_now()
@@ -388,6 +391,14 @@ class TaskRuns:
                 f"Task could not be validated. Original error message:"
                 f" '{type(exc).__name__}: {exc}'"
             ) from exc
+
+        # limits of the tasks per user (off by default), before the pipeline
+        check_task_limits(
+            collection=self.db_client,
+            owner=owner,
+            roles=principal.groups,
+            limits=self.custom_config.controllers.post_task.limits,
+        )
 
         # run the plugins of the request and route phases; the engine
         # sanitizes and validates the task after each plugin that changed it

@@ -171,8 +171,8 @@ changes are recorded as paths and hashes only.
 ## Errors
 
 Errors are [problem details](https://www.rfc-editor.org/rfc/rfc9457) (with
-`title`, `status` and `detail`; errors of the plugin engine also with
-`problem_type`, a URI in FOCA's documentation), sent as `application/json`,
+`title`, `status` and `detail`; errors of the plugin engine and of task
+limits also with `problem_type`, a URI in FOCA's or proTES' documentation), sent as `application/json`,
 as the GA4GH
 specification declares: `400 Bad Request` for invalid requests (e.g.,
 outputs with wildcards without `path_prefix`,
@@ -186,7 +186,9 @@ whose identifier at their TES instance is unknown, which can't be canceled,
 `413 Content Too Large` for request bodies over the [size
 limit](configuration.md#request-size-limit) and tasks with inline contents
 of inputs over `max_inline_content` (see
-[Tasks](configuration.md#tasks)), the status of a plugin that rejected a
+[Tasks](configuration.md#tasks)), `429 Too Many Requests` for tasks of
+users who have as many tasks as a [task limit](configuration.md#task-limits)
+allows (the limit is named in `detail`), the status of a plugin that rejected a
 task, `500 Internal Server Error` if all plugins of a step failed,
 `502 Bad Gateway` if a TES instance did not confirm a request to create or
 cancel a task, which it may have processed, or refused to cancel a task (see
@@ -199,8 +201,8 @@ mapping of exceptions to problem details is
 [`pro_tes.exceptions`](reference.md#pro_tes.exceptions).
 
 The TES specification declares only the successful responses. The served
-specification adds, as proTES extensions, `413 Content Too Large` to
-`POST /tasks` and `409 Conflict` to `POST /tasks/{id}:cancel`, with the
+specification adds, as proTES extensions, `413 Content Too Large` and `429
+Too Many Requests` to `POST /tasks` and `409 Conflict` to `POST /tasks/{id}:cancel`, with the
 schema `ProblemDetails` (cf.
 [`additions.openapi.yaml`](https://github.com/elixir-cloud-aai/protes/blob/dev/pro_tes/api/additions.openapi.yaml)),
 as clients don't get these from TES servers in general; the operations are

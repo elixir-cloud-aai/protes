@@ -22,6 +22,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
+        429:
+          description: >-
+            proTES extension: the user has as many tasks as a limit of the
+            tasks per user allows (`custom.controllers.post_task.limits`,
+            off by default), named in `detail`; the task is not kept.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
   /tasks/{id}:cancel:
     post:
       responses:

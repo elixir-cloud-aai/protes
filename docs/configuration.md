@@ -579,7 +579,51 @@ plugins:
   exist at the same time, for each request that it serves at once (one per
   thread). Set it and the memory limit together: about 36 MiB per request with
   6, and about 384 MiB with 64, on top of about 90 MiB of the app; more if logs
-  hold text that JSON escapes (up to 6 times its size, e.g., control characters).
+  hold text that JSON escapes (up to 6 times its size, e.g., control characters);
+- `post_task.limits`: limits of the tasks per user, off by default (see [Task
+  limits](#task-limits)).
+
+### Task limits
+
+Deployments can limit the number of tasks of each user, so that a single user
+can't occupy the TES instances, the Celery workers or the database. All limits
+are off by default (`null`), as many deployments must keep all tasks, e.g., for
+accounting and audits:
+
+```yaml
+custom:
+  controllers:
+    post_task:
+      limits:
+        max_unfinished: 100
+        max_stored: 10000
+        exempt_roles: [admin]
+```
+
+- `max_unfinished`: the maximum number of unfinished tasks per user, i.e., in
+  any state but `COMPLETE`, `CANCELED`, `EXECUTOR_ERROR`, `SYSTEM_ERROR` and
+  `PREEMPTED` (also `UNKNOWN`, e.g., tasks being created, and `CANCELING`);
+- `max_stored`: the maximum number of stored tasks per user, finished or not.
+  Users can't delete tasks: unless finished tasks are deleted (by an operator,
+  see [Task owners](operations.md#task-owners)), a user who reaches it can't
+  create tasks any more, so set it well above the number of tasks a user
+  creates over the time that tasks are kept;
+- `exempt_roles`: roles whose users are not limited (default: none), e.g.,
+  `admin` for admins who also have the role `user` (see [Access
+  control](access-control.md)). The roles are those that access control
+  applies to the request: opt-in roles (`access_control.opt_in_roles`) count
+  only if the request activates them.
+
+A new task of a user who has as many tasks as a limit allows is rejected with
+`429 Too Many Requests`, before the plugins run; its problem details name the
+limit (`detail`, e.g., ``Limit of unfinished tasks per user reached: at most
+100 (`max_unfinished`)``), and it is neither stored nor forwarded. Tasks count
+for their owner (`user_id`); tasks of earlier versions without owner don't
+count. The limits are soft: proTES counts the tasks of the user, then stores
+the new one, so concurrent requests of the same user can each pass the check
+and exceed a limit by up to one task per concurrent request. Each check counts
+the tasks of the user up to the limit, using the index on owner and state of
+the tasks (`db` in `config.yaml`).
 
 ## Security
 
