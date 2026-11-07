@@ -250,8 +250,8 @@ Requests to TES instances get only these credentials: none from a `.netrc`
 file of the environment (`~/.netrc`, or the file of `NETRC`), which
 `requests` would otherwise add to requests without credentials, put in
 place of proTES' access token, and look up again after redirects. Redirects
-to other hosts or ports, and from `https` to `http`, drop the credentials
-(only redirects from `http` to `https` on the default ports keep them).
+within the same host and port keep the credentials, as do redirects from
+`http` to `https` on the default ports; all other redirects drop them.
 Proxies and CA certificates of the environment (e.g., `HTTPS_PROXY`,
 `REQUESTS_CA_BUNDLE`) still apply to configured TES instances. Requests to
 the identity provider of proTES don't get credentials from `.netrc` either,

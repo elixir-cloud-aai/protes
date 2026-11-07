@@ -318,7 +318,7 @@ def test_token_endpoint_configured(idp: FakeIdp, clock: Clock) -> None:
         "client_id": CLIENT_ID,
         "client_secret": CLIENT_SECRET,
     }
-    # no HTTP Basic credentials from `.netrc` besides
+    # no HTTP Basic credentials from `.netrc` besides the client's
     assert request["auth"] is backends.NO_CREDENTIALS
 
 
@@ -1252,30 +1252,52 @@ def test_netrc_ignored(
     ]
 
 
+A_URL = "https://a.example.org/x"
+
+
 @pytest.mark.parametrize(
-    "target, sent, expected",
+    "source, target, sent, expected",
     [
-        ("https://a.example.org/final", "Bearer token-1", "Bearer token-1"),
-        ("https://b.example.org/final", "Bearer token-1", None),
-        ("https://a.example.org:8443/final", "Bearer token-1", None),
-        ("http://a.example.org/final", "Bearer token-1", None),
-        ("https://a.example.org/final", None, None),
-        ("https://b.example.org/final", None, None),
+        (A_URL, "https://a.example.org/final", "Bearer token-1", "Bearer token-1"),
+        (
+            "http://a.example.org/x",
+            "https://a.example.org/final",
+            "Bearer token-1",
+            "Bearer token-1",
+        ),
+        (A_URL, "https://b.example.org/final", "Bearer token-1", None),
+        (A_URL, "https://a.example.org:8443/final", "Bearer token-1", None),
+        (A_URL, "http://a.example.org/final", "Bearer token-1", None),
+        (A_URL, "https://a.example.org/final", None, None),
+        (A_URL, "https://b.example.org/final", None, None),
     ],
 )
 def test_session_redirect_credentials(
-    netrc: None, target: str, sent: str | None, expected: str | None
+    netrc: None, source: str, target: str, sent: str | None, expected: str | None
 ) -> None:
     """Redirects keep credentials on the same host and port, and add none.
 
-    Also not from `.netrc`, which has credentials for all of these hosts.
+    Also from `http` to `https` on the default ports; never from `.netrc`,
+    which has credentials for all of these hosts.
     """
     response = requests.Response()
-    response.request = requests.Request("GET", "https://a.example.org/x").prepare()
+    response.request = requests.Request("GET", source).prepare()
     headers = {} if sent is None else {"Authorization": sent}
     prepared = requests.Request("GET", target, headers=headers).prepare()
     backends.BackendSession().rebuild_auth(prepared, response)
     assert prepared.headers.get("Authorization") == expected
+
+
+def test_no_credentials_netrc(netrc: None) -> None:
+    """Requests with `NO_CREDENTIALS` get none from `.netrc` (e.g., of the IdP)."""
+    assert backends.NO_CREDENTIALS
+    for method in ("GET", "POST"):
+        request = requests.Request(
+            method, "http://127.0.0.1/token", auth=backends.NO_CREDENTIALS
+        )
+        assert (
+            "Authorization" not in requests.Session().prepare_request(request).headers
+        )
 
 
 def test_session_environment(monkeypatch: pytest.MonkeyPatch) -> None:
