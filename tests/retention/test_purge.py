@@ -138,10 +138,15 @@ def test_finished_at(task: dict[str, Any], expected: datetime) -> None:
         ),
         (True, datetime(2026, 10, 1, tzinfo=UTC)),
         ("2026-10-02", datetime(2026, 10, 1, tzinfo=UTC)),
+        (float("nan"), datetime.max.replace(tzinfo=UTC)),
+        (1e20, datetime.max.replace(tzinfo=UTC)),
     ],
 )
 def test_finished_at_polled(polled_at: Any, expected: datetime) -> None:
-    """The last poll counts if it is later (and a number of seconds)."""
+    """The last poll counts if it is later (and a number of seconds).
+
+    Numbers that are no valid time keep the task, rather than stop the purge.
+    """
     document = {
         "_id": ObjectId(),
         "task": {"logs": [{"end_time": "2026-10-01T00:00:00+00:00"}]},

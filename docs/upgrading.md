@@ -130,7 +130,9 @@ from your own queries of the tasks. Retention needs the image's base config
 (`jobs.include` lists `pro_tes.retention.tasks`): overlays that replace
 `jobs.include` must list it too. During a rolling upgrade, instances of the
 earlier version don't know tombstones: until they are replaced, a request of
-the owner of a deleted task to such an instance may fail with `500`.
+the owner of a deleted task to such an instance may fail with `500`. Tasks
+tracked before version 0.3.0 count from when they were forwarded, not from
+when they finished: set `finished_days` with that in mind.
 
 ## To version 0.5.0
 

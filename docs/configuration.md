@@ -648,8 +648,9 @@ custom:
   (`creation_time`), but at the earliest from when their tracking stored
   their final state (the last poll, `tracking.polled_at`): the log of
   proTES ends when a task is forwarded, so tasks that ran for longer than
-  `finished_days` are kept that long after they finished, too. Unfinished
-  tasks are never deleted;
+  `finished_days` are kept that long after they finished, too. Tasks
+  tracked by proTES before version 0.3.0 have no last poll, so their time
+  counts from when they were forwarded. Unfinished tasks are never deleted;
 - `interval`: seconds between runs of the purge in each Celery worker
   (default 3600); the first run is when the worker starts;
 - `batch_size`: the maximum number of tasks deleted per run (default 500),
@@ -666,7 +667,9 @@ The Celery workers delete the tasks:
   several workers, the purge runs that many times more often and deletes up
   to that many times `batch_size` tasks per `interval`. Runs of several
   workers don't interfere, as a task is only replaced while it is still
-  finished and not yet deleted.
+  finished and not yet deleted; runs at the same time (e.g., when workers
+  start together) may remove the same owner roles more than once, which
+  adds changes of the rules (see `batch_size`).
 - **Deletion:** for each task, the workers remove its owner roles, on the
   default path of the TES API (`/ga4gh/tes/v1/tasks/...`), as the policies
   of `config.yaml` grant them. Then they replace its document by a

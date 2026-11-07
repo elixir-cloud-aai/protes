@@ -57,7 +57,8 @@ def finished_at(document: dict[str, Any]) -> datetime:
             creation time and tracking, if any.
 
     Returns:
-        The time.
+        The time; the latest possible time if the last poll is a number that
+        is no valid time, so that the task is kept.
     """
     task = document.get("task") or {}
     logs = task.get("logs")
@@ -68,7 +69,12 @@ def finished_at(document: dict[str, Any]) -> datetime:
         started = document["_id"].generation_time
     polled_at = (document.get("tracking") or {}).get("polled_at")
     if isinstance(polled_at, int | float) and not isinstance(polled_at, bool):
-        return max(started, datetime.fromtimestamp(polled_at, UTC))
+        try:
+            polled = datetime.fromtimestamp(polled_at, UTC)
+        except (ValueError, OverflowError, OSError):
+            # not a valid time: keep the task, rather than stop the purge
+            return datetime.max.replace(tzinfo=UTC)
+        return max(started, polled)
     return started
 
 
