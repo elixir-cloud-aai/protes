@@ -22,7 +22,9 @@ their registry entry):
 - `none`: no credentials.
 
 Credentials are looked up for each request, so that long-running Celery
-tasks get fresh tokens. Requests to discovered backends go through FOCA's
+tasks get fresh tokens. Requests get no other credentials: none from a
+`.netrc` file of the environment, also not after redirects (cf.
+:py:class:`BackendSession`). Requests to discovered backends go through FOCA's
 guarded HTTP client (:py:class:`foca.utils.http.GuardedClient`), which
 checks the address of each connection itself, so that hosts whose addresses
 change between checks (DNS rebinding) can't lead requests to private
@@ -296,7 +298,8 @@ class TokenProvider:
             return cached
         url = f"{issuer.rstrip('/')}/{OIDC_CONFIG_PATH}"
         try:
-            response = requests.get(url, timeout=idp.timeout)
+            # no credentials from `.netrc` (cf. `BackendSession`)
+            response = requests.get(url, auth=NO_CREDENTIALS, timeout=idp.timeout)
             response.raise_for_status()
             document = response.json()
         except (requests.RequestException, ValueError) as exc:
@@ -347,7 +350,8 @@ class TokenProvider:
         data = {"grant_type": "client_credentials"}
         if idp.scope is not None:
             data["scope"] = idp.scope
-        auth: tuple[str, str] | None = None
+        # none from `.netrc` besides the client's (cf. `BackendSession`)
+        auth: tuple[str, str] | requests.auth.AuthBase = NO_CREDENTIALS
         if idp.auth_method == "client_secret_basic":
             # encoded as per RFC 6749, section 2.3.1
             auth = (quote_plus(client_id), quote_plus(client_secret))
@@ -996,7 +1000,7 @@ class TesClient(tes.HTTPClient):
             if kwargs.get("allow_redirects", True):
                 kwargs["hooks"] = {"response": skip_redirect_body}
             return read_limited(
-                requests.request(method, url, timeout=timeout, stream=True, **kwargs),
+                backend_request(method, url, timeout=timeout, stream=True, **kwargs),
                 max_size=self.max_response_size,
                 timeout=timeout[1] if limited else None,
             )
@@ -1104,6 +1108,73 @@ def response_headers(response: requests.Response) -> Headers:
         except (TypeError, ValueError):
             logger.warning("Header %r of the response of a backend left out", name)
     return headers
+
+
+class _NoCredentials(requests.auth.AuthBase):
+    """No credentials, so that `requests` takes none from `.netrc`."""
+
+    def __call__(self, request: requests.PreparedRequest) -> requests.PreparedRequest:
+        """Leave a request as it is.
+
+        Args:
+            request: The request.
+
+        Returns:
+            The request.
+        """
+        return request
+
+
+# no credentials, also none from `.netrc`
+NO_CREDENTIALS = _NoCredentials()
+
+
+class BackendSession(requests.Session):
+    """Session of requests to configured backends, without `.netrc`.
+
+    `requests` takes credentials from a `.netrc` file of the environment
+    (`~/.netrc`, or the file of `NETRC`) for requests without credentials of
+    their own, instead of proTES' access token, and again after each
+    redirect. This session never does: requests get only the credentials of
+    their backend. Other settings of the environment, such as proxies and CA
+    certificates, still apply. Credentials are dropped on redirects to other
+    hosts or ports, and from `https` to `http`, as `requests` does.
+    """
+
+    def __init__(self) -> None:
+        """Create a session."""
+        super().__init__()
+        self.auth = NO_CREDENTIALS
+
+    def rebuild_auth(
+        self, prepared_request: requests.PreparedRequest, response: requests.Response
+    ) -> None:
+        """Drop the credentials of a redirect to another host; add none.
+
+        Args:
+            prepared_request: The request of the redirect.
+            response: The response with the redirect.
+        """
+        headers = prepared_request.headers
+        if "Authorization" in headers and self.should_strip_auth(
+            str(response.request.url), str(prepared_request.url)
+        ):
+            del headers["Authorization"]
+
+
+def backend_request(method: str, url: str, **kwargs: Any) -> requests.Response:
+    """Send a request to a configured backend (cf. :py:class:`BackendSession`).
+
+    Args:
+        method: HTTP method.
+        url: URL of the request.
+        **kwargs: Other arguments of `requests.request()`.
+
+    Returns:
+        The response.
+    """
+    with BackendSession() as session:
+        return session.request(method, url, **kwargs)
 
 
 def skip_redirect_body(response: requests.Response, **_: Any) -> None:

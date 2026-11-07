@@ -5,6 +5,7 @@ from copy import deepcopy
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+from pathlib import Path
 import socket
 import ssl
 import threading
@@ -123,6 +124,8 @@ class FakeIdp:
         token_status: Status of token responses.
         requests: Requests to the token endpoint (keyword arguments).
         discoveries: Number of requests of the discovery document.
+        discovery_auth: Credentials of the requests of the discovery
+            document.
     """
 
     def __init__(self) -> None:
@@ -136,6 +139,7 @@ class FakeIdp:
         self.token_status = 200
         self.requests: list[dict[str, Any]] = []
         self.discoveries = 0
+        self.discovery_auth: list[Any] = []
 
     def get(self, url: str, **kwargs: Any) -> FakeResponse:
         """Serve the discovery document.
@@ -146,6 +150,7 @@ class FakeIdp:
         if url != DISCOVERY_URL:
             raise requests.ConnectionError(url)
         self.discoveries += 1
+        self.discovery_auth.append(kwargs.get("auth"))
         return FakeResponse(self.discovery)
 
     def post(self, url: str, **kwargs: Any) -> FakeResponse:
@@ -242,6 +247,8 @@ def test_token_discovered(idp: FakeIdp, clock: Clock) -> None:
     assert request["auth"] == ("protes+client", "s3cret%3A%26")
     assert request["allow_redirects"] is False
     assert request["timeout"] == 10
+    # none from `.netrc` either
+    assert idp.discovery_auth == [backends.NO_CREDENTIALS]
 
 
 def test_token_cached(idp: FakeIdp, clock: Clock) -> None:
@@ -311,7 +318,8 @@ def test_token_endpoint_configured(idp: FakeIdp, clock: Clock) -> None:
         "client_id": CLIENT_ID,
         "client_secret": CLIENT_SECRET,
     }
-    assert request["auth"] is None
+    # no HTTP Basic credentials from `.netrc` besides the client's
+    assert request["auth"] is backends.NO_CREDENTIALS
 
 
 @pytest.mark.parametrize("name", [backends.CLIENT_ID_ENV, backends.CLIENT_SECRET_ENV])
@@ -523,7 +531,7 @@ def test_client_token_request(
         sent.append({"method": method, "url": url, **kwargs})
         return FakeResponse({"id": "remote-1", "state": "QUEUED"})
 
-    monkeypatch.setattr(backends.requests, "request", fake_request)
+    monkeypatch.setattr(backends, "backend_request", fake_request)
     task = backends.create_client(host=f"{BACKEND_URL}/token").get_task("remote-1")
     assert task.state == "QUEUED"
     # before the service info, for the version of the backend
@@ -698,7 +706,7 @@ def create_task(client: backends.TesClient, **outbound: Any) -> str:
 
 
 class FakePost:
-    """Fake `requests.request`: records requests, and answers or fails.
+    """Fake `backend_request`: records requests, and answers or fails.
 
     Attributes:
         sent: URLs and keyword arguments of the requests.
@@ -729,12 +737,12 @@ class FakePost:
 def post(
     configured: None, monkeypatch: pytest.MonkeyPatch
 ) -> Callable[[FakeResponse | Exception], FakePost]:
-    """Factory of fake `requests.request`s (installed when created)."""
+    """Factory of fake `backend_request`s (installed when created)."""
 
     def install(answer: FakeResponse | Exception) -> FakePost:
-        """Install a fake `requests.request` with an answer."""
+        """Install a fake `backend_request` with an answer."""
         fake = FakePost(answer)
-        monkeypatch.setattr(backends.requests, "request", fake)
+        monkeypatch.setattr(backends, "backend_request", fake)
         return fake
 
     return install
@@ -1155,6 +1163,157 @@ def test_response_size_limit_redirect(
     assert redirect.content == b""
 
 
+class AuthRecordingHandler(BaseHTTPRequestHandler):
+    """Handler of a local server that records the credentials it gets."""
+
+    received: ClassVar[list[tuple[str, str | None]]] = []
+
+    def do_GET(self) -> None:
+        """Record the credentials; redirect, or serve a task."""
+        self.received.append((self.path, self.headers.get("Authorization")))
+        if self.path == "/redirect":
+            body = b""
+            self.send_response(302)
+            self.send_header("Location", "/final")
+        else:
+            body = json.dumps({"id": "remote-1", "state": "COMPLETE"}).encode()
+            self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format: str, *args: Any) -> None:
+        """Log nothing."""
+
+
+@pytest.fixture
+def netrc(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A `.netrc` file with credentials for all hosts of the tests.
+
+    The local test servers, and the hosts of redirects.
+    """
+    path = tmp_path / ".netrc"
+    path.write_text(
+        "machine 127.0.0.1 login netrc password secret\n"
+        "machine a.example.org login netrc password secret\n"
+        "machine b.example.org login netrc password secret\n"
+    )
+    path.chmod(0o600)
+    monkeypatch.setenv("NETRC", str(path))
+    assert requests.utils.get_netrc_auth("http://127.0.0.1/") == ("netrc", "secret")
+
+
+@pytest.mark.parametrize(
+    "credentials, expected",
+    [
+        ({}, None),
+        ({"headers": {"Authorization": "Bearer token-1"}}, "Bearer token-1"),
+        ({"auth": ("user", "pass")}, "Basic dXNlcjpwYXNz"),
+    ],
+)
+def test_netrc_ignored(
+    configured: None,
+    loopback: None,
+    netrc: None,
+    monkeypatch: pytest.MonkeyPatch,
+    credentials: dict[str, Any],
+    expected: str | None,
+) -> None:
+    """Requests get no credentials of `.netrc`, also not after redirects.
+
+    Neither without credentials nor instead of their own.
+    """
+    monkeypatch.setattr(AuthRecordingHandler, "received", [])
+    server = ThreadingHTTPServer(("127.0.0.1", 0), AuthRecordingHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        url = f"http://127.0.0.1:{server.server_address[1]}"
+        conf = get_custom_config(CustomConfig).tes
+        conf.backends = BackendListConfig(
+            [
+                *conf.backends.root,
+                ServiceEntry(
+                    type="ga4gh-tes", url=url, url_schemes=["http"], auth="none"
+                ),
+            ]
+        )
+        client = backends.create_client(host=url)
+        response = client._request(
+            "GET", f"{url}/redirect", timeout=(5, 5), **credentials
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert response.status_code == 200
+    assert AuthRecordingHandler.received == [
+        ("/redirect", expected),
+        ("/final", expected),
+    ]
+
+
+A_URL = "https://a.example.org/x"
+
+
+@pytest.mark.parametrize(
+    "source, target, sent, expected",
+    [
+        (A_URL, "https://a.example.org/final", "Bearer token-1", "Bearer token-1"),
+        (
+            "http://a.example.org/x",
+            "https://a.example.org/final",
+            "Bearer token-1",
+            "Bearer token-1",
+        ),
+        (A_URL, "https://b.example.org/final", "Bearer token-1", None),
+        (A_URL, "https://a.example.org:8443/final", "Bearer token-1", None),
+        (A_URL, "http://a.example.org/final", "Bearer token-1", None),
+        (A_URL, "https://a.example.org/final", None, None),
+        (A_URL, "https://b.example.org/final", None, None),
+    ],
+)
+def test_session_redirect_credentials(
+    netrc: None, source: str, target: str, sent: str | None, expected: str | None
+) -> None:
+    """Redirects keep credentials on the same host and port, and add none.
+
+    Also from `http` to `https` on the default ports; never from `.netrc`,
+    which has credentials for all of these hosts.
+    """
+    response = requests.Response()
+    response.request = requests.Request("GET", source).prepare()
+    headers = {} if sent is None else {"Authorization": sent}
+    prepared = requests.Request("GET", target, headers=headers).prepare()
+    backends.BackendSession().rebuild_auth(prepared, response)
+    assert prepared.headers.get("Authorization") == expected
+
+
+def test_no_credentials_netrc(netrc: None) -> None:
+    """Requests with `NO_CREDENTIALS` get none from `.netrc` (e.g., of the IdP)."""
+    assert backends.NO_CREDENTIALS
+    for method in ("GET", "POST"):
+        request = requests.Request(
+            method, "http://127.0.0.1/token", auth=backends.NO_CREDENTIALS
+        )
+        assert (
+            "Authorization" not in requests.Session().prepare_request(request).headers
+        )
+
+
+def test_session_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Proxies and CA certificates of the environment still apply."""
+    for name in ("https_proxy", "HTTPS_PROXY"):
+        monkeypatch.setenv(name, "http://proxy.example.org:3128")
+    for name in ("no_proxy", "NO_PROXY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("REQUESTS_CA_BUNDLE", "/etc/ssl/ca.pem")
+    settings = backends.BackendSession().merge_environment_settings(
+        "https://tes.example.org/", proxies={}, stream=None, verify=None, cert=None
+    )
+    assert settings["proxies"]["https"] == "http://proxy.example.org:3128"
+    assert settings["verify"] == "/etc/ssl/ca.pem"
+
+
 class DrippingHandler(BaseHTTPRequestHandler):
     """Handler of a local server that sends its answer slowly."""
 
@@ -1219,7 +1378,7 @@ def test_get_task_once(
         sent.append(url)
         return FakeResponse({}, status_code=404)
 
-    monkeypatch.setattr(backends.requests, "request", fake_request)
+    monkeypatch.setattr(backends, "backend_request", fake_request)
     with pytest.raises(requests.HTTPError):
         backends.create_client(host=NONE_URL).get_task("remote/1")
     assert sent == [f"{NONE_URL}/ga4gh/tes/v1/tasks/remote%2F1"]
@@ -1255,7 +1414,7 @@ def test_get_task_unknown_fields(
         """Serve the task."""
         return FakeResponse(body)
 
-    monkeypatch.setattr(backends.requests, "request", fake_request)
+    monkeypatch.setattr(backends, "backend_request", fake_request)
     task = backends.create_client(host=NONE_URL).get_task("remote-1")
     assert task.state == "COMPLETE"
     assert task.tags == {"extra": "kept"}
@@ -1322,7 +1481,7 @@ def test_get_task_camel_case(
             }
         )
 
-    monkeypatch.setattr(backends.requests, "request", fake_request)
+    monkeypatch.setattr(backends, "backend_request", fake_request)
     task = backends.create_client(host=NONE_URL).get_task("remote-1")
     assert task.creation_time is not None
     assert task.logs is None
