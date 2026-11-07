@@ -625,6 +625,45 @@ and exceed a limit by up to one task per concurrent request. Each check counts
 the tasks of the user up to the limit, using the index on owner and state of
 the tasks (`db` in `config.yaml`).
 
+## Retention of finished tasks
+
+Deployments can delete finished tasks some days after they finished, so that
+the database and the rules of access control stay bounded: each task has two
+owner roles, and their number slows down every request. Retention is off by
+default (`finished_days: null`), as many deployments must keep all tasks,
+e.g., for accounting and audits:
+
+```yaml
+custom:
+  retention:
+    finished_days: 90
+    interval: 3600
+    batch_size: 500
+```
+
+- `finished_days`: the number of days after which finished tasks
+  (`COMPLETE`, `CANCELED`, `EXECUTOR_ERROR`, `SYSTEM_ERROR` and
+  `PREEMPTED`) are deleted, counted from the end time of their last log
+  (`logs[].end_time`), or, without one, from their creation
+  (`creation_time`); unfinished tasks are never deleted;
+- `interval`: seconds between runs of the purge in each Celery worker
+  (default 3600); the first run is when the worker starts;
+- `batch_size`: the maximum number of tasks deleted per run (default 500),
+  the oldest first, so that a first run on a large database doesn't hold a
+  worker for long.
+
+The Celery workers delete the tasks (each worker purges, as each resumes the
+tracking of tasks; runs of several workers don't interfere). For each task,
+they remove its owner roles, then replace its document by a tombstone that
+keeps only the task's identifier (`task.id`) and the time of the deletion
+(`deleted_at`), so that the identifier is never used for another task; the
+API treats tombstones as tasks that don't exist (`404 Not Found`, never
+listed). Tasks are deleted, not archived: keep a backup of the database if
+you need them later. The provenance of a deleted task goes with it; the plugin
+builds and pipelines that tasks refer to are kept. The time is compared to
+the documents' identifiers first, so each run only reads finished tasks
+stored more than `finished_days` days ago.
+
 ## Security
 
 The TES API requires access tokens of the trusted issuers

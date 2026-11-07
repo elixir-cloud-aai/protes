@@ -120,6 +120,13 @@ owner:
 db.tasks.deleteMany({ user_id: { $exists: false } })
 ```
 
+To delete finished tasks regularly, set a [retention of finished
+tasks](configuration.md#retention-of-finished-tasks) instead: it removes their
+owner roles, and leaves tombstones (`deleted_at`) that keep their
+identifiers from being used again. Tombstones are not tasks: leave them in
+place, and leave them out of queries of tasks
+(`{ deleted_at: { $exists: false } }`).
+
 Owner roles left by deleted tasks don't give access to other tasks (their
 owners get `404 Not Found`, and their identifiers are not used for new
 tasks), but are kept in memory by each instance of proTES; delete them
