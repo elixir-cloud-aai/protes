@@ -192,6 +192,8 @@ jobs:
   backend: "rpc://"
   include:
     - pro_tes.tasks.track_task_progress
+    # Retention of finished tasks (`custom.retention`; off by default)
+    - pro_tes.retention.tasks
 
 # Service info, served at `GET /service-info` by FOCA, according to the GA4GH
 # `Service` schema (validated on startup); `version` defaults to the version
@@ -375,6 +377,16 @@ custom:
   # (`backends`); its field `gateway` stays either way
   service_info:
     list_backends: true
+  # Retention of finished tasks, off by default (null: all tasks are kept):
+  # the Celery workers delete finished tasks `finished_days` days after the
+  # end of their last log (or their creation, without one), with their owner
+  # roles, every `interval` seconds, at most `batch_size` per run; each
+  # leaves a tombstone with its identifier, which is never used again (see
+  # `docs/configuration.md`)
+  retention:
+    finished_days: null
+    interval: 3600
+    batch_size: 500
 
 # Plugins (FOCA's gateway plugins, `foca.plugins`) process each new task
 # (`POST /tasks`): they may change the task, choose and order the TES backends

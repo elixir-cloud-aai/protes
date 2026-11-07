@@ -16,6 +16,7 @@ from pydantic import (
 
 from pro_tes.ga4gh.tes.versions import SUPPORTED, TesVersion
 from pro_tes.limits.config import TaskLimits
+from pro_tes.retention.config import Retention
 
 
 class ConfigModel(BaseModel):
@@ -546,16 +547,20 @@ class CustomConfig(ConfigModel):
         controllers: All controller-related config.
         tes: TES backends and how proTES calls them.
         service_info: What the service info tells about the TES backends.
+        retention: Retention of finished tasks (cf.
+            :py:mod:`pro_tes.retention`); off by default.
 
     Attributes:
         controllers: All controller-related config.
         tes: TES backends and how proTES calls them.
         service_info: What the service info tells about the TES backends.
+        retention: Retention of finished tasks.
     """
 
     controllers: Controllers = Controllers()
     tes: Tes = Tes()
     service_info: ServiceInfo = ServiceInfo()
+    retention: Retention = Retention()
 
     @model_validator(mode="before")
     @classmethod
