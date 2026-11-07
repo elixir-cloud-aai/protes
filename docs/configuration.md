@@ -100,9 +100,12 @@ proTES reads at most `custom.tes.max_response_size` bytes of each response
 of a TES instance (default: 10485760, i.e., 10 MiB; from 1 MiB to 256 MiB),
 configured or discovered: a larger response fails, with an error in the logs
 (`Response of TES backend larger than ...`), and the rest of it is not read
-(error answers of configured TES instances, with statuses other than 2xx,
-are cut off instead, as their status decides; compressed responses count
-with their decompressed size).
+(error answers and redirects of configured TES instances, with statuses
+other than 2xx, are cut off instead, as their status decides; compressed
+responses count with their decompressed size). For discovered TES instances,
+error answers over the limit fail too (FOCA's guarded HTTP client), so that
+a refusal with a large body (e.g., the error page of a gateway) counts as an
+unknown outcome.
 This bounds the memory that each request takes, as a response is held in
 memory while it is parsed, which takes about 7 times its size. A larger
 response to a request to create a task counts as an unknown outcome, as the

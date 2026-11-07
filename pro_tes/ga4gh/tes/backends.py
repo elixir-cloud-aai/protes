@@ -993,6 +993,17 @@ class TesClient(tes.HTTPClient):
                 `requests.ConnectionError` if it may have been.
         """
         if self.guarded is None:
+
+            def limit_redirect(response: requests.Response, **_: Any) -> None:
+                """Read the body of a redirect that is followed, up to the limit.
+
+                `requests` reads it as a whole otherwise, before following it.
+                """
+                if response.is_redirect:
+                    read_limited(response, max_size=self.max_response_size)
+
+            if kwargs.get("allow_redirects", True):
+                kwargs["hooks"] = {"response": limit_redirect}
             return read_limited(
                 requests.request(method, url, timeout=timeout, stream=True, **kwargs),
                 max_size=self.max_response_size,

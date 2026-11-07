@@ -1104,6 +1104,59 @@ def test_read_limited_error_status(status: int) -> None:
     assert len(response._content) == 1000  # type: ignore[attr-defined]
 
 
+class LargeRedirectHandler(BaseHTTPRequestHandler):
+    """Handler of a local server that redirects with a large body."""
+
+    def do_GET(self) -> None:
+        """Redirect to the task, or serve it."""
+        if self.path == "/final":
+            body = json.dumps({"id": "remote-1", "state": "COMPLETE"}).encode()
+            self.send_response(200)
+        else:
+            body = b"x" * 5000
+            self.send_response(302)
+            self.send_header("Location", "/final")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format: str, *args: Any) -> None:
+        """Log nothing."""
+
+
+def test_response_size_limit_redirect(
+    configured: None, loopback: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bodies of redirects that are followed are not read beyond the limit.
+
+    `requests` reads them as a whole before it follows them.
+    """
+    server = ThreadingHTTPServer(("127.0.0.1", 0), LargeRedirectHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        url = f"http://127.0.0.1:{server.server_address[1]}"
+        conf = get_custom_config(CustomConfig).tes
+        conf.backends = BackendListConfig(
+            [
+                *conf.backends.root,
+                ServiceEntry(
+                    type="ga4gh-tes", url=url, url_schemes=["http"], auth="none"
+                ),
+            ]
+        )
+        conf.max_response_size = 1000
+        client = backends.create_client(host=url)
+        response = client._request("GET", f"{url}/start", timeout=(5, 5))
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert response.json() == {"id": "remote-1", "state": "COMPLETE"}
+    (redirect,) = response.history
+    assert redirect.status_code == 302
+    assert len(redirect.content) == 1000
+
+
 class DrippingHandler(BaseHTTPRequestHandler):
     """Handler of a local server that sends its answer slowly."""
 
