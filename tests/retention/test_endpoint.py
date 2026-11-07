@@ -19,7 +19,7 @@ import pytest
 from pro_tes.config_models import CustomConfig
 from pro_tes.ga4gh.tes import task_runs
 from pro_tes.retention import Retention
-from pro_tes.retention.tasks import task__purge_finished_tasks
+from pro_tes.retention.tasks import rules_adapter, task__purge_finished_tasks
 from pro_tes.utils.db import DELETED_FIELD
 from tests.conftest import ADMIN, DB, make_headers
 from tests.ga4gh.tes.conftest import BASE_PATH, TASK, FakeBackend, stored
@@ -141,3 +141,17 @@ def test_identifier_not_reused(
     monkeypatch.setattr(task_runs, "generate_id", lambda **kwargs: next(ids))
     response = client.post(f"{BASE_PATH}/tasks", json=TASK)
     assert response.get_json()["id"] == "NEW123"
+
+
+def test_rules_adapter(
+    app: FlaskApp,
+    monkeypatch: pytest.MonkeyPatch,
+    mongo_client: MongoClient[dict[str, Any]],
+) -> None:
+    """The rules are those of the app's access control, also in `MONGO_DBNAME`."""
+    with app.app.app_context():
+        tasks = mongo_client[DB]["tasks"]
+        collection = rules_adapter(tasks=tasks)._collection
+        assert (collection.database.name, collection.name) == (DB, "policy_rules")
+        monkeypatch.setenv("MONGO_DBNAME", "protes")
+        assert rules_adapter(tasks=tasks)._collection.database.name == "protes"

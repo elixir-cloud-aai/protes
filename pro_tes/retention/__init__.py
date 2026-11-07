@@ -20,6 +20,5 @@ states of tasks, the fields of stored tasks, the field of tombstones (cf.
 """
 
 from pro_tes.retention.config import Retention
-from pro_tes.retention.purge import purge_finished_tasks
 
-__all__ = ["Retention", "purge_finished_tasks"]
+__all__ = ["Retention"]

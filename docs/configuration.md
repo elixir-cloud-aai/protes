@@ -652,8 +652,11 @@ custom:
   the oldest first, so that a first run on a large database doesn't hold a
   worker for long.
 
-The Celery workers delete the tasks (each worker purges, as each resumes the
-tracking of tasks; runs of several workers don't interfere). For each task,
+The Celery workers delete the tasks: each worker purges every `interval`
+seconds, so with several workers, the purge runs that many times more often,
+and deletes up to that many times `batch_size` tasks per `interval`; runs
+of several workers don't interfere, as a task is only replaced while it is
+still finished and not yet deleted. For each task,
 they remove its owner roles, then replace its document by a tombstone that
 keeps only the task's identifier (`task.id`) and the time of the deletion
 (`deleted_at`), so that the identifier is never used for another task; the

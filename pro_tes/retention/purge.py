@@ -12,13 +12,10 @@ from pymongo.collection import Collection
 
 from pro_tes.ga4gh.tes.ownership import task_resources
 from pro_tes.ga4gh.tes.states import States
+from pro_tes.gateway import TASKS_PATH
 from pro_tes.utils.db import DELETED_FIELD
 
 logger = logging.getLogger(__name__)
-
-# Request path of the tasks, which owner roles are granted below (cf.
-# `security.access_control.policies` in `config.yaml`)
-TASKS_PATH = "/ga4gh/tes/v1/tasks"
 
 
 def _parse_time(value: Any) -> datetime | None:

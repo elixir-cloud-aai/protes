@@ -14,8 +14,8 @@ import yaml
 
 from pro_tes.config_models import CustomConfig
 from pro_tes.ga4gh.tes.states import States
-from pro_tes.retention import Retention, purge_finished_tasks
-from pro_tes.retention.purge import TASKS_PATH, finished_at
+from pro_tes.retention import Retention
+from pro_tes.retention.purge import TASKS_PATH, finished_at, purge_finished_tasks
 from pro_tes.utils.db import DELETED_FIELD
 from tests.conftest import DB
 
@@ -273,3 +273,28 @@ def test_logged(
     with caplog.at_level("INFO"):
         purge(tasks, rules)
     assert "Deleted 1 tasks finished more than 30 days ago" in caplog.text
+
+
+def test_finished_recently(tasks: Collection[dict[str, Any]], rules: Adapter) -> None:
+    """Tasks stored long ago, but finished recently, are kept.
+
+    They don't count against `batch_size`.
+    """
+    store_task(
+        tasks, "LONG", stored=NOW - 50 * DAY, end_time=(NOW - 5 * DAY).isoformat()
+    )
+    store_task(tasks, "OLD", stored=NOW - 45 * DAY)
+    assert purge(tasks, rules, batch_size=1) == 1
+    kept = tasks.find_one({"task.id": "LONG"})
+    assert kept is not None and DELETED_FIELD not in kept
+    old = tasks.find_one({"task.id": "OLD"})
+    assert old is not None and DELETED_FIELD in old
+
+
+def test_change_recorded(tasks: Collection[dict[str, Any]], rules: Adapter) -> None:
+    """Removed owner roles are recorded, for the enforcers of all instances."""
+    store_task(tasks, "OLD")
+    grant_owner(rules, "OLD")
+    before = rules.get_changes().version
+    purge(tasks, rules)
+    assert rules.get_changes().version > before
