@@ -993,17 +993,8 @@ class TesClient(tes.HTTPClient):
                 `requests.ConnectionError` if it may have been.
         """
         if self.guarded is None:
-
-            def limit_redirect(response: requests.Response, **_: Any) -> None:
-                """Read the body of a redirect that is followed, up to the limit.
-
-                `requests` reads it as a whole otherwise, before following it.
-                """
-                if response.is_redirect:
-                    read_limited(response, max_size=self.max_response_size)
-
             if kwargs.get("allow_redirects", True):
-                kwargs["hooks"] = {"response": limit_redirect}
+                kwargs["hooks"] = {"response": skip_redirect_body}
             return read_limited(
                 requests.request(method, url, timeout=timeout, stream=True, **kwargs),
                 max_size=self.max_response_size,
@@ -1115,6 +1106,21 @@ def response_headers(response: requests.Response) -> Headers:
     return headers
 
 
+def skip_redirect_body(response: requests.Response, **_: Any) -> None:
+    """Leave the body of a redirect unread (hook of `requests`).
+
+    `requests` reads the body of each redirect that it follows as a whole
+    otherwise, and keeps it in the history of the response; the connection
+    is closed instead.
+
+    Args:
+        response: A response of a backend.
+        **_: Other arguments of the hook.
+    """
+    if response.is_redirect:
+        response._content = b""
+
+
 def read_limited(
     response: requests.Response, max_size: int, timeout: float | None = None
 ) -> requests.Response:
@@ -1143,7 +1149,11 @@ def read_limited(
     with response:
         # not `iter_content`, which waits for whole chunks, however long they take
         try:
-            while chunk := response.raw.read1(RESPONSE_CHUNK_SIZE, decode_content=True):
+            # at most a byte more than the limit (decoded)
+            while chunk := response.raw.read1(
+                min(RESPONSE_CHUNK_SIZE, max_size + 1 - len(content)),
+                decode_content=True,
+            ):
                 content += chunk
                 if len(content) > max_size:
                     if not 200 <= response.status_code < 300:

@@ -1085,11 +1085,9 @@ def test_read_limited_stops() -> None:
     """Bodies are read up to the limit and a part more, not to their end."""
     response = FakeResponse({"name": "x" * 10 * backends.RESPONSE_CHUNK_SIZE})
     with pytest.raises(BackendResponseTooLarge):
-        backends.read_limited(
-            response,  # type: ignore[arg-type]
-            max_size=backends.RESPONSE_CHUNK_SIZE,
-        )
-    assert len(response.raw.data) > 7 * backends.RESPONSE_CHUNK_SIZE
+        backends.read_limited(response, max_size=1000)  # type: ignore[arg-type]
+    size = len(json.dumps(response.body))
+    assert len(response.raw.data) == size - 1001
 
 
 @pytest.mark.parametrize("status", [302, 400, 404, 413, 500])
@@ -1127,9 +1125,9 @@ class LargeRedirectHandler(BaseHTTPRequestHandler):
 def test_response_size_limit_redirect(
     configured: None, loopback: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Bodies of redirects that are followed are not read beyond the limit.
+    """Bodies of redirects that are followed are not read.
 
-    `requests` reads them as a whole before it follows them.
+    `requests` reads them as a whole before it follows them, and keeps them.
     """
     server = ThreadingHTTPServer(("127.0.0.1", 0), LargeRedirectHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -1154,7 +1152,7 @@ def test_response_size_limit_redirect(
     assert response.json() == {"id": "remote-1", "state": "COMPLETE"}
     (redirect,) = response.history
     assert redirect.status_code == 302
-    assert len(redirect.content) == 1000
+    assert redirect.content == b""
 
 
 class DrippingHandler(BaseHTTPRequestHandler):
