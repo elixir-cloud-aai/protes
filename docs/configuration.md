@@ -586,9 +586,11 @@ plugins:
   10485760, i.e., 10 MiB), whatever their number: a page ends before the task
   that would exceed it, and its `next_page_token` continues with that task.
   A page always has at least one task, which may be larger (up to the size
-  of a stored task). With it, a request of a page of the view `FULL` takes
-  at most about 3 times this size in memory, plus one task (about 30 MiB by
-  default), also for logs with text that JSON escapes; lower it with the
+  of a stored task). It bounds the response, not the memory: a request of a
+  page of the view `FULL` takes about 3 times this size in memory, plus one
+  task (about 30 MiB by default), for tasks with large texts (e.g., logs,
+  also with text that JSON escapes), and up to about 7 times for tasks with
+  many small fields (e.g., thousands of inputs or tags); lower it with the
   memory limit;
 - `post_task.limits`: limits of the tasks per user, off by default (see [Task
   limits](#task-limits)).
