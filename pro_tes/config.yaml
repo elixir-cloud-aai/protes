@@ -118,6 +118,11 @@ db:
             - keys:
                 task.state: 1
                 tracking.polled_at: 1
+            # The limits of the tasks per user count the tasks of each owner,
+            # unfinished ones and all (`custom.controllers.post_task.limits`)
+            - keys:
+                user_id: 1
+                task.state: 1
         # Provenance of tasks (see `docs/operations.md`): the builds of the
         # plugins and the default and preset pipelines that tasks ran
         # through, each stored once, by hash (`_id`); tasks refer to them
@@ -267,6 +272,15 @@ custom:
       # task: standard output and error of executors and system logs together;
       # longer ones keep their end. 0 stores none (see `docs/configuration.md`)
       max_log_size: 1048576
+      # Limits of the tasks per user, off by default (null): new tasks of a
+      # user with `max_unfinished` unfinished tasks, or `max_stored` stored
+      # tasks, are rejected (`429`), unless the user has one of the
+      # `exempt_roles` (e.g., `admin`). Soft limits: concurrent requests of a
+      # user may exceed them (see `docs/configuration.md`)
+      limits:
+        max_unfinished: null
+        max_stored: null
+        exempt_roles: []
     # Tasks per page of `GET /tasks` if the request sets no `page_size`, and
     # at most (the TES specification requires fewer than 2048); at most
     # `max_page_size_full` of the view `FULL`, whose tasks may be large: a

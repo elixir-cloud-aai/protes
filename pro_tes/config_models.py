@@ -15,6 +15,7 @@ from pydantic import (
 )
 
 from pro_tes.ga4gh.tes.versions import SUPPORTED, TesVersion
+from pro_tes.limits.config import TaskLimits
 
 
 class ConfigModel(BaseModel):
@@ -125,6 +126,8 @@ class PostTask(ConfigModel):
             system logs together), in bytes (UTF-8); longer ones are cut,
             keeping their end. `0` stores none, without getting them. At most
             8 MiB, as documents in MongoDB have at most 16 MB.
+        limits: Limits of the tasks per user (cf. :py:mod:`pro_tes.limits`);
+            off by default.
 
     Attributes:
         db: DB insert behavior.
@@ -140,6 +143,7 @@ class PostTask(ConfigModel):
             set to `SYSTEM_ERROR`.
         max_log_size: Maximum size of the logs of a TES instance that are
             stored per task, in bytes (UTF-8).
+        limits: Limits of the tasks per user.
     """
 
     db: DB = DB()
@@ -149,6 +153,7 @@ class PostTask(ConfigModel):
     max_inline_content: PositiveInt = 131072
     max_create_time: Annotated[int, Field(gt=0, le=MAX_SECONDS)] = 3600
     max_log_size: Annotated[int, Field(ge=0, le=8388608)] = 1048576
+    limits: TaskLimits = TaskLimits()
 
 
 class ListTasks(ConfigModel):
