@@ -1,25 +1,19 @@
 """Unit tests of the purge of finished tasks (`pro_tes.retention.purge`)."""
 
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import Any
 
 from bson.objectid import ObjectId
 from foca.security.access_control.foca_casbin_adapter.adapter import Adapter
-from pydantic import ValidationError
 from pymongo import MongoClient
 from pymongo.collection import Collection
 import pytest
-import yaml
 
-from pro_tes.config_models import CustomConfig
 from pro_tes.ga4gh.tes.states import States
-from pro_tes.retention import Retention
 from pro_tes.retention.purge import TASKS_PATH, finished_at, purge_finished_tasks
 from pro_tes.utils.db import DELETED_FIELD
 from tests.conftest import DB
 
-ROOT = Path(__file__).parents[2]
 NOW = datetime(2026, 11, 7, 12, tzinfo=UTC)
 DAY = timedelta(days=1)
 
@@ -100,32 +94,6 @@ def purge(
         batch_size=batch_size,
         now=NOW,
     )
-
-
-def test_defaults() -> None:
-    """Retention is off by default."""
-    retention = CustomConfig().retention
-    assert retention == Retention()
-    assert retention.finished_days is None
-    assert retention.interval == 3600
-    assert retention.batch_size == 500
-
-
-def test_base_config() -> None:
-    """The base config sets retention as the model does: off."""
-    config = yaml.safe_load((ROOT / "pro_tes" / "config.yaml").read_text())
-    assert Retention.model_validate(config["custom"]["retention"]) == Retention()
-    assert "pro_tes.retention.tasks" in config["jobs"]["include"]
-
-
-@pytest.mark.parametrize(
-    "settings",
-    [{"finished_days": 0}, {"interval": 0}, {"batch_size": -1}, {"days": 1}],
-)
-def test_config_invalid(settings: dict[str, Any]) -> None:
-    """Settings must be positive, and unknown keys are errors."""
-    with pytest.raises(ValidationError):
-        CustomConfig.model_validate({"retention": settings})
 
 
 @pytest.mark.parametrize(

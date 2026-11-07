@@ -660,22 +660,25 @@ custom:
   (e.g., on the first run), a smaller `batch_size` (at most 50) avoids
   that, at the cost of more runs.
 
-The Celery workers delete the tasks: each worker purges every `interval`
-seconds, so with several workers, the purge runs that many times more often,
-and deletes up to that many times `batch_size` tasks per `interval`; runs
-of several workers don't interfere, as a task is only replaced while it is
-still finished and not yet deleted. For each task,
-they remove its owner roles, then replace its document by a tombstone that
-keeps only the task's identifier (`task.id`) and the time of the deletion
-(`deleted_at`), so that the identifier is never used for another task; the
-API treats tombstones as tasks that don't exist (`404 Not Found`, never
-listed). Tasks are deleted, not archived: keep a backup of the database if
-you need them later. The provenance of a deleted task goes with it; the plugin
-builds and pipelines that tasks refer to are kept. Owner roles are removed
-on the default path of the TES API (`/ga4gh/tes/v1/tasks/...`), as the
-policies of `config.yaml` grant them. The time is compared to
-the documents' identifiers first, so each run only reads finished tasks
-stored more than `finished_days` days ago.
+The Celery workers delete the tasks:
+
+- **Several workers:** each worker purges every `interval` seconds, so with
+  several workers, the purge runs that many times more often and deletes up
+  to that many times `batch_size` tasks per `interval`. Runs of several
+  workers don't interfere, as a task is only replaced while it is still
+  finished and not yet deleted.
+- **Deletion:** for each task, the workers remove its owner roles, on the
+  default path of the TES API (`/ga4gh/tes/v1/tasks/...`), as the policies
+  of `config.yaml` grant them. Then they replace its document by a
+  tombstone that keeps only the task's identifier (`task.id`) and the time
+  of the deletion (`deleted_at`), so that the identifier is never used for
+  another task. The API treats tombstones as tasks that don't exist
+  (`404 Not Found`, never listed).
+- **What is kept:** tasks are deleted, not archived: keep a backup of the
+  database if you need them later. The provenance of a deleted task goes
+  with it; the plugin builds and pipelines that tasks refer to are kept.
+- **Cost:** each run first narrows the candidates by document identifier, so
+  it only reads finished tasks stored more than `finished_days` days ago.
 
 ## Security
 
