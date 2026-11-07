@@ -132,7 +132,7 @@ def test_spec_extensions(client: FlaskClient) -> None:
     spec = client.get(f"{BASE_PATH}/openapi.json").get_json()
     create = spec["paths"]["/tasks"]["post"]
     cancel = spec["paths"]["/tasks/{id}:cancel"]["post"]
-    assert set(create["responses"]) == {"200", "413"}
+    assert set(create["responses"]) == {"200", "413", "429"}
     assert set(cancel["responses"]) == {"200", "409"}
     assert create["operationId"] == "CreateTask"
     body = create["requestBody"]["content"]["application/json"]["schema"]
@@ -144,7 +144,7 @@ def test_spec_extensions(client: FlaskClient) -> None:
     assert spec["info"]["title"] == "Task Execution Service"
     assert "/plugins" in spec["paths"]
     problem = {"$ref": "#/components/schemas/ProblemDetails"}
-    for operation, status in ((create, "413"), (cancel, "409")):
+    for operation, status in ((create, "413"), (create, "429"), (cancel, "409")):
         content = operation["responses"][status]["content"]
         assert content["application/json"]["schema"] == problem
     assert "detail" in spec["components"]["schemas"]["ProblemDetails"]["properties"]

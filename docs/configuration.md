@@ -610,7 +610,9 @@ custom:
   creates over the time that tasks are kept;
 - `exempt_roles`: roles whose users are not limited (default: none), e.g.,
   `admin` for admins who also have the role `user` (see [Access
-  control](access-control.md)).
+  control](access-control.md)). The roles are those that access control
+  applies to the request: opt-in roles (`access_control.opt_in_roles`) count
+  only if the request activates them.
 
 A new task of a user who has as many tasks as a limit allows is rejected with
 `429 Too Many Requests`, before the plugins run; its problem details name the
