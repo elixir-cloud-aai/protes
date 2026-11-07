@@ -645,12 +645,20 @@ custom:
   (`COMPLETE`, `CANCELED`, `EXECUTOR_ERROR`, `SYSTEM_ERROR` and
   `PREEMPTED`) are deleted, counted from the end time of their last log
   (`logs[].end_time`), or, without one, from their creation
-  (`creation_time`); unfinished tasks are never deleted;
+  (`creation_time`), but at the earliest from when their tracking stored
+  their final state (the last poll, `tracking.polled_at`): the log of
+  proTES ends when a task is forwarded, so tasks that ran for longer than
+  `finished_days` are kept that long after they finished, too. Unfinished
+  tasks are never deleted;
 - `interval`: seconds between runs of the purge in each Celery worker
   (default 3600); the first run is when the worker starts;
 - `batch_size`: the maximum number of tasks deleted per run (default 500),
   the oldest first, so that a first run on a large database doesn't hold a
-  worker for long.
+  worker for long. Each deleted task is 2 changes of the rules of access
+  control, and app instances that miss more than the last 100 changes (FOCA)
+  load all rules again on their next request: with many tasks to delete
+  (e.g., on the first run), a smaller `batch_size` (at most 50) avoids
+  that, at the cost of more runs.
 
 The Celery workers delete the tasks: each worker purges every `interval`
 seconds, so with several workers, the purge runs that many times more often,
@@ -663,7 +671,9 @@ keeps only the task's identifier (`task.id`) and the time of the deletion
 API treats tombstones as tasks that don't exist (`404 Not Found`, never
 listed). Tasks are deleted, not archived: keep a backup of the database if
 you need them later. The provenance of a deleted task goes with it; the plugin
-builds and pipelines that tasks refer to are kept. The time is compared to
+builds and pipelines that tasks refer to are kept. Owner roles are removed
+on the default path of the TES API (`/ga4gh/tes/v1/tasks/...`), as the
+policies of `config.yaml` grant them. The time is compared to
 the documents' identifiers first, so each run only reads finished tasks
 stored more than `finished_days` days ago.
 

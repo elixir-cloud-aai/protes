@@ -157,6 +157,31 @@ def test_finished_at(task: dict[str, Any], expected: datetime) -> None:
     assert finished_at({"_id": stored, "task": task}) == expected
 
 
+@pytest.mark.parametrize(
+    ("polled_at", "expected"),
+    [
+        (
+            datetime(2026, 10, 2, tzinfo=UTC).timestamp(),
+            datetime(2026, 10, 2, tzinfo=UTC),
+        ),
+        (
+            datetime(2026, 9, 1, tzinfo=UTC).timestamp(),
+            datetime(2026, 10, 1, tzinfo=UTC),
+        ),
+        (True, datetime(2026, 10, 1, tzinfo=UTC)),
+        ("2026-10-02", datetime(2026, 10, 1, tzinfo=UTC)),
+    ],
+)
+def test_finished_at_polled(polled_at: Any, expected: datetime) -> None:
+    """The last poll counts if it is later (and a number of seconds)."""
+    document = {
+        "_id": ObjectId(),
+        "task": {"logs": [{"end_time": "2026-10-01T00:00:00+00:00"}]},
+        "tracking": {"polled_at": polled_at},
+    }
+    assert finished_at(document) == expected
+
+
 def test_purge(tasks: Collection[dict[str, Any]], rules: Adapter) -> None:
     """Finished tasks past the retention time become tombstones.
 
@@ -298,3 +323,23 @@ def test_change_recorded(tasks: Collection[dict[str, Any]], rules: Adapter) -> N
     before = rules.get_changes().version
     purge(tasks, rules)
     assert rules.get_changes().version > before
+
+
+def test_long_task_finished_recently(
+    tasks: Collection[dict[str, Any]], rules: Adapter
+) -> None:
+    """Tasks that ran longer than the retention time are kept after they finish.
+
+    The log of proTES ends when the task is forwarded (`logs[].end_time`), so
+    the time of the poll that stored the final state (`tracking.polled_at`)
+    counts, if it is later.
+    """
+    store_task(tasks, "LONG", end_time=(NOW - 40 * DAY).isoformat())
+    polled_at = (NOW - timedelta(hours=1)).timestamp()
+    tasks.update_one({"task.id": "LONG"}, {"$set": {"tracking.polled_at": polled_at}})
+    assert purge(tasks, rules) == 0
+    tasks.update_one(
+        {"task.id": "LONG"},
+        {"$set": {"tracking.polled_at": (NOW - 31 * DAY).timestamp()}},
+    )
+    assert purge(tasks, rules) == 1

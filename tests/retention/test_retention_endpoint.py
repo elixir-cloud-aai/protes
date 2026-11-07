@@ -7,6 +7,7 @@ task, in the app context; tombstones are not found via the API.
 
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
+import time
 from typing import Any
 
 from bson.objectid import ObjectId
@@ -93,6 +94,17 @@ def test_purged(
     assert [task["id"] for task in listed] == [kept]
     rules = mongo_client[DB]["policy_rules"].find({"ptype": "g2"})
     assert all(kept in rule["v2"] for rule in rules)
+
+
+def test_finished_recently_kept(
+    app: FlaskApp, task_id: str, mongo_client: MongoClient[dict[str, Any]]
+) -> None:
+    """Tasks forwarded long ago, whose final state was stored lately, are kept."""
+    age(mongo_client, task_id)
+    mongo_client[DB]["tasks"].update_one(
+        {"task.id": task_id}, {"$set": {"tracking.polled_at": time.time()}}
+    )
+    assert purge(app) == 0
 
 
 def test_off_by_default(

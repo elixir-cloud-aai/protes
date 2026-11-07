@@ -379,7 +379,8 @@ custom:
     list_backends: true
   # Retention of finished tasks, off by default (null: all tasks are kept):
   # the Celery workers delete finished tasks `finished_days` days after the
-  # end of their last log (or their creation, without one), with their owner
+  # end of their last log (or their creation, without one), but not before
+  # `finished_days` days after their final state was stored, with their owner
   # roles, every `interval` seconds, at most `batch_size` per run; each
   # leaves a tombstone with its identifier, which is never used again (see
   # `docs/configuration.md`)

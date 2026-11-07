@@ -10,12 +10,16 @@ from foca.security.access_control.enforcement import RESOURCE_ROLE_PTYPE
 from foca.security.access_control.foca_casbin_adapter.adapter import Adapter
 from pymongo.collection import Collection
 
+from pro_tes.config_models import DEFAULT_API_PATH
 from pro_tes.ga4gh.tes.ownership import task_resources
 from pro_tes.ga4gh.tes.states import States
-from pro_tes.gateway import TASKS_PATH
 from pro_tes.utils.db import DELETED_FIELD
 
 logger = logging.getLogger(__name__)
+
+# Request path of the tasks, which owner roles are granted on (as in
+# `security.access_control.policies` of `config.yaml`)
+TASKS_PATH = f"{DEFAULT_API_PATH}/tasks"
 
 
 def _parse_time(value: Any) -> datetime | None:
@@ -40,26 +44,32 @@ def _parse_time(value: Any) -> datetime | None:
 def finished_at(document: dict[str, Any]) -> datetime:
     """Get the time that the retention of a finished task counts from.
 
+    The end time of the last log of the task (`task.logs[].end_time`), or
+    else the creation time of the task (`task.creation_time`), or else the
+    time it was stored (by its document identifier); but not before the time
+    of the last poll of its tracking (`tracking.polled_at`), i.e., when its
+    final state was stored. The log of proTES ends when the task is forwarded
+    (backends' logs keep their own times), so that tasks that ran longer than
+    the retention time are kept after they finished, too.
+
     Args:
-        document: Stored task, with its identifier (`_id`), and its logs and
-            creation time, if any.
+        document: Stored task, with its identifier (`_id`), and its logs,
+            creation time and tracking, if any.
 
     Returns:
-        The end time of the last log of the task (`task.logs[].end_time`),
-        or else the creation time of the task (`task.creation_time`), or
-        else the time it was stored (by its document identifier).
+        The time.
     """
     task = document.get("task") or {}
     logs = task.get("logs")
     last = logs[-1] if isinstance(logs, list) and logs else None
     end_time = _parse_time(last.get("end_time")) if isinstance(last, dict) else None
-    if end_time is not None:
-        return end_time
-    creation_time = _parse_time(task.get("creation_time"))
-    if creation_time is not None:
-        return creation_time
-    stored: datetime = document["_id"].generation_time
-    return stored
+    started = end_time or _parse_time(task.get("creation_time"))
+    if started is None:
+        started = document["_id"].generation_time
+    polled_at = (document.get("tracking") or {}).get("polled_at")
+    if isinstance(polled_at, int | float) and not isinstance(polled_at, bool):
+        return max(started, datetime.fromtimestamp(polled_at, UTC))
+    return started
 
 
 def remove_owner_roles(rules: Adapter, task_id: str) -> None:
@@ -117,7 +127,12 @@ def purge_finished_tasks(
         DELETED_FIELD: {"$exists": False},
         "_id": {"$lt": ObjectId.from_datetime(cutoff)},
     }
-    projection = ["task.id", "task.logs.end_time", "task.creation_time"]
+    projection = [
+        "task.id",
+        "task.logs.end_time",
+        "task.creation_time",
+        "tracking.polled_at",
+    ]
     deleted = 0
     cursor = tasks.find(candidates, projection=projection).sort("_id", 1)
     try:

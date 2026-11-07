@@ -11,7 +11,9 @@ class Retention(BaseModel):
     Args:
         finished_days: Days after which finished tasks are deleted, counted
             from the end of their last log (`logs[].end_time`), or from
-            their creation if they have none; `None` to keep all tasks.
+            their creation if they have none, but not before their final
+            state was stored (`tracking.polled_at`); `None` to keep all
+            tasks.
         interval: Seconds between runs of the purge in each Celery worker.
         batch_size: Maximum number of tasks deleted per run.
 
