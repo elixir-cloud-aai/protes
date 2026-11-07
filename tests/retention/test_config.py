@@ -27,6 +27,9 @@ def test_base_config() -> None:
     config = yaml.safe_load((ROOT / "pro_tes" / "config.yaml").read_text())
     assert Retention.model_validate(config["custom"]["retention"]) == Retention()
     assert "pro_tes.retention.tasks" in config["jobs"]["include"]
+    # the purge finds finished tasks oldest first, by index, not tombstones
+    indexes = config["db"]["dbs"]["taskStore"]["collections"]["tasks"]["indexes"]
+    assert {"task.state": 1, "_id": 1} in [index["keys"] for index in indexes]
 
 
 @pytest.mark.parametrize(

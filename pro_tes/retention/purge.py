@@ -46,19 +46,20 @@ def finished_at(document: dict[str, Any]) -> datetime:
 
     The end time of the last log of the task (`task.logs[].end_time`), or
     else the creation time of the task (`task.creation_time`), or else the
-    time it was stored (by its document identifier); but not before the time
-    of the last poll of its tracking (`tracking.polled_at`), i.e., when its
-    final state was stored. The log of proTES ends when the task is forwarded
-    (backends' logs keep their own times), so that tasks that ran longer than
-    the retention time are kept after they finished, too.
+    time it was stored (by its document identifier); but not before the
+    times its tracking stored a final state: the last poll
+    (`tracking.polled_at`), or recovery (`tracking.finished_at`, e.g., of
+    tasks whose creation was cut off). The log of proTES ends when the task
+    is forwarded (backends' logs keep their own times), so that tasks that
+    ran longer than the retention time are kept after they finished, too.
 
     Args:
         document: Stored task, with its identifier (`_id`), and its logs,
             creation time and tracking, if any.
 
     Returns:
-        The time; the latest possible time if the last poll is a number that
-        is no valid time, so that the task is kept.
+        The time; the latest possible time if a time of the tracking is a
+        number that is no valid time, so that the task is kept.
     """
     task = document.get("task") or {}
     logs = task.get("logs")
@@ -67,14 +68,16 @@ def finished_at(document: dict[str, Any]) -> datetime:
     started = end_time or _parse_time(task.get("creation_time"))
     if started is None:
         started = document["_id"].generation_time
-    polled_at = (document.get("tracking") or {}).get("polled_at")
-    if isinstance(polled_at, int | float) and not isinstance(polled_at, bool):
+    tracking = document.get("tracking") or {}
+    for field in ("polled_at", "finished_at"):
+        seconds = tracking.get(field)
+        if not isinstance(seconds, int | float) or isinstance(seconds, bool):
+            continue
         try:
-            polled = datetime.fromtimestamp(polled_at, UTC)
+            started = max(started, datetime.fromtimestamp(seconds, UTC))
         except (ValueError, OverflowError, OSError):
             # not a valid time: keep the task, rather than stop the purge
             return datetime.max.replace(tzinfo=UTC)
-        return max(started, polled)
     return started
 
 
@@ -138,6 +141,7 @@ def purge_finished_tasks(
         "task.logs.end_time",
         "task.creation_time",
         "tracking.polled_at",
+        "tracking.finished_at",
     ]
     deleted = 0
     cursor = tasks.find(candidates, projection=projection).sort("_id", 1)

@@ -646,11 +646,14 @@ custom:
   `PREEMPTED`) are deleted, counted from the end time of their last log
   (`logs[].end_time`), or, without one, from their creation
   (`creation_time`), but at the earliest from when their tracking stored
-  their final state (the last poll, `tracking.polled_at`): the log of
-  proTES ends when a task is forwarded, so tasks that ran for longer than
-  `finished_days` are kept that long after they finished, too. Tasks
+  their final state (the last poll, `tracking.polled_at`, or recovery,
+  `tracking.finished_at`, e.g., for tasks whose creation was cut off): the
+  log of proTES ends when a task is forwarded, so tasks that ran for longer
+  than `finished_days` are kept that long after they finished, too. Tasks
   tracked by proTES before version 0.3.0 have no last poll, so their time
-  counts from when they were forwarded. Unfinished tasks are never deleted;
+  counts from when they were forwarded, and that of tasks failed by
+  recovery before version 0.6.0 from when they were forwarded or created.
+  Unfinished tasks are never deleted;
 - `interval`: seconds between runs of the purge in each Celery worker
   (default 3600); the first run is when the worker starts;
 - `batch_size`: the maximum number of tasks deleted per run (default 500),
@@ -680,8 +683,9 @@ The Celery workers delete the tasks:
 - **What is kept:** tasks are deleted, not archived: keep a backup of the
   database if you need them later. The provenance of a deleted task goes
   with it; the plugin builds and pipelines that tasks refer to are kept.
-- **Cost:** each run first narrows the candidates by document identifier, so
-  it only reads finished tasks stored more than `finished_days` days ago.
+- **Cost:** each run reads only finished tasks stored more than
+  `finished_days` days ago, oldest first, by an index (`task.state`,
+  `_id`) that leaves out unfinished tasks and tombstones.
 
 ## Security
 

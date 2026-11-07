@@ -123,6 +123,11 @@ db:
             - keys:
                 user_id: 1
                 task.state: 1
+            # The retention of finished tasks finds them oldest first, without
+            # tombstones (`custom.retention`)
+            - keys:
+                task.state: 1
+                _id: 1
         # Provenance of tasks (see `docs/operations.md`): the builds of the
         # plugins and the default and preset pipelines that tasks ran
         # through, each stored once, by hash (`_id`); tasks refer to them

@@ -104,6 +104,26 @@ def test_purge_on_start(calls: list[bool], monkeypatch: pytest.MonkeyPatch) -> N
     assert thread.kwargs["interval"] == 60
 
 
+def test_purge_on_start_unavailable(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """If the first purge can't be started, the periodic purges still are."""
+
+    def delay() -> None:
+        """Fail, as without broker."""
+        raise OperationalError("unavailable")
+
+    monkeypatch.setattr(tasks.task__purge_finished_tasks, "delay", delay)
+    monkeypatch.setattr(tasks, "Thread", FakeThread)
+    monkeypatch.setattr(
+        worker_custom_config(), "retention", Retention(finished_days=30)
+    )
+    thread = tasks.purge_on_start(sender=None)
+    assert isinstance(thread, FakeThread)
+    assert thread.started
+    assert "Could not purge finished tasks" in caplog.text
+
+
 def test_purge_periodically(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:

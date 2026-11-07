@@ -131,8 +131,10 @@ from your own queries of the tasks. Retention needs the image's base config
 `jobs.include` must list it too. During a rolling upgrade, instances of the
 earlier version don't know tombstones: until they are replaced, a request of
 the owner of a deleted task to such an instance may fail with `500`. Tasks
-tracked before version 0.3.0 count from when they were forwarded, not from
-when they finished: set `finished_days` with that in mind.
+tracked before version 0.3.0, and tasks failed by recovery before 0.6.0,
+count from when they were forwarded or created, not from when they
+finished: set `finished_days` with that in mind. proTES creates a new index
+on the tasks (`task.state`, `_id`) on its first start, for the retention.
 
 ## To version 0.5.0
 

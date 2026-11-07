@@ -155,6 +155,20 @@ def test_finished_at_polled(polled_at: Any, expected: datetime) -> None:
     assert finished_at(document) == expected
 
 
+def test_finished_at_recovered() -> None:
+    """The time recovery stored a final state counts if it is later.
+
+    E.g., of tasks whose creation was cut off long ago, failed only now.
+    """
+    finished = datetime(2026, 11, 1, tzinfo=UTC)
+    document = {
+        "_id": ObjectId(),
+        "task": {"creation_time": "2026-01-01T00:00:00+00:00"},
+        "tracking": {"polled_at": 1.0, "finished_at": finished.timestamp()},
+    }
+    assert finished_at(document) == finished
+
+
 def test_purge(tasks: Collection[dict[str, Any]], rules: Adapter) -> None:
     """Finished tasks past the retention time become tombstones.
 

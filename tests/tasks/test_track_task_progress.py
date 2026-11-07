@@ -1143,10 +1143,12 @@ def test_cancel_time_exceeded(
     """
     client_class.states = [state]
     cancel_expired(tasks, polling)
+    before = time.time()
     run()
     document = tasks.find_one({})
     assert document is not None
     assert document["task"]["state"] == "SYSTEM_ERROR"
+    assert document["tracking"]["finished_at"] >= before
     assert not scheduled
     assert "not canceled within 3600 seconds" in caplog.text
 
@@ -1320,11 +1322,13 @@ def test_ended_tracking_stays_failed(
             }
         },
     )
+    before = time.time()
     assert track_task_progress.task__resume_tracking.run() == 0
     assert not scheduled
     document = tasks.find_one({})
     assert document is not None
     assert document["task"]["state"] == "SYSTEM_ERROR"
+    assert document["tracking"]["finished_at"] >= before
 
 
 def test_cancelation_not_overwritten(tasks: Collection[dict[str, Any]]) -> None:
@@ -1509,9 +1513,21 @@ def test_cut_off_creates_failed(
         tasks.update_one(
             {"worker_id": worker_id}, {"$set": {"task.logs.0.metadata": metadata}}
         )
+    before = time.time()
     assert track_task_progress.task__resume_tracking.run() == 1
     states = {
         document["worker_id"]: document["task"]["state"] for document in tasks.find()
+    }
+    # the time they finished, which their retention counts from
+    finished = {
+        document["worker_id"]
+        for document in tasks.find({"tracking.finished_at": {"$gte": before}})
+    }
+    assert finished == {
+        "cut-off",
+        "cut-off-host",
+        "cut-off-no-remote-id",
+        "cut-off-empty-forwards",
     }
     assert states == {
         **dict.fromkeys(

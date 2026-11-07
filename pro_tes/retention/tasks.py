@@ -99,7 +99,11 @@ def purge_on_start(**kwargs: Any) -> Thread | None:
     retention = config.retention
     if retention.finished_days is None:
         return None
-    task__purge_finished_tasks.delay()
+    try:
+        task__purge_finished_tasks.delay()
+    except Exception:
+        # e.g., the broker is unavailable: the periodic purges still start
+        logger.exception("Could not purge finished tasks")
     thread = Thread(
         target=purge_periodically,
         kwargs={"stop": Event(), "interval": retention.interval},
