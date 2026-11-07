@@ -130,8 +130,10 @@ dependencies = [
     # CVE-2026-25645
     "requests>=2.33.0,<3",
     # Used directly (errors that show whether requests to TES backends were
-    # sent; 2.2 adds the `read1` that reads responses as they arrive)
-    "urllib3>=2.2,<3",
+    # sent; 2.2 adds the `read1` that reads responses as they arrive, and
+    # 2.6 bounds what it decompresses, so that the size limit of responses
+    # bounds their memory)
+    "urllib3>=2.6,<3",
 ]
 
 [project.optional-dependencies]

@@ -35,6 +35,7 @@ from pro_tes.exceptions import (
     BackendAuthError,
     BackendNotConfigured,
     BackendOutcomeUnknown,
+    BackendResponseTooLarge,
 )
 from pro_tes.ga4gh.tes import backends
 from tests.ga4gh.tes.conftest import tes_backends
@@ -48,12 +49,34 @@ CLIENT_ID = "protes client"
 CLIENT_SECRET = "s3cret:&"  # noqa: S105 (fictitious)
 
 
+class FakeRaw:
+    """Raw body of a fake response, read in parts.
+
+    Attributes:
+        data: The rest of the body.
+    """
+
+    def __init__(self, data: bytes) -> None:
+        """Hold a body."""
+        self.data = data
+
+    def read1(self, size: int, decode_content: bool = False) -> bytes:
+        """Read a part of the body."""
+        part, self.data = self.data[:size], self.data[size:]
+        return part
+
+
 class FakeResponse:
-    """Response of the fake identity provider.
+    """Response of the fake identity provider, or of a fake backend.
+
+    Streamed, as proTES reads the responses of backends (cf.
+    :py:func:`pro_tes.ga4gh.tes.backends.read_limited`).
 
     Attributes:
         body: JSON body, or `None` for an invalid body.
         status_code: HTTP status code.
+        url: URL of the request.
+        raw: The body, as sent.
     """
 
     def __init__(self, body: Any, status_code: int = 200) -> None:
@@ -61,6 +84,15 @@ class FakeResponse:
         self.body = body
         self.status_code = status_code
         self.headers: dict[str, str] = {}
+        self.url = BACKEND_URL
+        self.raw = FakeRaw(b"invalid" if body is None else json.dumps(body).encode())
+
+    def __enter__(self) -> "FakeResponse":
+        """Use the response."""
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        """Release the response (nothing to do)."""
 
     def raise_for_status(self) -> None:
         """Raise an error for error status codes, as `requests` does.
@@ -542,6 +574,7 @@ def test_backend_config_default() -> None:
     assert entry.url == BACKEND_URL
     assert config.uses_tokens
     assert not Tes().uses_tokens
+    assert Tes().max_response_size == 10 * 1024 * 1024
 
 
 @pytest.mark.parametrize(
@@ -593,6 +626,8 @@ def test_backend_config_default() -> None:
         ),
         ({"url_schemes": []}, "at least 1"),
         ({"url_schemes": ["ftp"]}, "https"),
+        ({"max_response_size": 1024 * 1024 - 1}, "greater than or equal"),
+        ({"max_response_size": 256 * 1024 * 1024 + 1}, "less than or equal"),
     ],
 )
 def test_tes_config_invalid(config: dict[str, Any], match: str) -> None:
@@ -981,6 +1016,11 @@ class TaskHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def do_POST(self) -> None:
+        """Accept a task, with a large answer."""
+        self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        self.do_GET()
+
     def log_message(self, format: str, *args: Any) -> None:
         """Log nothing."""
 
@@ -1004,17 +1044,115 @@ def task_server(configured: None, loopback: None) -> Iterator[str]:
     server.server_close()
 
 
-def test_full_view_size_limit(
-    task_server: str, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("view", ["MINIMAL", "BASIC", "FULL"])
+def test_response_size_limit(
+    task_server: str, caplog: pytest.LogCaptureFixture, view: str
 ) -> None:
-    """Tasks in the view `FULL` hold logs of any size, which are not read whole."""
+    """Responses are not read beyond `custom.tes.max_response_size` bytes.
+
+    E.g., tasks in the view `FULL`, which hold logs of any size; the request
+    fails, with an error in the logs.
+    """
     client = backends.create_client(host=task_server)
-    assert client.get_task("remote-1", view="FULL").name == "x" * 5000
-    monkeypatch.setattr(backends, "MAX_RESPONSE_SIZE", 1000)
-    with pytest.raises(requests.RequestException, match="larger than 1000 bytes"):
-        client.get_task("remote-1", view="FULL")
-    # other requests aren't affected
-    assert client.get_task("remote-1").name == "x" * 5000
+    assert client.get_task("remote-1", view=view).name == "x" * 5000
+    # below the minimum of the setting, so that the task is too large (the
+    # config of each test is new)
+    get_custom_config(CustomConfig).tes.max_response_size = 1000
+    client = backends.create_client(host=task_server)
+    with pytest.raises(BackendResponseTooLarge, match="larger than 1000 bytes"):
+        client.get_task("remote-1", view=view)
+    assert not backends.not_sent(BackendResponseTooLarge("x"))
+    (record,) = [r for r in caplog.records if r.levelname == "ERROR"]
+    assert "custom.tes.max_response_size" in record.getMessage()
+    assert task_server in record.getMessage()
+
+
+def test_response_size_limit_post(
+    task_server: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Tasks whose creation is answered with too much are of unknown outcome."""
+    get_custom_config(CustomConfig).tes.max_response_size = 1000
+    client = backends.create_client(host=task_server)
+    with pytest.raises(BackendOutcomeUnknown) as info:
+        create_task(client)
+    assert info.value.reason == "response_too_large"
+    assert isinstance(info.value.__cause__, BackendResponseTooLarge)
+    (record,) = [r for r in caplog.records if r.levelname == "ERROR"]
+    assert "larger than 1000 bytes" in record.getMessage()
+
+
+def test_read_limited_stops() -> None:
+    """Bodies are read up to the limit and a part more, not to their end."""
+    response = FakeResponse({"name": "x" * 10 * backends.RESPONSE_CHUNK_SIZE})
+    with pytest.raises(BackendResponseTooLarge):
+        backends.read_limited(response, max_size=1000)  # type: ignore[arg-type]
+    size = len(json.dumps(response.body))
+    assert len(response.raw.data) == size - 1001
+
+
+@pytest.mark.parametrize("status", [302, 400, 404, 413, 500])
+def test_read_limited_error_status(status: int) -> None:
+    """Large answers with error statuses are cut off; their status decides.
+
+    E.g., error pages of gateways, so that refusals stay refusals.
+    """
+    response = FakeResponse({"error": "x" * 5000}, status_code=status)
+    read = backends.read_limited(response, max_size=1000)  # type: ignore[arg-type]
+    assert read is response
+    assert len(response._content) == 1000  # type: ignore[attr-defined]
+
+
+class LargeRedirectHandler(BaseHTTPRequestHandler):
+    """Handler of a local server that redirects with a large body."""
+
+    def do_GET(self) -> None:
+        """Redirect to the task, or serve it."""
+        if self.path == "/final":
+            body = json.dumps({"id": "remote-1", "state": "COMPLETE"}).encode()
+            self.send_response(200)
+        else:
+            body = b"x" * 5000
+            self.send_response(302)
+            self.send_header("Location", "/final")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format: str, *args: Any) -> None:
+        """Log nothing."""
+
+
+def test_response_size_limit_redirect(
+    configured: None, loopback: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bodies of redirects that are followed are not read.
+
+    `requests` reads them as a whole before it follows them, and keeps them.
+    """
+    server = ThreadingHTTPServer(("127.0.0.1", 0), LargeRedirectHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        url = f"http://127.0.0.1:{server.server_address[1]}"
+        conf = get_custom_config(CustomConfig).tes
+        conf.backends = BackendListConfig(
+            [
+                *conf.backends.root,
+                ServiceEntry(
+                    type="ga4gh-tes", url=url, url_schemes=["http"], auth="none"
+                ),
+            ]
+        )
+        conf.max_response_size = 1000
+        client = backends.create_client(host=url)
+        response = client._request("GET", f"{url}/start", timeout=(5, 5))
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert response.json() == {"id": "remote-1", "state": "COMPLETE"}
+    (redirect,) = response.history
+    assert redirect.status_code == 302
+    assert redirect.content == b""
 
 
 class DrippingHandler(BaseHTTPRequestHandler):
@@ -1048,7 +1186,7 @@ def test_read_limited_deadline(loopback: None) -> None:
         )
         started = time.monotonic()
         with pytest.raises(requests.Timeout, match=r"0\.1 seconds"):
-            backends.read_limited(response, timeout=0.1)
+            backends.read_limited(response, max_size=1 << 20, timeout=0.1)
         assert time.monotonic() - started < 2
     finally:
         server.shutdown()
@@ -1067,7 +1205,7 @@ def test_read_limited_connection_lost(
 
     monkeypatch.setattr(response.raw, "read1", fail)
     with pytest.raises(requests.ConnectionError, match="lost"):
-        backends.read_limited(response, timeout=5)
+        backends.read_limited(response, max_size=1 << 20, timeout=5)
 
 
 def test_get_task_once(
@@ -1225,6 +1363,20 @@ def test_post_rejected(
         action(backends.create_client(host=NONE_URL))
     assert info.value.response.status_code == status
     assert len(fake.sent) == 1
+
+
+@pytest.mark.parametrize("status", [400, 413])
+@pytest.mark.parametrize("action", [create, cancel])
+def test_post_rejected_large(
+    post: Callable[..., FakePost],
+    status: int,
+    action: Callable[[backends.TesClient], None],
+) -> None:
+    """Refusals with bodies over the limit are refusals, not unknown outcomes."""
+    get_custom_config(CustomConfig).tes.max_response_size = 1000
+    post(FakeResponse({"error": "x" * 5000}, status_code=status))
+    with pytest.raises(requests.HTTPError, match=f"status {status}"):
+        action(backends.create_client(host=NONE_URL))
 
 
 @pytest.mark.parametrize("body", [None, [], {}, {"id": ""}, {"id": 1}])

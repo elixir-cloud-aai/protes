@@ -33,6 +33,7 @@ from pro_tes.exceptions import (
     BackendNotConfigured,
     BackendOutcomeUnknown,
     BackendRequestNotSent,
+    BackendResponseTooLarge,
 )
 from pro_tes.ga4gh.tes import backends
 from pro_tes.ga4gh.tes.versions import TesVersion
@@ -404,7 +405,7 @@ def test_client_connection_checked(rebinding: tuple[str, Listener]) -> None:
     assert client.guarded is not None
     assert not client.guarded.allow_private_addresses
     assert not client.guarded.allow_http
-    assert client.guarded.max_response_size == backends.MAX_RESPONSE_SIZE
+    assert client.guarded.max_response_size == 10 * 1024 * 1024
     assert client.guarded.timeout == client.timeout
     with pytest.raises(BackendAddressNotAllowed, match="not public"):
         client.get_task("r1")
@@ -447,14 +448,27 @@ def seed_api_path(client: backends.TesClient) -> None:
 
 
 @pytest.mark.parametrize(
-    "error, expected",
+    "error, expected, reason",
     [
-        (HostNotResolved("x not resolved"), BackendAddressNotAllowed),
-        (http.RequestNotSent("x not reached"), BackendRequestNotSent),
-        (http.InvalidRequest("x", reason="invalid_header"), BackendRequestNotSent),
-        (http.InvalidRequestURL("x"), BackendRequestNotSent),
-        (http.RequestMaybeSent("x", reason="read_timeout"), requests.ReadTimeout),
-        (http.RequestMaybeSent("x lost"), requests.ConnectionError),
+        (
+            HostNotResolved("x not resolved"),
+            BackendAddressNotAllowed,
+            "address_not_allowed",
+        ),
+        (http.RequestNotSent("x not reached"), BackendRequestNotSent, "connect_error"),
+        (
+            http.InvalidRequest("x", reason="invalid_header"),
+            BackendRequestNotSent,
+            "connect_error",
+        ),
+        (http.InvalidRequestURL("x"), BackendRequestNotSent, "connect_error"),
+        (
+            http.RequestMaybeSent("x", reason="read_timeout"),
+            requests.ReadTimeout,
+            "connect_error",
+        ),
+        (http.RequestMaybeSent("x lost"), requests.ConnectionError, "connect_error"),
+        (http.ResponseTooLarge("x large"), BackendResponseTooLarge, "connect_error"),
     ],
 )
 def test_client_guarded_errors(
@@ -462,6 +476,7 @@ def test_client_guarded_errors(
     monkeypatch: pytest.MonkeyPatch,
     error: Exception,
     expected: type[Exception],
+    reason: str,
 ) -> None:
     """Errors of the guarded client are those of `requests`, as classified."""
     discovering.add("a", "https://tes1.example.org")
@@ -478,10 +493,31 @@ def test_client_guarded_errors(
         client.get_task("r1")
     assert isinstance(info.value, requests.RequestException)
     assert backends.not_sent(info.value) is issubclass(expected, BackendRequestNotSent)
-    assert backends.forward_reason(info.value) in {
-        "address_not_allowed",
-        "connect_error",
-    }
+    assert backends.forward_reason(info.value) == reason
+
+
+@pytest.mark.parametrize("method", ["GET", "POST"])
+def test_client_guarded_too_large_logged(
+    discovering: FakeRegistry,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    method: str,
+) -> None:
+    """Answers over the limit of discovered backends are logged as errors."""
+    discovering.add("a", "https://tes1.example.org")
+    client = backends.create_client(host="https://tes1.example.org")
+
+    def fail(*args: Any, **kwargs: Any) -> Any:
+        """Fail as the guarded client does."""
+        raise http.ResponseTooLarge("too large")
+
+    assert client.guarded is not None
+    monkeypatch.setattr(client.guarded, "request", fail)
+    with pytest.raises(BackendResponseTooLarge):
+        client._request(method, "https://tes1.example.org/x", timeout=(1, 1))
+    (record,) = [r for r in caplog.records if r.levelname == "ERROR"]
+    assert "custom.tes.max_response_size" in record.getMessage()
+    assert "https://tes1.example.org/x" in record.getMessage()
 
 
 @pytest.mark.parametrize(
@@ -585,6 +621,15 @@ def test_as_response(status: int, reason: str, encoding: str | None) -> None:
     assert (response.status_code, response.reason) == (status, reason)
     assert response.encoding == encoding
     assert response.json() == {}
+
+
+def test_client_guarded_size_limit(discovering: FakeRegistry) -> None:
+    """Responses of discovered backends are limited as configured."""
+    get_custom_config(CustomConfig).tes.max_response_size = 2 * 1024 * 1024
+    discovering.add("a", "https://tes1.example.org")
+    client = backends.create_client(host="https://tes1.example.org")
+    assert client.guarded is not None
+    assert client.guarded.max_response_size == 2 * 1024 * 1024
 
 
 def test_client_configured_not_checked(discovering: FakeRegistry) -> None:
@@ -889,7 +934,7 @@ UNKNOWN_ANSWERS = [
     (json_response([]), "status 200"),
     (http.RequestMaybeSent("lost"), "ConnectionError"),
     (http.RequestMaybeSent("slow", reason="read_timeout"), "ReadTimeout"),
-    (http.ResponseTooLarge("large"), "ConnectionError"),
+    (http.ResponseTooLarge("large"), "BackendResponseTooLarge"),
     (http.RequestNotSent("not reached"), "not reached"),
 ]
 

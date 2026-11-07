@@ -27,9 +27,10 @@ guarded HTTP client (:py:class:`foca.utils.http.GuardedClient`), which
 checks the address of each connection itself, so that hosts whose addresses
 change between checks (DNS rebinding) can't lead requests to private
 addresses (unless allowed, `allow_private_addresses` of the registry entry);
-their redirects are not followed, and their responses are limited to
-`MAX_RESPONSE_SIZE` bytes. Tasks in the view `FULL` are limited to that size
-for configured backends, too. Requests to configured backends time out after
+their redirects are not followed. Responses of all backends are read up to
+`custom.tes.max_response_size` bytes; larger ones fail, with an error in the
+logs (:py:class:`pro_tes.exceptions.BackendResponseTooLarge`). Requests to
+configured backends time out after
 `custom.tes.timeout` seconds without data, and after `CONNECT_TIMEOUT`
 seconds while connecting; requests to discovered backends must end within
 `custom.tes.timeout` seconds as a whole, and connecting within FOCA's
@@ -75,6 +76,7 @@ from foca.utils.http import (
     HttpResponse,
     RequestMaybeSent,
     RequestNotSent,
+    ResponseTooLarge,
 )
 import requests
 from requests.structures import CaseInsensitiveDict
@@ -96,6 +98,7 @@ from pro_tes.exceptions import (
     BackendNotConfigured,
     BackendOutcomeUnknown,
     BackendRequestNotSent,
+    BackendResponseTooLarge,
     TaskIncompatible,
 )
 from pro_tes.ga4gh.tes.versions import (
@@ -121,10 +124,8 @@ DEFAULT_TOKEN_LIFETIME = 60
 # requests, `custom.tes.timeout`); short, as requests that time out while
 # connecting are sent to the next backend
 CONNECT_TIMEOUT = 5
-# Maximum size of responses of discovered backends, and of tasks in the view
-# `FULL` of all backends, whose logs can be of any size, in bytes
-MAX_RESPONSE_SIZE = 64 * 1024 * 1024
-# Maximum size of the parts in which responses limited to it are read, in bytes
+# Maximum size of the parts in which responses of configured backends are
+# read, in bytes
 RESPONSE_CHUNK_SIZE = 64 * 1024
 # Label of a backend with its TES version, which wins over its service info
 TES_VERSION_LABEL = "tes.version"
@@ -623,6 +624,9 @@ class TesClient(tes.HTTPClient):
         api_path: Path of the TES API, relative to the URL of the backend;
             read on first use for discovered backends, which may raise
             :py:class:`pro_tes.exceptions.BackendRequestNotSent`.
+        max_response_size: Maximum size of each response that is read, in
+            bytes (`custom.tes.max_response_size`); larger responses raise
+            :py:class:`pro_tes.exceptions.BackendResponseTooLarge`.
     """
 
     def __init__(
@@ -643,11 +647,13 @@ class TesClient(tes.HTTPClient):
             timeout: Timeout of requests, in seconds; by default
                 `custom.tes.timeout`.
         """
+        config = get_custom_config(CustomConfig).tes
         if timeout is None:
-            timeout = get_custom_config(CustomConfig).tes.timeout
+            timeout = config.timeout
         super().__init__(url=url, timeout=timeout)
         self.backend = backend
         self.entry = entry
+        self.max_response_size = config.max_response_size
         # discovered backends: read on first use
         self._api_path: str | None = None
         if isinstance(entry, TesServiceEntry):
@@ -662,7 +668,7 @@ class TesClient(tes.HTTPClient):
                 allow_private_addresses=entry.allow_private_addresses,
                 # FOCA discovers `https` services only
                 allow_http=False,
-                max_response_size=MAX_RESPONSE_SIZE,
+                max_response_size=self.max_response_size,
             )
 
     @property
@@ -924,11 +930,11 @@ class TesClient(tes.HTTPClient):
         except requests.RequestException as exc:
             if not_sent(exc):
                 raise
-            reason = (
-                "read_timeout"
-                if isinstance(exc, requests.ReadTimeout)
-                else "connection_lost"
-            )
+            reason = "connection_lost"
+            if isinstance(exc, requests.ReadTimeout):
+                reason = "read_timeout"
+            elif isinstance(exc, BackendResponseTooLarge):
+                reason = "response_too_large"
             raise BackendOutcomeUnknown(
                 f"Outcome of {method} {url} unknown: {type(exc).__name__}",
                 reason=reason,
@@ -966,16 +972,20 @@ class TesClient(tes.HTTPClient):
             url: URL of the request.
             timeout: Timeouts of connecting and of reading, in seconds
                 (configured backends only).
-            limited: Whether the response of a configured backend is limited to
-                `MAX_RESPONSE_SIZE` bytes and the timeout as a whole, like all
-                of discovered backends.
+            limited: Whether the response of a configured backend must be
+                read within the timeout as a whole, like all of discovered
+                backends (e.g., tasks in the view `FULL`); otherwise the
+                timeout counts time without data. The size of responses is
+                limited either way (`max_response_size`).
             **kwargs: Other arguments of `requests.request()`; for discovered
                 backends, only `params`, `headers`, `data` and `auth`.
 
         Returns:
-            The response.
+            The response, read up to `max_response_size` bytes.
 
         Raises:
+            pro_tes.exceptions.BackendResponseTooLarge: The response is
+                larger (logged as an error).
             requests.RequestException: The request failed; for discovered
                 backends, :py:class:`pro_tes.exceptions.BackendRequestNotSent`
                 (or :py:class:`pro_tes.exceptions.BackendAddressNotAllowed`)
@@ -983,14 +993,13 @@ class TesClient(tes.HTTPClient):
                 `requests.ConnectionError` if it may have been.
         """
         if self.guarded is None:
-            if limited:
-                return read_limited(
-                    requests.request(
-                        method, url, timeout=timeout, stream=True, **kwargs
-                    ),
-                    timeout=timeout[1],
-                )
-            return requests.request(method, url, timeout=timeout, **kwargs)
+            if kwargs.get("allow_redirects", True):
+                kwargs["hooks"] = {"response": skip_redirect_body}
+            return read_limited(
+                requests.request(method, url, timeout=timeout, stream=True, **kwargs),
+                max_size=self.max_response_size,
+                timeout=timeout[1] if limited else None,
+            )
         unsupported = set(kwargs) - {
             "params",
             "headers",
@@ -1021,6 +1030,8 @@ class TesClient(tes.HTTPClient):
             ):
                 raise BackendConnectTimeout(str(exc)) from exc
             raise BackendRequestNotSent(str(exc)) from exc
+        except ResponseTooLarge as exc:
+            raise too_large(url, self.max_response_size) from exc
         except RequestMaybeSent as exc:
             if exc.reason == "read_timeout":
                 raise requests.ReadTimeout(str(exc)) from exc
@@ -1095,35 +1106,63 @@ def response_headers(response: requests.Response) -> Headers:
     return headers
 
 
-def read_limited(response: requests.Response, timeout: float) -> requests.Response:
-    """Read the body of a streamed response, up to `MAX_RESPONSE_SIZE` bytes.
+def skip_redirect_body(response: requests.Response, **_: Any) -> None:
+    """Leave the body of a redirect unread (hook of `requests`).
+
+    `requests` reads the body of each redirect that it follows as a whole
+    otherwise, and keeps it in the history of the response; the connection
+    is closed instead.
+
+    Args:
+        response: A response of a backend.
+        **_: Other arguments of the hook.
+    """
+    if response.is_redirect:
+        response._content = b""
+
+
+def read_limited(
+    response: requests.Response, max_size: int, timeout: float | None = None
+) -> requests.Response:
+    """Read the body of a streamed response, up to a size.
+
+    Bodies of answers with other statuses than 2xx are cut off at the size
+    instead, as their status decides how they are handled.
 
     Args:
         response: Streamed response.
-        timeout: Maximum time to read it, in seconds; as a whole, as the timeout
-            of requests only counts time without data.
+        max_size: Maximum size of the body (decoded), in bytes.
+        timeout: Maximum time to read it, in seconds, if any; as a whole, as
+            the timeout of requests only counts time without data.
 
     Returns:
         The response, with its body.
 
     Raises:
-        requests.RequestException: The body is larger.
+        pro_tes.exceptions.BackendResponseTooLarge: The body of a 2xx answer
+            is larger (logged as an error).
         requests.ConnectionError: The body can't be read.
         requests.Timeout: Reading the body takes longer.
     """
     content = bytearray()
-    deadline = time.monotonic() + timeout
+    deadline = None if timeout is None else time.monotonic() + timeout
     with response:
         # not `iter_content`, which waits for whole chunks, however long they take
         try:
-            while chunk := response.raw.read1(RESPONSE_CHUNK_SIZE, decode_content=True):
+            # at most a byte more than the limit (decoded)
+            while chunk := response.raw.read1(
+                min(RESPONSE_CHUNK_SIZE, max_size + 1 - len(content)),
+                decode_content=True,
+            ):
                 content += chunk
-                if len(content) > MAX_RESPONSE_SIZE:
-                    raise requests.RequestException(
-                        f"Response larger than {MAX_RESPONSE_SIZE} bytes",
-                        response=response,
-                    )
-                if time.monotonic() >= deadline:
+                if len(content) > max_size:
+                    if not 200 <= response.status_code < 300:
+                        # error answers (e.g., pages of gateways): their
+                        # status decides, so that refusals stay refusals
+                        del content[max_size:]
+                        break
+                    raise too_large(response.url, max_size)
+                if deadline is not None and time.monotonic() >= deadline:
                     raise requests.Timeout(
                         f"Response not read within {timeout} seconds",
                         response=response,
@@ -1132,6 +1171,25 @@ def read_limited(response: requests.Response, timeout: float) -> requests.Respon
             raise requests.ConnectionError(str(exc), response=response) from exc
     response._content = bytes(content)
     return response
+
+
+def too_large(url: str, max_size: int) -> BackendResponseTooLarge:
+    """Log that a response is too large, and get the error to raise.
+
+    Args:
+        url: URL of the request.
+        max_size: Maximum size of responses, in bytes.
+
+    Returns:
+        The error.
+    """
+    logger.error(
+        "Response of TES backend larger than %d bytes, not read"
+        " (`custom.tes.max_response_size`): %s",
+        max_size,
+        url,
+    )
+    return BackendResponseTooLarge(f"Response larger than {max_size} bytes: {url}")
 
 
 def as_response(guarded: HttpResponse, url: str) -> requests.Response:

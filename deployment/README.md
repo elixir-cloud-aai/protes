@@ -491,6 +491,9 @@ per process at a time (`--concurrency=2` by default), so a few processes
 track many tasks: raise the concurrency, `worker.replicas` and
 `worker.resources` if polls wait in the queue (see [Task
 tracking](https://protes.readthedocs.io/en/latest/operations/#task-tracking)).
+Each process reads up to `config.custom.tes.max_response_size` bytes (10 MiB
+by default) of each response of a TES instance, which takes about 7 times
+as much memory: raise `worker.resources` (and `protes.resources`) with it.
 Restarts and upgrades of the worker don't stop the tracking: polls are
 acknowledged after they ran, so the broker delivers those of a killed worker
 again, and workers resume the tracking of unfinished tasks that haven't been

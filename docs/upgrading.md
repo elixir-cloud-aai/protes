@@ -91,6 +91,19 @@ the earlier version poll tasks that upgraded instances forwarded to such a
 TES instance at the default path, which fails: the tasks may become
 `UNKNOWN` meanwhile, until upgraded workers poll them again.
 
+**Size of responses of TES instances:** proTES now reads at most
+`custom.tes.max_response_size` bytes of each response of a TES instance
+(default 10 MiB), configured or discovered; larger responses fail, with an
+error in the logs. Before, only the responses of discovered TES instances,
+and those with the logs of finished tasks (view `FULL`), were limited, to
+64 MiB. So tasks whose logs, as the TES instance returns them, are larger
+than 10 MiB are now finished without them, and a TES instance that answers a
+request to create a task with more than that leaves the task in
+`SYSTEM_ERROR`, as its outcome is unknown. Raise the setting (from 1 MiB to
+256 MiB), and the memory of the Celery worker with it (about 7 times the
+limit per worker process), to keep larger logs (see [TES
+instances](configuration.md#tes-instances)).
+
 ## To version 0.5.0
 
 **Routing default:** 0.4.0 routed tasks by the distance to their input data

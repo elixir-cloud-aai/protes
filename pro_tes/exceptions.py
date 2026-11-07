@@ -63,6 +63,15 @@ class BackendAddressNotAllowed(BackendRequestNotSent):
     """
 
 
+class BackendResponseTooLarge(requests.RequestException):
+    """Raised when a TES backend answers with more than proTES reads.
+
+    That is, with more than `custom.tes.max_response_size` bytes; the rest of
+    the response is not read. The request was sent, and may have been
+    processed.
+    """
+
+
 class BackendOutcomeUnknown(RuntimeError):
     """Raised when a TES backend may have processed a request, or not.
 
@@ -72,7 +81,8 @@ class BackendOutcomeUnknown(RuntimeError):
     backend nor to other backends, so that tasks are never created twice.
 
     Attributes:
-        reason: Reason code, e.g., `read_timeout` or `http_502` (cf.
+        reason: Reason code, e.g., `read_timeout`, `http_502` or
+            `response_too_large` (cf.
             :py:class:`foca.plugins.OutcomeUnknown`).
     """
 
