@@ -298,7 +298,8 @@ class TokenProvider:
             return cached
         url = f"{issuer.rstrip('/')}/{OIDC_CONFIG_PATH}"
         try:
-            response = requests.get(url, timeout=idp.timeout)
+            # no credentials from `.netrc` (cf. `BackendSession`)
+            response = requests.get(url, auth=NO_CREDENTIALS, timeout=idp.timeout)
             response.raise_for_status()
             document = response.json()
         except (requests.RequestException, ValueError) as exc:
@@ -349,7 +350,8 @@ class TokenProvider:
         data = {"grant_type": "client_credentials"}
         if idp.scope is not None:
             data["scope"] = idp.scope
-        auth: tuple[str, str] | None = None
+        # none from `.netrc` besides the client's (cf. `BackendSession`)
+        auth: tuple[str, str] | requests.auth.AuthBase = NO_CREDENTIALS
         if idp.auth_method == "client_secret_basic":
             # encoded as per RFC 6749, section 2.3.1
             auth = (quote_plus(client_id), quote_plus(client_secret))
@@ -1123,6 +1125,10 @@ class _NoCredentials(requests.auth.AuthBase):
         return request
 
 
+# no credentials, also none from `.netrc`
+NO_CREDENTIALS = _NoCredentials()
+
+
 class BackendSession(requests.Session):
     """Session of requests to configured backends, without `.netrc`.
 
@@ -1132,13 +1138,13 @@ class BackendSession(requests.Session):
     redirect. This session never does: requests get only the credentials of
     their backend. Other settings of the environment, such as proxies and CA
     certificates, still apply. Credentials are dropped on redirects to other
-    hosts, as `requests` does.
+    hosts or ports, and from `https` to `http`, as `requests` does.
     """
 
     def __init__(self) -> None:
         """Create a session."""
         super().__init__()
-        self.auth = _NoCredentials()
+        self.auth = NO_CREDENTIALS
 
     def rebuild_auth(
         self, prepared_request: requests.PreparedRequest, response: requests.Response

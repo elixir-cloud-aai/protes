@@ -5,6 +5,7 @@ from copy import deepcopy
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+from pathlib import Path
 import socket
 import ssl
 import threading
@@ -123,6 +124,8 @@ class FakeIdp:
         token_status: Status of token responses.
         requests: Requests to the token endpoint (keyword arguments).
         discoveries: Number of requests of the discovery document.
+        discovery_auth: Credentials of the requests of the discovery
+            document.
     """
 
     def __init__(self) -> None:
@@ -136,6 +139,7 @@ class FakeIdp:
         self.token_status = 200
         self.requests: list[dict[str, Any]] = []
         self.discoveries = 0
+        self.discovery_auth: list[Any] = []
 
     def get(self, url: str, **kwargs: Any) -> FakeResponse:
         """Serve the discovery document.
@@ -146,6 +150,7 @@ class FakeIdp:
         if url != DISCOVERY_URL:
             raise requests.ConnectionError(url)
         self.discoveries += 1
+        self.discovery_auth.append(kwargs.get("auth"))
         return FakeResponse(self.discovery)
 
     def post(self, url: str, **kwargs: Any) -> FakeResponse:
@@ -242,6 +247,8 @@ def test_token_discovered(idp: FakeIdp, clock: Clock) -> None:
     assert request["auth"] == ("protes+client", "s3cret%3A%26")
     assert request["allow_redirects"] is False
     assert request["timeout"] == 10
+    # none from `.netrc` either
+    assert idp.discovery_auth == [backends.NO_CREDENTIALS]
 
 
 def test_token_cached(idp: FakeIdp, clock: Clock) -> None:
@@ -311,7 +318,8 @@ def test_token_endpoint_configured(idp: FakeIdp, clock: Clock) -> None:
         "client_id": CLIENT_ID,
         "client_secret": CLIENT_SECRET,
     }
-    assert request["auth"] is None
+    # no HTTP Basic credentials from `.netrc` besides
+    assert request["auth"] is backends.NO_CREDENTIALS
 
 
 @pytest.mark.parametrize("name", [backends.CLIENT_ID_ENV, backends.CLIENT_SECRET_ENV])
@@ -698,7 +706,7 @@ def create_task(client: backends.TesClient, **outbound: Any) -> str:
 
 
 class FakePost:
-    """Fake `requests.request`: records requests, and answers or fails.
+    """Fake `backend_request`: records requests, and answers or fails.
 
     Attributes:
         sent: URLs and keyword arguments of the requests.
@@ -729,10 +737,10 @@ class FakePost:
 def post(
     configured: None, monkeypatch: pytest.MonkeyPatch
 ) -> Callable[[FakeResponse | Exception], FakePost]:
-    """Factory of fake `requests.request`s (installed when created)."""
+    """Factory of fake `backend_request`s (installed when created)."""
 
     def install(answer: FakeResponse | Exception) -> FakePost:
-        """Install a fake `requests.request` with an answer."""
+        """Install a fake `backend_request` with an answer."""
         fake = FakePost(answer)
         monkeypatch.setattr(backends, "backend_request", fake)
         return fake
@@ -1179,8 +1187,11 @@ class AuthRecordingHandler(BaseHTTPRequestHandler):
 
 
 @pytest.fixture
-def netrc(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A `.netrc` file with credentials for all hosts of the tests."""
+def netrc(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A `.netrc` file with credentials for all hosts of the tests.
+
+    The local test servers, and the hosts of redirects.
+    """
     path = tmp_path / ".netrc"
     path.write_text(
         "machine 127.0.0.1 login netrc password secret\n"
@@ -1242,21 +1253,29 @@ def test_netrc_ignored(
 
 
 @pytest.mark.parametrize(
-    "target, kept",
-    [("https://a.example.org/final", True), ("https://b.example.org/final", False)],
+    "target, sent, expected",
+    [
+        ("https://a.example.org/final", "Bearer token-1", "Bearer token-1"),
+        ("https://b.example.org/final", "Bearer token-1", None),
+        ("https://a.example.org:8443/final", "Bearer token-1", None),
+        ("http://a.example.org/final", "Bearer token-1", None),
+        ("https://a.example.org/final", None, None),
+        ("https://b.example.org/final", None, None),
+    ],
 )
-def test_session_redirect_credentials(netrc: None, target: str, kept: bool) -> None:
-    """Redirects keep credentials on the same host only, and get none else."""
-    session = backends.BackendSession()
+def test_session_redirect_credentials(
+    netrc: None, target: str, sent: str | None, expected: str | None
+) -> None:
+    """Redirects keep credentials on the same host and port, and add none.
+
+    Also not from `.netrc`, which has credentials for all of these hosts.
+    """
     response = requests.Response()
     response.request = requests.Request("GET", "https://a.example.org/x").prepare()
-    for headers in ({"Authorization": "Bearer token-1"}, {}):
-        prepared = requests.Request("GET", target, headers=headers).prepare()
-        session.rebuild_auth(prepared, response)
-        if headers and kept:
-            assert prepared.headers["Authorization"] == "Bearer token-1"
-        else:
-            assert "Authorization" not in prepared.headers
+    headers = {} if sent is None else {"Authorization": sent}
+    prepared = requests.Request("GET", target, headers=headers).prepare()
+    backends.BackendSession().rebuild_auth(prepared, response)
+    assert prepared.headers.get("Authorization") == expected
 
 
 def test_session_environment(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1267,7 +1286,7 @@ def test_session_environment(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("REQUESTS_CA_BUNDLE", "/etc/ssl/ca.pem")
     settings = backends.BackendSession().merge_environment_settings(
-        "https://tes.example.org/", {}, None, None, None
+        "https://tes.example.org/", proxies={}, stream=None, verify=None, cert=None
     )
     assert settings["proxies"]["https"] == "http://proxy.example.org:3128"
     assert settings["verify"] == "/etc/ssl/ca.pem"
