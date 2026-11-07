@@ -38,12 +38,13 @@ publicUrl: ""
 # of an issuer), and must not disable access control; rendering fails
 # otherwise (see deployment/README.md, Configuration). The default keeps
 # pages of `view=FULL` within the memory limit (see `protes.resources`): the
-# app's own default is 64 tasks per page.
+# app's own defaults are 64 tasks and 10 MiB per page.
 config:
   custom:
     controllers:
       list_tasks:
         max_page_size_full: 6
+        max_page_bytes_full: 4194304
       # Example: seconds after a cancel at which tasks still `CANCELING` are
       # set to `SYSTEM_ERROR` and no longer tracked (default: 3600; see
       # docs/configuration.md, Tasks)
@@ -329,14 +330,13 @@ protes:
       drop: ["ALL"]
     readOnlyRootFilesystem: true
   # Each request of a page of tasks with `view=FULL` holds about 3 times the
-  # size of the page in memory, and each thread serves one (a task may be as
-  # large as the request size limit, 1 MiB, plus its logs, 1 MiB: with
-  # `config.custom.controllers.list_tasks.max_page_size_full` at 6, about 36
-  # MiB per request, and 144 MiB with 4 threads, on top of about 90 MiB of the
-  # app; more if logs hold text that JSON escapes, but about 3 times
-  # `config.custom.controllers.list_tasks.max_page_bytes_full`, 10 MiB, plus
-  # one task, per request, and up to about 7 times for tasks with many small
-  # fields, such as thousands of inputs or tags). Set `max_page_size_full`, `max_page_bytes_full` and the memory
+  # size of the page in memory, and each thread serves one: a page is at most
+  # `config.custom.controllers.list_tasks.max_page_bytes_full` (4 MiB) plus
+  # one task (up to the request size limit, 1 MiB, plus its logs, 1 MiB), so
+  # about 18 MiB per request, and up to about 7 times the page size, about 42
+  # MiB, for tasks with many small fields (e.g., thousands of inputs or
+  # tags): with 4 threads, up to about 170 MiB, on top of about 90 MiB of the
+  # app. Set `max_page_size_full`, `max_page_bytes_full` and the memory
   # together (see docs/configuration.md, Tasks)
   resources:
     limits:

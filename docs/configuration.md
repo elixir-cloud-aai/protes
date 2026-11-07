@@ -583,7 +583,8 @@ plugins:
   characters), but never much more than `max_page_bytes_full` allows;
 - `list_tasks.max_page_bytes_full`: the maximum size of the tasks of a page
   of the view `FULL`, in bytes of the response body (indented JSON; default
-  10485760, i.e., 10 MiB), whatever their number: a page ends before the task
+  10485760, i.e., 10 MiB; 4 MiB in the [Helm chart](deployment.md)),
+  whatever their number: a page ends before the task
   that would exceed it, and its `next_page_token` continues with that task.
   A page always has at least one task, which may be larger (up to the size
   of a stored task). It bounds the response, not the memory: a request of a

@@ -123,7 +123,8 @@ which takes a moment for large collections.
 **Size of pages of the view `FULL`:** pages of `GET /tasks?view=FULL` now
 also end before their tasks exceed
 `custom.controllers.list_tasks.max_page_bytes_full` bytes (default
-10 MiB; a page has at least one task), besides `max_page_size_full` tasks.
+10 MiB, and 4 MiB in the Helm chart; a page has at least one task), besides
+`max_page_size_full` tasks.
 So pages with large tasks (e.g., long logs) hold fewer tasks than before,
 and clients that page with `next_page_token` get all tasks as before; a
 client that reads only the first page may get fewer tasks. Raise the setting

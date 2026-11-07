@@ -28,10 +28,10 @@ config on startup (via `FOCA_CONFIG_OVERLAY`), for the app and the worker:
   development server only (see [Server](#server)); the broker is set via its
   Secret, not `jobs` (see [Celery worker and
   broker](#celery-worker-and-broker)). By default, the chart sets
-  `config.custom.controllers.list_tasks.max_page_size_full` to 6 (the app's
-  default is 64), so that pages of the view `FULL` fit its memory limit; to
-  raise it, or `max_page_bytes_full` (10 MiB), also raise
-  `protes.resources` (see
+  `config.custom.controllers.list_tasks.max_page_size_full` to 6 and
+  `max_page_bytes_full` to 4 MiB (the app's defaults are 64 and 10 MiB), so
+  that pages of the view `FULL` fit its memory limit; to raise them, also
+  raise `protes.resources` (see
   [Tasks](https://protes.readthedocs.io/en/latest/configuration/#tasks)).
 
 The identity provider is deployment configuration, without defaults (see
