@@ -325,7 +325,7 @@ def test_probe_without_basic_credentials(
         response.raw = raw_body(b"{}")
         return response
 
-    monkeypatch.setattr(requests, "request", request)
+    monkeypatch.setattr(backends, "backend_request", request)
     monkeypatch.setenv("TES_USER", "protes")
     monkeypatch.setenv("TES_PASSWORD", "secret")
     backend = Backend(id=URL, url=URL, auth="basic")
@@ -360,7 +360,7 @@ def test_probe_credentials_sent(
         tokens.append("token-1")
         return "token-1"
 
-    monkeypatch.setattr(requests, "request", request)
+    monkeypatch.setattr(backends, "backend_request", request)
     monkeypatch.setattr(backends.token_provider, "get_token", get_token)
     backend = Backend(id=URL, url=URL, auth="client_credentials")
     with app.app.app_context():
@@ -388,7 +388,7 @@ def test_service_info_request(app: FlaskApp, monkeypatch: pytest.MonkeyPatch) ->
         response.raw = raw_body(b'{"type": {}}')
         return response
 
-    monkeypatch.setattr(requests, "request", request)
+    monkeypatch.setattr(backends, "backend_request", request)
     with app.app.app_context():
         get_custom_config(CustomConfig).tes.backends = tes_backends(URL)
         served = backends.client_for(
@@ -476,7 +476,7 @@ def test_get_task_upgraded(app: FlaskApp, monkeypatch: pytest.MonkeyPatch) -> No
         response.raw = raw_body(b'{"id": "a", "state": "QUEUED", "executors": []}')
         return response
 
-    monkeypatch.setattr(requests, "request", request)
+    monkeypatch.setattr(backends, "backend_request", request)
     monkeypatch.setattr(backends, "upgrade_task", upgrade)
     backend = Backend(id=URL, url=URL, auth="none", labels={"tes.version": "1.0"})
     with app.app.app_context():
@@ -500,7 +500,7 @@ def test_get_task_reads_no_service_info(
         response.raw = raw_body(b'{"id": "a", "state": "QUEUED", "executors": []}')
         return response
 
-    monkeypatch.setattr(requests, "request", request)
+    monkeypatch.setattr(backends, "backend_request", request)
     with app.app.app_context():
         get_custom_config(CustomConfig).tes.backends = tes_backends(URL)
         backends.client_for(BACKEND).get_task("a")

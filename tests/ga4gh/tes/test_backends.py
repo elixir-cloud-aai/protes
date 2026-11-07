@@ -523,7 +523,7 @@ def test_client_token_request(
         sent.append({"method": method, "url": url, **kwargs})
         return FakeResponse({"id": "remote-1", "state": "QUEUED"})
 
-    monkeypatch.setattr(backends.requests, "request", fake_request)
+    monkeypatch.setattr(backends, "backend_request", fake_request)
     task = backends.create_client(host=f"{BACKEND_URL}/token").get_task("remote-1")
     assert task.state == "QUEUED"
     # before the service info, for the version of the backend
@@ -734,7 +734,7 @@ def post(
     def install(answer: FakeResponse | Exception) -> FakePost:
         """Install a fake `requests.request` with an answer."""
         fake = FakePost(answer)
-        monkeypatch.setattr(backends.requests, "request", fake)
+        monkeypatch.setattr(backends, "backend_request", fake)
         return fake
 
     return install
@@ -1155,6 +1155,124 @@ def test_response_size_limit_redirect(
     assert redirect.content == b""
 
 
+class AuthRecordingHandler(BaseHTTPRequestHandler):
+    """Handler of a local server that records the credentials it gets."""
+
+    received: ClassVar[list[tuple[str, str | None]]] = []
+
+    def do_GET(self) -> None:
+        """Record the credentials; redirect, or serve a task."""
+        self.received.append((self.path, self.headers.get("Authorization")))
+        if self.path == "/redirect":
+            body = b""
+            self.send_response(302)
+            self.send_header("Location", "/final")
+        else:
+            body = json.dumps({"id": "remote-1", "state": "COMPLETE"}).encode()
+            self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format: str, *args: Any) -> None:
+        """Log nothing."""
+
+
+@pytest.fixture
+def netrc(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A `.netrc` file with credentials for all hosts of the tests."""
+    path = tmp_path / ".netrc"
+    path.write_text(
+        "machine 127.0.0.1 login netrc password secret\n"
+        "machine a.example.org login netrc password secret\n"
+        "machine b.example.org login netrc password secret\n"
+    )
+    path.chmod(0o600)
+    monkeypatch.setenv("NETRC", str(path))
+    assert requests.utils.get_netrc_auth("http://127.0.0.1/") == ("netrc", "secret")
+
+
+@pytest.mark.parametrize(
+    "credentials, expected",
+    [
+        ({}, None),
+        ({"headers": {"Authorization": "Bearer token-1"}}, "Bearer token-1"),
+        ({"auth": ("user", "pass")}, "Basic dXNlcjpwYXNz"),
+    ],
+)
+def test_netrc_ignored(
+    configured: None,
+    loopback: None,
+    netrc: None,
+    monkeypatch: pytest.MonkeyPatch,
+    credentials: dict[str, Any],
+    expected: str | None,
+) -> None:
+    """Requests get no credentials of `.netrc`, also not after redirects.
+
+    Neither without credentials nor instead of their own.
+    """
+    monkeypatch.setattr(AuthRecordingHandler, "received", [])
+    server = ThreadingHTTPServer(("127.0.0.1", 0), AuthRecordingHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        url = f"http://127.0.0.1:{server.server_address[1]}"
+        conf = get_custom_config(CustomConfig).tes
+        conf.backends = BackendListConfig(
+            [
+                *conf.backends.root,
+                ServiceEntry(
+                    type="ga4gh-tes", url=url, url_schemes=["http"], auth="none"
+                ),
+            ]
+        )
+        client = backends.create_client(host=url)
+        response = client._request(
+            "GET", f"{url}/redirect", timeout=(5, 5), **credentials
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert response.status_code == 200
+    assert AuthRecordingHandler.received == [
+        ("/redirect", expected),
+        ("/final", expected),
+    ]
+
+
+@pytest.mark.parametrize(
+    "target, kept",
+    [("https://a.example.org/final", True), ("https://b.example.org/final", False)],
+)
+def test_session_redirect_credentials(netrc: None, target: str, kept: bool) -> None:
+    """Redirects keep credentials on the same host only, and get none else."""
+    session = backends.BackendSession()
+    response = requests.Response()
+    response.request = requests.Request("GET", "https://a.example.org/x").prepare()
+    for headers in ({"Authorization": "Bearer token-1"}, {}):
+        prepared = requests.Request("GET", target, headers=headers).prepare()
+        session.rebuild_auth(prepared, response)
+        if headers and kept:
+            assert prepared.headers["Authorization"] == "Bearer token-1"
+        else:
+            assert "Authorization" not in prepared.headers
+
+
+def test_session_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Proxies and CA certificates of the environment still apply."""
+    for name in ("https_proxy", "HTTPS_PROXY"):
+        monkeypatch.setenv(name, "http://proxy.example.org:3128")
+    for name in ("no_proxy", "NO_PROXY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("REQUESTS_CA_BUNDLE", "/etc/ssl/ca.pem")
+    settings = backends.BackendSession().merge_environment_settings(
+        "https://tes.example.org/", {}, None, None, None
+    )
+    assert settings["proxies"]["https"] == "http://proxy.example.org:3128"
+    assert settings["verify"] == "/etc/ssl/ca.pem"
+
+
 class DrippingHandler(BaseHTTPRequestHandler):
     """Handler of a local server that sends its answer slowly."""
 
@@ -1219,7 +1337,7 @@ def test_get_task_once(
         sent.append(url)
         return FakeResponse({}, status_code=404)
 
-    monkeypatch.setattr(backends.requests, "request", fake_request)
+    monkeypatch.setattr(backends, "backend_request", fake_request)
     with pytest.raises(requests.HTTPError):
         backends.create_client(host=NONE_URL).get_task("remote/1")
     assert sent == [f"{NONE_URL}/ga4gh/tes/v1/tasks/remote%2F1"]
@@ -1255,7 +1373,7 @@ def test_get_task_unknown_fields(
         """Serve the task."""
         return FakeResponse(body)
 
-    monkeypatch.setattr(backends.requests, "request", fake_request)
+    monkeypatch.setattr(backends, "backend_request", fake_request)
     task = backends.create_client(host=NONE_URL).get_task("remote-1")
     assert task.state == "COMPLETE"
     assert task.tags == {"extra": "kept"}
@@ -1322,7 +1440,7 @@ def test_get_task_camel_case(
             }
         )
 
-    monkeypatch.setattr(backends.requests, "request", fake_request)
+    monkeypatch.setattr(backends, "backend_request", fake_request)
     task = backends.create_client(host=NONE_URL).get_task("remote-1")
     assert task.creation_time is not None
     assert task.logs is None

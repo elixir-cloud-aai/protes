@@ -91,6 +91,15 @@ the earlier version poll tasks that upgraded instances forwarded to such a
 TES instance at the default path, which fails: the tasks may become
 `UNKNOWN` meanwhile, until upgraded workers poll them again.
 
+**`.netrc` files:** requests to configured TES instances no longer get
+credentials from a `.netrc` file of the environment (`~/.netrc`, or the file
+of `NETRC`): before, `requests` added its Basic credentials to requests
+without credentials (`auth: none`, and reads of service infos), put them in
+place of proTES' access token, and looked them up again after redirects.
+Requests to discovered TES instances never got them. If a TES instance
+relied on them, set `auth: basic` for it instead (see [Credentials of TES
+instances](access-control.md#credentials-of-tes-instances)).
+
 **Size of responses of TES instances:** proTES now reads at most
 `custom.tes.max_response_size` bytes of each response of a TES instance
 (default 10 MiB), configured or discovered; larger responses fail, with an

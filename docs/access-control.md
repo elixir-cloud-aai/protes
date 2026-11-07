@@ -246,6 +246,14 @@ the registry's entry, `client_credentials` or `none`):
 - `none`: without credentials, e.g., for TES instances on an internal
   network that need none.
 
+Requests to TES instances get only these credentials: none from a `.netrc`
+file of the environment (`~/.netrc`, or the file of `NETRC`), which
+`requests` would otherwise add to requests without credentials, put in
+place of proTES' access token, and look up again after redirects. Redirects
+to other hosts drop the credentials. Proxies and CA certificates of the
+environment (e.g., `HTTPS_PROXY`, `REQUESTS_CA_BUNDLE`) still apply to
+configured TES instances.
+
 The client ID and secret of proTES are read from the environment variables
 `PROTES_CLIENT_ID` and `PROTES_CLIENT_SECRET`, and Basic credentials from
 the variables named in the config, e.g., set from Kubernetes Secrets; they
