@@ -383,8 +383,11 @@ custom:
         # How proTES authenticates at discovered TES instances:
         # `client_credentials` (the default) or `none`
         auth: client_credentials
-        # For local setups only
+        # For local setups only: TES instances at private addresses (their
+        # URLs must still be `https`)
         allow_private_addresses: false
+        # For a registry at a private address, e.g., in the same cluster
+        registry_allow_private_addresses: false
         # Labels of the discovered TES instances, e.g., for routing
         labels: {source: cloud-registry}
     client_credentials:
@@ -665,7 +668,7 @@ custom:
   than `finished_days` are kept that long after they finished, too. Tasks
   tracked by proTES before version 0.3.0 have no last poll, so their time
   counts from when they were forwarded, and that of tasks failed by
-  recovery before version 0.6.0 from when they were forwarded or created.
+  recovery in versions up to 0.5.0 from when they were forwarded or created.
   Unfinished tasks are never deleted;
 - `interval`: seconds between runs of the purge in each Celery worker
   (default 3600); the first run is when the worker starts;
