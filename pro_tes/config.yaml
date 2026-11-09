@@ -238,8 +238,11 @@ exceptions:
   mapping: pro_tes.exceptions.exceptions
   media_type: application/json
   # Requests rejected by the validation of the API specification get the
-  # reason as `detail` (e.g., `'none' is not of type 'array'`)
+  # reason as `detail` (e.g., `'none' is not of type 'array'`), as up to FOCA
+  # 0.21; the reason quotes the rejected values (FOCA 0.22's default names
+  # the invalid fields by location and code instead)
   validation_details: True
+  validation_reasons: True
 
 # Custom configuration
 custom:
