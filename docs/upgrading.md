@@ -43,8 +43,10 @@ What this changes:
   FOCA's `IndexConflictError`, with another message.
 - **Validation errors:** requests that fail the validation of the API
   specification keep the validator's reason as `detail`
-  (`exceptions.validation_reasons`), and their responses gain the members
-  `type`, `code` (`invalid-request`) and `errors`, which lists the invalid fields.
+  (`exceptions.validation_reasons`). Where the invalid fields are known, their
+  responses gain the members `type` (FOCA's problem type, a URL ending in
+  `/problems/invalid-request/`), `code` (`invalid-request`) and `errors`, which
+  lists them.
 - **Plugin gateway:** refusals of per-request pipelines and backends (`400`,
   problem types `invalid-pipeline`, `invalid-backends` and `reserved-tag`,
   unchanged) and of `GET /plugins/{plugin_id}` get other messages, which name
@@ -56,9 +58,9 @@ What this changes:
   parser's message. Update clients that check these messages.
 - **Logs:** requests (`Incoming request`) and denials of access control name the
   route instead of the path, and rejected requests are logged by the locations
-  and codes of their invalid fields instead of the validator's reason; paths
-  and reasons are logged only at `DEBUG`, so check log checks that rely on them. FOCA warns once per
-  worker of what it deprecates ahead of its release on ASGI (e.g., of the
+  and codes of their invalid fields (otherwise the mapped `detail`) instead of
+  the validator's reason; paths and reasons are logged only at `DEBUG`, so check
+  log checks that rely on them. FOCA warns once per worker of what it deprecates ahead of its release on ASGI (e.g., of the
   werkzeug classes in the app's exception map).
 - **Plugins:** resolving plugins that cap `foca<0.22` against this image fails. Ask
   their authors for a release.
