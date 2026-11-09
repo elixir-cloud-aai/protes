@@ -43,23 +43,11 @@ RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
 ## workflows do); without it, the app reports version `0.0.0.dev0`
 COPY README.md LICENSE /tmp/src/
 COPY pro_tes /tmp/src/pro_tes
-## The wheels of foca-plugins, built the same way, from the commit of
-## `pyproject.toml`, as its releases don't allow this FOCA yet (the image has no
-## Git, and such requirements have no hashes; `scripts/image_requirements.py`
-## leaves them out, and `tests/test_image_requirements.py` checks that the
-## commits match). Installed with the app's wheel below; goes with the next
-## release of foca-plugins
-ADD https://github.com/elixir-cloud-aai/foca-plugins.git#7a08e7fd72804fff42242d72155fa60b88f6904a /tmp/foca-plugins
 ARG SETUPTOOLS_SCM_PRETEND_VERSION
 RUN --network=none --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
   export UV_NO_CACHE=1 UV_PYTHON_DOWNLOADS=never \
   && uv build --wheel --offline --no-build-isolation \
-    --python /tmp/build-env/bin/python --out-dir /tmp/dist /tmp/src \
-  && for plugin in meta plugins/generic/routing/random plugins/tes/routing/distance; do \
-    uv build --wheel --offline --no-build-isolation \
-      --python /tmp/build-env/bin/python --out-dir /tmp/dist \
-      "/tmp/foca-plugins/${plugin}"; \
-  done
+    --python /tmp/build-env/bin/python --out-dir /tmp/dist /tmp/src
 
 ##### IMAGE #####
 FROM base
@@ -79,8 +67,7 @@ LABEL org.opencontainers.image.authors="ELIXIR On-Cloud <cloud-service@elixir-eu
 LABEL org.opencontainers.image.vendor="ELIXIR On-Cloud"
 
 ## Install dependencies first, so that code changes do not reinstall them;
-## the FOCA image runs as non-root user. Only the locked ones are installed
-## (for now without foca-plugins, whose wheels come from the `build` stage):
+## the FOCA image runs as non-root user. Only the locked ones are installed:
 ## the runtime dependencies (`project.dependencies` of `pyproject.toml`; the
 ## export leaves out the extras, and `--no-dev` a `dev` dependency group) and
 ## all their own dependencies, at the exact versions of `uv.lock`, checked

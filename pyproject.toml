@@ -116,14 +116,10 @@ dependencies = [
     "foca>=0.22.0,<0.23",
     # The routing plugins in the image: `generic.routing.random` (default
     # pipeline, `pro_tes/config.yaml`) and `tes.routing.distance` (opt-in,
-    # as it looks up addresses at third parties). At a commit of foca-plugins,
-    # as its releases cap `foca<0.21`, until one allows FOCA 0.22: then back to
-    # `foca-plugins[generic-routing,tes-routing]==<version>` alone, with hashes
-    # in `uv.lock`. The image builds them from the same commit (`Dockerfile`),
-    # and the release pin check flags them, so no release has them
-    "foca-plugins[generic-routing,tes-routing] @ git+https://github.com/elixir-cloud-aai/foca-plugins@7a08e7fd72804fff42242d72155fa60b88f6904a#subdirectory=meta",
-    "foca-plugin-generic-routing-random @ git+https://github.com/elixir-cloud-aai/foca-plugins@7a08e7fd72804fff42242d72155fa60b88f6904a#subdirectory=plugins/generic/routing/random",
-    "foca-plugin-tes-routing-distance @ git+https://github.com/elixir-cloud-aai/foca-plugins@7a08e7fd72804fff42242d72155fa60b88f6904a#subdirectory=plugins/tes/routing/distance",
+    # as it looks up addresses at third parties). The release train
+    # pins each plugin to an exact version, which `uv.lock` records with
+    # hashes; Dependabot bumps the train
+    "foca-plugins[generic-routing,tes-routing]==0.3.0",
     "gunicorn>=26.2.0,<27",
     "py-tes>=1.1,<2",
     # Used directly (TES backends, identity provider); 2.33.0 fixes

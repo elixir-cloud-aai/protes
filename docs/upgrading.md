@@ -63,7 +63,10 @@ What this changes:
   log checks that rely on them. FOCA warns once per worker of what it deprecates ahead of its release on ASGI (e.g., of the
   werkzeug classes in the app's exception map).
 - **Plugins:** resolving plugins that cap `foca<0.22` against this image fails. Ask
-  their authors for a release.
+  their authors for a release. The image contains the release train
+  `foca-plugins` 0.3.0 (was 0.2.0), whose plugins
+  `foca-plugin-generic-routing-random` and `foca-plugin-tes-routing-distance`
+  0.1.3 allow FOCA 0.18 to 0.22; they change nothing else.
 
 **Docker Compose:** the Compose setup now runs the images of the Helm chart,
 pinned to patch versions: RabbitMQ 4.3.7 (was the latest 4.1) and MongoDB
