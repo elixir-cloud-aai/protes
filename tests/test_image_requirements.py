@@ -172,4 +172,3 @@ def test_script(tmp_path: Path) -> None:
         check=False,
     )
     assert (result.returncode, result.stdout, result.stderr) == (0, GUNICORN, "")
-

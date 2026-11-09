@@ -238,9 +238,11 @@ both entries, but still proposes digest updates of the base image's tag.
 The routing plugins come from the release train `foca-plugins`
 (`foca-plugins[generic-routing,tes-routing]==<version>` in `pyproject.toml`),
 which pins each plugin to an exact version, locked with its hashes like all
-other dependencies. A train that allows a new FOCA minor is needed before
-proTES moves to it, as the release pin check refuses direct references
-(e.g., to a commit of foca-plugins).
+other dependencies. A new FOCA minor needs a release of foca-plugins that
+allows it first: a commit pin of foca-plugins would fail the release pin
+check (see [Versioning and releases](#versioning-and-releases)). For tests
+of unreleased plugins, [#434](https://github.com/elixir-cloud-aai/protes/pull/434)
+shows how a commit pin is built into the image.
 
 ## Helm chart
 
