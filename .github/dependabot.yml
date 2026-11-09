@@ -9,6 +9,7 @@ multi-ecosystem-groups:
   # to the same references (`tests/test_repository.py` checks), in one pull
   # request for both files
   service-images:
+    labels: ["type: dependencies"]
     schedule:
       interval: monthly
     target-branch: dev
@@ -18,6 +19,7 @@ updates:
   # locked ones
   - package-ecosystem: uv
     directory: /
+    labels: ["type: dependencies"]
     schedule:
       interval: monthly
     target-branch: dev
@@ -48,6 +50,7 @@ updates:
   # `@<commit> # vX.Y.Z`)
   - package-ecosystem: github-actions
     directory: /
+    labels: ["type: dependencies"]
     schedule:
       interval: monthly
     target-branch: dev
@@ -58,6 +61,7 @@ updates:
   - package-ecosystem: docker
     # The image, and the uv stage of the recipe for plugin images
     directories: ["/", "/examples/plugin-image"]
+    labels: ["type: dependencies"]
     schedule:
       interval: monthly
     target-branch: dev
@@ -78,6 +82,7 @@ updates:
   - package-ecosystem: docker-compose
     directory: /
     patterns: ["*"]
+    labels: ["type: dependencies"]
     multi-ecosystem-group: service-images
     ignore:
       # MongoDB stays on 7.0: 8.0 refuses to start on Linux kernels 6.19 to
@@ -91,6 +96,7 @@ updates:
   - package-ecosystem: helm
     directory: /deployment
     patterns: ["*"]
+    labels: ["type: dependencies"]
     multi-ecosystem-group: service-images
     ignore:
       # FOCA's library chart is bumped by hand, with `Chart.lock` and
@@ -106,6 +112,7 @@ updates:
   # Hook revisions in `.pre-commit-config.yaml`
   - package-ecosystem: pre-commit
     directory: /
+    labels: ["type: dependencies"]
     schedule:
       interval: monthly
     target-branch: dev
