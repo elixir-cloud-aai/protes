@@ -95,7 +95,7 @@ The default pipeline routes each task to the TES instances in random order
 task, and makes no third-party location lookups (tasks still go to your configured TES instances). The plugin is published by
 [foca-plugins](https://foca-plugins.readthedocs.io/en/latest/) and installed
 in the image of proTES (for now from a commit of foca-plugins, as its releases
-don't allow FOCA 0.21 yet; see [Dependencies](development.md#dependencies)). The
+don't allow FOCA 0.22 yet; see [Dependencies](development.md#dependencies)). The
 base config sets the pipeline
 explicitly:
 

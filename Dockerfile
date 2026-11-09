@@ -12,7 +12,7 @@ FROM ghcr.io/astral-sh/uv:0.13.7@sha256:96f40d3904aad8d0bd010539001d36c8e2188b98
 ## Pinned by digest, so that rebuilds (e.g., of a release) use the same base
 ## image; Dependabot updates the tag and digest together
 ## (`.github/dependabot.yml`)
-FROM elixircloud/foca:0.21.0-py3.13@sha256:ba79033cab60dd79419c2c44f90000f4fb9aa8d495ea09c2798a7348516bd84f AS base
+FROM elixircloud/foca:0.22.0-py3.13@sha256:bf02db1195d60940dd3b29e53ce4757854155e258f35199e28d778cbf6128f9a AS base
 
 ##### BUILD #####
 ## Build the app's wheel, in a stage of its own, so that the image doesn't
@@ -49,7 +49,7 @@ COPY pro_tes /tmp/src/pro_tes
 ## leaves them out, and `tests/test_image_requirements.py` checks that the
 ## commits match). Installed with the app's wheel below; goes with the next
 ## release of foca-plugins
-ADD https://github.com/elixir-cloud-aai/foca-plugins.git#8c5e0c2f70510575231e377d0fef6ce7c8ccb261 /tmp/foca-plugins
+ADD https://github.com/elixir-cloud-aai/foca-plugins.git#92e6a8231824409f3a5a0fb1e7f9671ca7509007 /tmp/foca-plugins
 ARG SETUPTOOLS_SCM_PRETEND_VERSION
 RUN --network=none --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
   export UV_NO_CACHE=1 UV_PYTHON_DOWNLOADS=never \
