@@ -110,7 +110,7 @@ def test_plugins_installed(plugin: str, distribution: str) -> None:
     """The plugins are installed in the environment of the app.
 
     The image installs the dependencies of `pyproject.toml`, which pin the
-    plugins at a commit of `foca-plugins`, until a release allows this FOCA.
+    plugins by the release train `foca-plugins` (hashes are in `uv.lock`).
     """
     names = {ep.name: ep for ep in entry_points(group="foca.plugins")}
     dist = names[plugin].dist

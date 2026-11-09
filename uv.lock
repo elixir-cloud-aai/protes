@@ -942,29 +942,41 @@ wheels = [
 
 [[package]]
 name = "foca-plugin-generic-routing-random"
-version = "0.1.2"
-source = { git = "https://github.com/elixir-cloud-aai/foca-plugins?subdirectory=plugins%2Fgeneric%2Frouting%2Frandom&rev=7a08e7fd72804fff42242d72155fa60b88f6904a#7a08e7fd72804fff42242d72155fa60b88f6904a" }
+version = "0.1.3"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "foca" },
     { name = "pydantic" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/16/1d/8c0a151fd96bd3dff2ce8463ece54b01aaafd8ae1968276fe25747d4fb1b/foca_plugin_generic_routing_random-0.1.3.tar.gz", hash = "sha256:834c6286480d92adfa6687fea6827588efa57ef6f89b6f4455877bdbb9535b15", size = 12150, upload-time = "2026-11-09T22:09:09.705Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c2/6d/a16d0c896521bfeaf0000edb109580032e849062265edf8c4fba0f26f4b8/foca_plugin_generic_routing_random-0.1.3-py3-none-any.whl", hash = "sha256:b3a8dd6de302c781519ce5fa279da254a55fe8320e7ec34772df055839af783e", size = 9763, upload-time = "2026-11-09T22:09:08.555Z" },
+]
 
 [[package]]
 name = "foca-plugin-tes-routing-distance"
-version = "0.1.2"
-source = { git = "https://github.com/elixir-cloud-aai/foca-plugins?subdirectory=plugins%2Ftes%2Frouting%2Fdistance&rev=7a08e7fd72804fff42242d72155fa60b88f6904a#7a08e7fd72804fff42242d72155fa60b88f6904a" }
+version = "0.1.3"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "foca" },
     { name = "maxminddb" },
     { name = "pydantic" },
 ]
+sdist = { url = "https://files.pythonhosted.org/packages/2a/d5/47e93cbcfafb9054a5728d94e025e0aebdb4bf28d5a35ee7888d2424a2b7/foca_plugin_tes_routing_distance-0.1.3.tar.gz", hash = "sha256:8cec346b07ac785591a091115ef8f827729be7c487d57191be4da36a3c5a09c1", size = 37728, upload-time = "2026-11-09T22:09:20.247Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ed/1d/d7d3e573bc9b8ac1e4e3c72f4a3e75a22e529fcb3c6704f1f32c8940552a/foca_plugin_tes_routing_distance-0.1.3-py3-none-any.whl", hash = "sha256:d3bdcf139837deacc5b17ca3ece1e209324bd63ed8b9d970649c77453815cdc4", size = 25742, upload-time = "2026-11-09T22:09:18.894Z" },
+]
 
 [[package]]
 name = "foca-plugins"
-version = "0.2.0"
-source = { git = "https://github.com/elixir-cloud-aai/foca-plugins?subdirectory=meta&rev=7a08e7fd72804fff42242d72155fa60b88f6904a#7a08e7fd72804fff42242d72155fa60b88f6904a" }
+version = "0.3.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "foca" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f1/9b/9e0709b42aaced8e20f070ed7b6ef72ec08e30fb2f80c5447c18d4df0945/foca_plugins-0.3.0.tar.gz", hash = "sha256:d0329114039bab28afdd8b191b43b710fbb11afcd00456d3dce064e650e5e789", size = 6808, upload-time = "2026-11-09T22:11:42.19Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f6/50/7a22cc3b232019a3261d9ddeaebc9b7bb9e8af04cd4360809f7b7a909127/foca_plugins-0.3.0-py3-none-any.whl", hash = "sha256:7572eac393b1151fcaab1c658efe96cb93ed61d554a24af158d00aede21604dd", size = 6181, upload-time = "2026-11-09T22:11:40.893Z" },
 ]
 
 [package.optional-dependencies]
@@ -1837,8 +1849,6 @@ source = { editable = "." }
 dependencies = [
     { name = "connexion" },
     { name = "foca" },
-    { name = "foca-plugin-generic-routing-random" },
-    { name = "foca-plugin-tes-routing-distance" },
     { name = "foca-plugins", extra = ["generic-routing", "tes-routing"] },
     { name = "gunicorn" },
     { name = "py-tes" },
@@ -1886,9 +1896,7 @@ requires-dist = [
     { name = "connexion", specifier = ">=2.15.1,<3.0.0" },
     { name = "coverage", marker = "extra == 'dev'", specifier = ">=7.16" },
     { name = "foca", specifier = ">=0.22.0,<0.23" },
-    { name = "foca-plugin-generic-routing-random", git = "https://github.com/elixir-cloud-aai/foca-plugins?subdirectory=plugins%2Fgeneric%2Frouting%2Frandom&rev=7a08e7fd72804fff42242d72155fa60b88f6904a" },
-    { name = "foca-plugin-tes-routing-distance", git = "https://github.com/elixir-cloud-aai/foca-plugins?subdirectory=plugins%2Ftes%2Frouting%2Fdistance&rev=7a08e7fd72804fff42242d72155fa60b88f6904a" },
-    { name = "foca-plugins", extras = ["generic-routing", "tes-routing"], git = "https://github.com/elixir-cloud-aai/foca-plugins?subdirectory=meta&rev=7a08e7fd72804fff42242d72155fa60b88f6904a" },
+    { name = "foca-plugins", extras = ["generic-routing", "tes-routing"], specifier = "==0.3.0" },
     { name = "griffelib", marker = "extra == 'docs'", specifier = ">=2.4,<3" },
     { name = "gunicorn", specifier = ">=26.2.0,<27" },
     { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.6.1,<2" },

@@ -14,7 +14,7 @@ import yaml
 from pro_tes.app import init_app, run_app
 from pro_tes.config_models import CustomConfig, TesServiceEntry
 from pro_tes.ga4gh.tes.backends import CLIENT_ID_ENV, CLIENT_SECRET_ENV, CONNECT_TIMEOUT
-from tests.conftest import DB, set_overlays
+from tests.conftest import DB, make_headers, set_overlays
 
 BASE_PATH = "/ga4gh/tes/v1"
 # Read timeout of reverse proxies in front of proTES (e.g., ingress-nginx's
@@ -160,6 +160,40 @@ def test_validation_details(client: FlaskClient) -> None:
     assert response.status_code == 400
     detail = response.get_json()["detail"]
     assert detail == "'none' is not of type 'array' - 'executors'"
+
+
+def test_validation_without_reasons(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, app_env: None
+) -> None:
+    """Without validation reasons, rejected requests name the invalid fields.
+
+    Deployments that set `exceptions.validation_reasons: false` (FOCA's
+    default) get a detail that names the invalid fields by location and
+    code instead of the validator's reason, which quotes the rejected
+    values, and the fields in `errors`.
+    """
+    overlay = tmp_path / "overlay.yaml"
+    overlay.write_text(
+        yaml.safe_dump({"exceptions": {"validation_reasons": False}}),
+        encoding="utf-8",
+    )
+    set_overlays(monkeypatch, overlay)
+    client = init_app().app.test_client()
+    client.environ_base["HTTP_AUTHORIZATION"] = make_headers()["Authorization"]
+    response = client.post(f"{BASE_PATH}/tasks", json={"executors": "none"})
+    assert response.status_code == 400
+    body = response.get_json()
+    assert body["detail"] == "Invalid fields: #/executors (invalid-type)"
+    assert "none" not in body["detail"]
+    assert body["code"] == "invalid-request"
+    assert body["type"].endswith("/problems/invalid-request/")
+    assert body["errors"] == [
+        {
+            "detail": "Must be of type array.",
+            "pointer": "#/executors",
+            "code": "invalid-type",
+        }
+    ]
 
 
 @pytest.mark.parametrize(
