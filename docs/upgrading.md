@@ -11,10 +11,12 @@ images tagged by date, on FOCA 0.12 ([From versions before
 
 ## To version 0.6.0
 
-**FOCA 0.21 (all deployments):** proTES now requires FOCA 0.21.0, on the FOCA
-0.21.0 image (see [FOCA's release
-notes](https://github.com/elixir-cloud-aai/foca/releases/tag/v0.21.0)). What this
-changes:
+**FOCA 0.22 (all deployments):** proTES now requires FOCA 0.22.0, on the FOCA
+0.22.0 image (see FOCA's release notes of
+[0.21.0](https://github.com/elixir-cloud-aai/foca/releases/tag/v0.21.0) and
+[0.22.0](https://github.com/elixir-cloud-aai/foca/releases/tag/v0.22.0), and
+its [migration guide to 0.22](https://foca.readthedocs.io/en/v0.22.0/migration-0.22/)).
+What this changes:
 
 - **Discovery:** FOCA reads `serviceId`, which Cloud Registry 1.0.0rc2 has in
   `GET /verifications`, so TES instances are found with that version again.
@@ -39,7 +41,21 @@ changes:
   connecting; set `db.client_options` if your database needs longer.
 - **Indexes:** documents that violate a unique index now stop the start with
   FOCA's `IndexConflictError`, with another message.
-- **Plugins:** resolving plugins that cap `foca<0.21` against this image fails. Ask
+- **Validation errors:** requests that fail the validation of the API
+  specification keep the validator's reason as `detail`
+  (`exceptions.validation_reasons`), and their responses gain the members
+  `type`, `code` (`invalid-request`) and `errors`, which lists the invalid fields.
+- **Plugin gateway:** refusals of per-request pipelines and backends (`400`,
+  e.g., `invalid-pipeline`) name fields and the positions of steps instead of
+  quoting the client's values, e.g., `Invalid pipeline: 0.alternatives.0.plugin
+  (value_error)`; the problem types are unchanged.
+- **Logs:** requests (`Incoming request`) and denials of access control name the
+  route instead of the path, and rejected requests are logged by the locations
+  and codes of their invalid fields instead of the validator's reason (both at
+  `DEBUG` now), so check log checks that rely on them. FOCA warns once per
+  worker of what it deprecates ahead of its release on ASGI (e.g., of the
+  werkzeug classes in the app's exception map).
+- **Plugins:** resolving plugins that cap `foca<0.22` against this image fails. Ask
   their authors for a release.
 
 **Docker Compose:** the Compose setup now runs the images of the Helm chart,

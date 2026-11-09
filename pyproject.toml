@@ -121,9 +121,9 @@ dependencies = [
     # `foca-plugins[generic-routing,tes-routing]==<version>` alone, with hashes
     # in `uv.lock`. The image builds them from the same commit (`Dockerfile`),
     # and the release pin check flags them, so no release has them
-    "foca-plugins[generic-routing,tes-routing] @ git+https://github.com/elixir-cloud-aai/foca-plugins@92e6a8231824409f3a5a0fb1e7f9671ca7509007#subdirectory=meta",
-    "foca-plugin-generic-routing-random @ git+https://github.com/elixir-cloud-aai/foca-plugins@92e6a8231824409f3a5a0fb1e7f9671ca7509007#subdirectory=plugins/generic/routing/random",
-    "foca-plugin-tes-routing-distance @ git+https://github.com/elixir-cloud-aai/foca-plugins@92e6a8231824409f3a5a0fb1e7f9671ca7509007#subdirectory=plugins/tes/routing/distance",
+    "foca-plugins[generic-routing,tes-routing] @ git+https://github.com/elixir-cloud-aai/foca-plugins@7a08e7fd72804fff42242d72155fa60b88f6904a#subdirectory=meta",
+    "foca-plugin-generic-routing-random @ git+https://github.com/elixir-cloud-aai/foca-plugins@7a08e7fd72804fff42242d72155fa60b88f6904a#subdirectory=plugins/generic/routing/random",
+    "foca-plugin-tes-routing-distance @ git+https://github.com/elixir-cloud-aai/foca-plugins@7a08e7fd72804fff42242d72155fa60b88f6904a#subdirectory=plugins/tes/routing/distance",
     "gunicorn>=26.2.0,<27",
     "py-tes>=1.1,<2",
     # Used directly (TES backends, identity provider); 2.33.0 fixes

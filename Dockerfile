@@ -49,7 +49,7 @@ COPY pro_tes /tmp/src/pro_tes
 ## leaves them out, and `tests/test_image_requirements.py` checks that the
 ## commits match). Installed with the app's wheel below; goes with the next
 ## release of foca-plugins
-ADD https://github.com/elixir-cloud-aai/foca-plugins.git#92e6a8231824409f3a5a0fb1e7f9671ca7509007 /tmp/foca-plugins
+ADD https://github.com/elixir-cloud-aai/foca-plugins.git#7a08e7fd72804fff42242d72155fa60b88f6904a /tmp/foca-plugins
 ARG SETUPTOOLS_SCM_PRETEND_VERSION
 RUN --network=none --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
   export UV_NO_CACHE=1 UV_PYTHON_DOWNLOADS=never \
