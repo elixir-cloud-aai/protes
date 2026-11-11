@@ -25,6 +25,12 @@
 set -euo pipefail
 
 api="$1"
+# A user's token goes over HTTPS only (`ALLOW_HTTP=true` to allow HTTP)
+if [ -n "${TOKEN:-}" ] && [[ "${api}" != https://* ]] \
+    && [ "${ALLOW_HTTP:-false}" != true ]; then
+  echo "::error::${api} isn't an HTTPS URL; clients send tokens to it"
+  exit 1
+fi
 backend="$2"
 backend_api="$2$3"
 # Seconds to wait for a state (a pull and a start may take long)
@@ -97,7 +103,8 @@ create() {
 # with `TOKEN`, as proTES reports it
 backend_state() {
   local remote
-  check GET "/tasks/$1?view=BASIC" 200 '.tags["gateway.backend_task_id"] | length > 0'
+  # To standard error: callers capture the state, and go on if this fails
+  check GET "/tasks/$1?view=BASIC" 200 '.tags["gateway.backend_task_id"] | length > 0' >&2
   if [ -n "${TOKEN:-}" ]; then
     jq -r .state "${body}"
     return

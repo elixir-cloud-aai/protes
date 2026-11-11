@@ -206,8 +206,10 @@ COMBINED_LOGS=true tests/integration/check.sh \
 unset TOKEN OTHER_TOKEN
 ```
 
-Each script stops at the first failed check, printing it with the
-response. What the scripts can't see from outside, check in the cluster:
+Each script prints failed checks with the response, and stops with an
+error (while waiting for a state, at the end of the wait). With `TOKEN`,
+`tests/integration/check.sh` refuses an API URL without HTTPS, as
+`tests/smoke/deployment.sh` does. What the scripts can't see from outside, check in the cluster:
 that the executors of canceled tasks stopped (for TESK, as
 `tests/integration/tesk/stopped.sh` does in CI), and the values of the
 Route (`tests/test_chart.py` checks that the README's values for OpenShift
