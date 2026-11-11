@@ -168,7 +168,9 @@ check POST "/tasks/${running}:cancel" 200 '. == {}'
 check GET "/tasks/${running}?view=MINIMAL" 200 '
   .state == "CANCELING" or .state == "CANCELED"'
 await_state "${running}" CANCELED
-if [ "$(backend_state "${running}")" != CANCELED ]; then
+if [ -n "${TOKEN:-}" ]; then
+  echo "${backend}: not checked whether the backend stopped the task (check it there)"
+elif [ "$(backend_state "${running}")" != CANCELED ]; then
   echo "::error::${backend}: task ${running} isn't canceled at its backend"
   exit 1
 fi

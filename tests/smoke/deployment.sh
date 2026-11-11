@@ -34,10 +34,12 @@ check() {
     --write-out '%{http_code}' -X "${method}"
     --header 'Accept: application/json')
   if [ -n "${token}" ]; then
-    args+=(--header @-)
+    # The token goes to curl on its standard input, not as an argument
+    actual="$(printf 'Authorization: Bearer %s\n' "${token}" \
+      | curl "${args[@]}" --header @- "${api}${path}")"
+  else
+    actual="$(curl "${args[@]}" "${api}${path}" < /dev/null)"
   fi
-  actual="$(printf 'Authorization: Bearer %s\n' "${token}" \
-    | curl "${args[@]}" "${api}${path}")"
   if [ "${actual}" != "${status}" ] \
       || ! jq -e "${filter}" "${body}" > /dev/null; then
     echo "::error::${method} ${path}: status ${actual}, expected ${status} and ${filter}"

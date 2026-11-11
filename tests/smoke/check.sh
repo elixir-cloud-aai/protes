@@ -161,7 +161,11 @@ docker compose exec -T fake-tes python -c \
   tasks = json.load(urllib.request.urlopen(request))['tasks']; \
   assert tasks and all(task['state'] in ('COMPLETE', 'CANCELED') for task in tasks), tasks"
 # The checks of deployed instances (`deployment.sh`), over plain HTTP here,
-# so that they are known to pass where they should
-TOKEN="$(token alice)" OTHER_TOKEN="$(token eve)" ALLOW_HTTP=true \
+# so that its access checks are known to pass where they should; it repeats
+# some of the checks above, as it runs on its own against deployments. The
+# tokens are fetched first, so that a failure stops the test
+user_token="$(token alice)"
+no_role_token="$(token eve)"
+TOKEN="${user_token}" OTHER_TOKEN="${no_role_token}" ALLOW_HTTP=true \
   "$(dirname "$0")/deployment.sh" "${api}"
 echo "Smoke test passed"

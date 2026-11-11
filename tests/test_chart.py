@@ -1729,7 +1729,9 @@ def _openshift_values() -> str:
         `deployment/README.md`.
     """
     readme = (CHART / "README.md").read_text()
-    section = readme.split("On OpenShift (e.g., CSC's Rahti)", 1)[1]
+    heading = "On OpenShift (e.g., CSC's Rahti)"
+    _, found, section = readme.partition(heading)
+    assert found, f"No paragraph '{heading}' in deployment/README.md"
     match = re.search(r"```yaml\n(.*?)```", section, re.DOTALL)
     assert match, "No values for OpenShift in deployment/README.md"
     return match.group(1)
@@ -1806,6 +1808,9 @@ def test_route_openshift_values(tmp_path: Path) -> None:
         .get("defaults", {})
         .get("forward_timeout", base["plugins"]["defaults"]["forward_timeout"])
     )
+    # The longest request as "TES instances" in `docs/configuration.md` and
+    # the comment on `forward_timeout` in `pro_tes/config.yaml` give it: the
+    # last forwarding attempt, then getting the state (5 seconds to connect)
     longest = forward_timeout + 2 * timeout + 5
     annotations = route["metadata"]["annotations"]
     assert _seconds(annotations["haproxy.router.openshift.io/timeout"]) > longest
