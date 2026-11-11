@@ -188,8 +188,7 @@ or upgrade:
   on TES implementations](configuration.md#notes-on-tes-implementations)).
 
 For example, in Bash, with the instance's values (get the tokens from your
-identity provider, e.g., LS Login; `read` keeps them out of the shell
-history):
+identity provider; `read` keeps them out of the shell history):
 
 ```bash
 API=https://tes.example.org/ga4gh/tes/v1
