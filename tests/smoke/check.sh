@@ -3,7 +3,8 @@
 # (`compose.yaml`): relays a task to the fake TES backends, which complete it
 # right away, waits until the Celery worker has tracked it (via RabbitMQ) to
 # the end, and checks the other endpoints and access control, with access
-# tokens of the fake identity provider. Run it from the repository root,
+# tokens of the fake identity provider; then runs the checks of deployed
+# instances (`deployment.sh`) against it. Run it from the repository root,
 # with the base URL of the TES API as argument (default
 # `http://localhost:8080/ga4gh/tes/v1`); needs curl, jq and docker compose
 # (with `COMPOSE_FILE` set as for `up`, to query the fake backend).
@@ -159,4 +160,8 @@ docker compose exec -T fake-tes python -c \
     headers={'Authorization': f'Bearer {token}'}); \
   tasks = json.load(urllib.request.urlopen(request))['tasks']; \
   assert tasks and all(task['state'] in ('COMPLETE', 'CANCELED') for task in tasks), tasks"
+# The checks of deployed instances (`deployment.sh`), over plain HTTP here,
+# so that they are known to pass where they should
+TOKEN="$(token alice)" OTHER_TOKEN="$(token eve)" ALLOW_HTTP=true \
+  "$(dirname "$0")/deployment.sh" "${api}"
 echo "Smoke test passed"
