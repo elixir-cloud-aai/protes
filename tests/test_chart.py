@@ -1721,6 +1721,96 @@ def test_route() -> None:
     assert ("Route", APP) not in docs
 
 
+def _openshift_values() -> str:
+    """Get the values that the chart's README gives for OpenShift.
+
+    Returns:
+        The YAML block after "On OpenShift (e.g., CSC's Rahti)" in
+        `deployment/README.md`.
+    """
+    readme = (CHART / "README.md").read_text()
+    section = readme.split("On OpenShift (e.g., CSC's Rahti)", 1)[1]
+    match = re.search(r"```yaml\n(.*?)```", section, re.DOTALL)
+    assert match, "No values for OpenShift in deployment/README.md"
+    return match.group(1)
+
+
+def _seconds(duration: str) -> float:
+    """Convert a duration of HAProxy (e.g., `70s`, `2m`) to seconds.
+
+    Args:
+        duration: The duration, with a unit (`ms`, `s`, `m`, `h`) or none
+            (milliseconds).
+
+    Returns:
+        The duration in seconds.
+    """
+    match = re.fullmatch(r"(\d+)(ms|s|m|h)?", duration)
+    assert match, f"Not a duration: {duration}"
+    factor = {"ms": 0.001, "s": 1, "m": 60, "h": 3600, None: 0.001}[match.group(2)]
+    return int(match.group(1)) * factor
+
+
+@pytest.mark.parametrize(
+    ("duration", "expected"),
+    [("70s", 70), ("2m", 120), ("1h", 3600), ("500ms", 0.5), ("500", 0.5)],
+)
+def test_seconds(duration: str, expected: float) -> None:
+    """Durations of HAProxy are read in their units, milliseconds by default.
+
+    Args:
+        duration: The duration.
+        expected: Its seconds.
+    """
+    assert _seconds(duration) == expected
+
+
+def test_route_openshift_values(tmp_path: Path) -> None:
+    """The README's values for OpenShift (as on Rahti) render a secure Route.
+
+    The Route terminates TLS and redirects plain HTTP, no Ingress is
+    rendered, OpenShift assigns the user IDs, and the router's timeout is
+    above the longest request to create a task with the base config (see
+    "TES instances" in `docs/configuration.md`).
+
+    Args:
+        tmp_path: Directory for the values file.
+    """
+    values = tmp_path / "openshift.yaml"
+    values.write_text(_openshift_values())
+    docs = _render(
+        "--values",
+        str(values),
+        "--api-versions",
+        "route.openshift.io/v1",
+        "--api-versions",
+        "security.openshift.io/v1",
+    )
+    assert ("Ingress", APP) not in docs
+    route = docs[("Route", APP)]
+    assert route["spec"]["host"] == "tes.example.org"
+    assert route["spec"]["tls"] == {
+        "termination": "edge",
+        "insecureEdgeTerminationPolicy": "Redirect",
+    }
+    assert "runAsUser" not in _pod(docs, "Deployment", APP)["securityContext"]
+    base = yaml.safe_load((ROOT / "pro_tes/config.yaml").read_text())
+    overlay = _overlay(docs)
+    timeout = (
+        overlay.get("custom", {})
+        .get("tes", {})
+        .get("timeout", base["custom"]["tes"]["timeout"])
+    )
+    forward_timeout = (
+        overlay.get("plugins", {})
+        .get("defaults", {})
+        .get("forward_timeout", base["plugins"]["defaults"]["forward_timeout"])
+    )
+    longest = forward_timeout + 2 * timeout + 5
+    annotations = route["metadata"]["annotations"]
+    assert _seconds(annotations["haproxy.router.openshift.io/timeout"]) > longest
+
+
 def test_network_policy_app_peers() -> None:
     """The app's NetworkPolicy has no default peers, and needs some."""
     values = yaml.safe_load((CHART / "values.yaml").read_text())
