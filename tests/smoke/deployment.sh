@@ -52,7 +52,11 @@ check() {
 # OpenShift Route of the chart redirects)
 case "${api}" in
   https://*)
-    plain="http://${api#https://}/service-info"
+    # The same host and path, at the default port of HTTP (not at 443)
+    rest="${api#https://}"
+    authority="${rest%%/*}"
+    path="${rest#"${authority}"}"
+    plain="http://${authority%:443}${path}/service-info"
     if result="$(curl --silent --max-time 30 --output /dev/null \
         --write-out '%{http_code} %{redirect_url}' "${plain}")"; then
       status="${result%% *}"

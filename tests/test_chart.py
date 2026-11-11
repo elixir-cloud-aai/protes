@@ -1795,7 +1795,11 @@ def test_route_openshift_values(tmp_path: Path) -> None:
         "termination": "edge",
         "insecureEdgeTerminationPolicy": "Redirect",
     }
-    assert "runAsUser" not in _pod(docs, "Deployment", APP)["securityContext"]
+    for context in (
+        _pod(docs, "Deployment", APP)["securityContext"],
+        _container(docs, APP).get("securityContext", {}),
+    ):
+        assert not {"runAsUser", "runAsGroup", "fsGroup"} & context.keys()
     base = yaml.safe_load((ROOT / "pro_tes/config.yaml").read_text())
     overlay = _overlay(docs)
     timeout = (
