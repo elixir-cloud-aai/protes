@@ -85,8 +85,10 @@ run the stack locally only on a disposable machine or VM.
 versions](tes-versions.md) on the same backends, with two tasks:
 
 - A task with fields of TES 1.1 that can be dropped: Funnel gets it in TES 1.1
-  (by its label `tes.version`), with these fields; TESP-API gets it in TES
-  1.0, without them. Clients get the task back as they sent it.
+  (by its label `tes.version`), with these fields (Funnel drops the key of
+  `backend_parameters` that it doesn't list, as TES 1.1 allows for keys that
+  aren't strict); TESP-API gets it in TES 1.0, without them. Clients get the
+  task back as they sent it.
 - A task with `ignore_error: true` on a failing executor: Funnel gets it,
   runs the next executor and ends the task in `COMPLETE`, as TES 1.1 has it;
   proTES rejects it for TESP-API (`400`).

@@ -321,6 +321,10 @@ checks to run on one.
   `tes.version` (see [TES versions](#tes-versions)); CI sets the label anyway.
 - With `ignore_error: true` on an executor that fails, it runs the next
   executors and ends the task in `COMPLETE`.
+- It drops keys of `backend_parameters` that it doesn't list in its service
+  info (`tesResources_backend_parameters`) from tasks with
+  `backend_parameters_strict: false`, as TES 1.1 allows; clients still get the
+  task back from proTES as they sent it.
 
 Funnel 0.11.14, tested with proTES 0.5.0 and 0.6.0:
 

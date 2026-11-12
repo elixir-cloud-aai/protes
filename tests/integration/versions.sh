@@ -81,9 +81,13 @@ if [ "${version}" = 1.0 ]; then
     and .executors[0].ignore_error == null
     and .resources.backend_parameters == null'
 else
+  # TES 1.1 lets a backend ignore keys of `backend_parameters` that it doesn't
+  # support, unless they are strict: it keeps the key or drops it (Funnel
+  # 0.12.3 keeps only the keys that it lists in its service info)
   check_backend "${id}" '
     .inputs[0].streamable == true
-    and .resources.backend_parameters["protes-integration"] == "hint"'
+    and (.resources.backend_parameters["protes-integration"] // "hint")
+      == "hint"'
 fi
 
 echo "${backend}: a task that ignores the error of an executor (TES ${version})"
