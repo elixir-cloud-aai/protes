@@ -145,8 +145,8 @@ def test_integration_versions(job_id: str, config_path: Path) -> None:
         backend["url"]: backend.get("labels", {}).get("tes.version", "1.0")
         for backend in config["custom"]["tes"]["backends"]
     }
-    checked = {}
-    states = {}
+    checked: dict[str, str] = {}
+    states: dict[str, str | None] = {}
     for step in job["steps"]:
         args = shlex.split(step.get("run", ""))
         if args[:1] == ["tests/integration/versions.sh"]:
@@ -160,7 +160,7 @@ def test_integration_versions(job_id: str, config_path: Path) -> None:
     # Funnel 0.11.14 ends tasks with `ignore_error: true` in `EXECUTOR_ERROR`,
     # the other backends get no such task (TES 1.0)
     funnel = "http://funnel:8000"
-    expected_states = {url: None for url in expected}
+    expected_states: dict[str, str | None] = dict.fromkeys(expected)
     if funnel in expected:
         expected_states[funnel] = "EXECUTOR_ERROR"
     assert states == expected_states
