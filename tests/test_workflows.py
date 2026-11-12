@@ -153,9 +153,17 @@ def test_integration_versions(job_id: str, config_path: Path) -> None:
             # Arguments: API, backend URL, backend API path, TES version
             checked[args[2]] = args[4]
             states[args[2]] = step.get("env", {}).get("IGNORE_ERROR_STATE")
+            # Runs unless the job is cancelled, and its failure fails the job
+            assert step.get("if", "${{ !cancelled() }}") == "${{ !cancelled() }}"
+            assert "continue-on-error" not in step
     assert checked == expected, f"versions.sh steps of {job_id}: {checked}"
-    # Funnel 0.11.14 ends tasks with `ignore_error: true` in `EXECUTOR_ERROR`
-    assert states.get("http://funnel:8000", "EXECUTOR_ERROR") == "EXECUTOR_ERROR"
+    # Funnel 0.11.14 ends tasks with `ignore_error: true` in `EXECUTOR_ERROR`,
+    # the other backends get no such task (TES 1.0)
+    funnel = "http://funnel:8000"
+    expected_states = {url: None for url in expected}
+    if funnel in expected:
+        expected_states[funnel] = "EXECUTOR_ERROR"
+    assert states == expected_states
 
 
 def test_verification_signer_workflow() -> None:

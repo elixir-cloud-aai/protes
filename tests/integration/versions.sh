@@ -35,7 +35,7 @@ trap 'rm -f "${body}"' EXIT
 auth="$(docker compose exec -T fake-tes python -c \
   "import json, urllib.request; \
   print(json.load(urllib.request.urlopen( \
-  'http://localhost:8080/oidc/token?sub=alice'))['access_token'])")"
+  'http://localhost:8080/oidc/token?sub=alice', timeout=60))['access_token'])")"
 
 # Request a path of proTES, with an optional JSON body; check the status and
 # that the JSON response matches a jq filter
@@ -93,7 +93,7 @@ check_backend() {
   remote="$(jq -r '.tags["gateway.backend_task_id"]' "${body}")"
   docker compose exec -T fake-tes python -c \
     "import json, sys, urllib.request; \
-    print(json.dumps(json.load(urllib.request.urlopen(sys.argv[1]))))" \
+    print(json.dumps(json.load(urllib.request.urlopen(sys.argv[1], timeout=60))))" \
     "${backend_api}/tasks/${remote}?view=FULL" > "${body}"
   if ! jq -e "$2" "${body}" > /dev/null; then
     echo "::error::${backend}: task $1 at the backend doesn't match $2"
@@ -130,7 +130,9 @@ if [ "${version}" = 1.0 ]; then
     and .executors[0].ignore_error == null
     and .resources.backend_parameters == null'
 else
-  check_backend "${id}" '.inputs[0].streamable == true'
+  check_backend "${id}" '
+    .inputs[0].streamable == true
+    and .resources.backend_parameters["protes-integration"] == "hint"'
 fi
 
 echo "${backend}: a task that ignores the error of an executor (TES ${version})"
