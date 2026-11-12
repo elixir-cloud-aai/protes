@@ -274,7 +274,8 @@ instances](access-control.md#credentials-of-tes-instances)), and failing to
 get a token makes those whose version wasn't read before count as TES 1.0
 until the next read.
 
-**Set the label for Funnel:** Funnel implements TES 1.1, but version 0.11.14
+**Set the label for Funnel before 0.12:** Funnel implements TES 1.1, and
+version 0.12.3 reports it (`type.version: "1.1.0"`), but version 0.11.14
 reports an empty `type.version` (`""`), so it would count as TES 1.0:
 
 ```yaml
@@ -295,7 +296,7 @@ To tell the versions in a registry apart, use one entry per version, with its
 ### Notes on TES implementations
 
 What was seen when running these versions through proTES; other versions may
-behave differently. CI runs tasks on real instances of Funnel 0.11.14 and
+behave differently. CI runs tasks on real instances of Funnel 0.12.3 and
 TESP-API 0.2.0 with Pulsar, and of TESK with tesk-api 1.1.0 (see
 [Testing](development.md)). A deployment on Rahti, CSC's OpenShift, was not
 tested; [Testing a deployment](development.md#testing-a-deployment) has the
@@ -314,11 +315,20 @@ checks to run on one.
   check on the Pulsar side whether it has stopped.
 - It writes one executor log for all executors of a task.
 
-[Funnel](https://github.com/calypr/funnel) 0.11.14:
+[Funnel](https://github.com/calypr/funnel) 0.12.3:
 
+- It reports TES 1.1.0 in its service info, so it needs no label `tes.version`
+  (see [TES versions](#tes-versions)).
+- With `ignore_error: true` on an executor that fails, it runs the next
+  executors and ends the task in `COMPLETE`.
+
+Funnel 0.11.14, tested with earlier versions of proTES:
+
+- It reports an empty `type.version`, so set the label `tes.version: "1.1"`.
 - The executor log of a canceled task shows `exit_code: 0`.
 - With `ignore_error: true` on an executor that fails, it runs the next
-  executors, but ends the task in `EXECUTOR_ERROR`, not `COMPLETE`.
+  executors, but ends the task in `EXECUTOR_ERROR`, not `COMPLETE`. Upgrade
+  to 0.12.3 or later for such tasks.
 
 [TESK](https://github.com/elixir-cloud-aai/TESK) with tesk-api 1.1.0, the
 taskmaster and filer v0.10.6, on Kubernetes 1.36:

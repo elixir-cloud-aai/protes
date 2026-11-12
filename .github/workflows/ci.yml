@@ -448,8 +448,6 @@ jobs:
       # tasks keep running on TESP-API with Pulsar for minutes, and later
       # tasks there wait for them
       - name: Check TES 1.1 on Funnel
-        env:
-          IGNORE_ERROR_STATE: EXECUTOR_ERROR
         run: tests/integration/versions.sh "${API}" http://funnel:8000 "" 1.1
       - name: Check Funnel
         if: ${{ !cancelled() }}

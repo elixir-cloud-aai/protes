@@ -337,8 +337,8 @@ custom:
   #       username_env: TES_EXAMPLE_COM_USERNAME
   #       password_env: TES_EXAMPLE_COM_PASSWORD
   # Entries may state the TES version of their TES instances, with the label
-  # `tes.version` (otherwise it is read from their service info; Funnel needs
-  # it), e.g., `labels: {tes.version: "1.1"}`
+  # `tes.version` (otherwise it is read from their service info; Funnel 0.11
+  # needs it), e.g., `labels: {tes.version: "1.1"}`
   # client_credentials:
   #   issuer: https://login.example.org/oidc/
   # See `docs/configuration.md` and `docs/access-control.md`

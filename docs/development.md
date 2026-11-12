@@ -72,7 +72,8 @@ and the Celery worker with it, and checks that the plugin tags new tasks.
 
 CI's `Integration` job runs the app against real TES implementations in Docker
 Compose (`tests/integration/`): it creates, tracks and cancels tasks on Funnel
-and on TESP-API with Pulsar, in pinned versions (see [Notes on TES
+0.12.3 and on TESP-API 0.2.0 with Pulsar 0.14.16, in images pinned by digest
+(see [Notes on TES
 implementations](configuration.md#notes-on-tes-implementations)), with
 `tests/integration/check.sh`. The backends' containers run through the Docker
 socket of the host, and the images come from
@@ -86,14 +87,13 @@ versions](tes-versions.md) on the same backends, with two tasks:
 - A task with fields of TES 1.1 that can be dropped: Funnel gets it in TES 1.1
   (by its label `tes.version`), with these fields; TESP-API gets it in TES
   1.0, without them. Clients get the task back as they sent it.
-- A task with `ignore_error: true` on a failing executor: Funnel gets it and
-  runs the next executor; proTES rejects it for TESP-API (`400`).
+- A task with `ignore_error: true` on a failing executor: Funnel gets it,
+  runs the next executor and ends the task in `COMPLETE`, as TES 1.1 has it;
+  proTES rejects it for TESP-API (`400`).
 
 The script's last argument is the TES version that proTES must find for the
 backend; `tests/test_workflows.py` checks that it matches each backend of
-the job's config. Funnel 0.11.14 ends the second task in `EXECUTOR_ERROR`,
-so its step sets `IGNORE_ERROR_STATE=EXECUTOR_ERROR` (the default is
-`COMPLETE`, as in TES 1.1). In this job, it runs before `check.sh`, as the
+the job's config. In this job, it runs before `check.sh`, as the
 canceled tasks of `check.sh` keep running on TESP-API with Pulsar for
 minutes, and later tasks there wait for them.
 
@@ -115,8 +115,7 @@ export SETUPTOOLS_SCM_PRETEND_VERSION=0.0.0+compose
 docker compose up -d --build --wait --wait-timeout 300
 # Pin the stage image here, as in the job's step
 API=http://localhost:8080/ga4gh/tes/v1
-IGNORE_ERROR_STATE=EXECUTOR_ERROR \
-  tests/integration/versions.sh "${API}" http://funnel:8000 "" 1.1
+tests/integration/versions.sh "${API}" http://funnel:8000 "" 1.1
 tests/integration/check.sh "${API}" http://funnel:8000 ""
 tests/integration/versions.sh "${API}" http://tesp-api:8080 /v1 1.0
 tests/integration/check.sh "${API}" http://tesp-api:8080 /v1

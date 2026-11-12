@@ -133,7 +133,8 @@ def test_integration_versions(job_id: str, config_path: Path) -> None:
     `tests/integration/versions.sh` runs once per backend of the job's config,
     with the version that proTES must find: that of the label `tes.version`,
     else TES 1.0, which TESP-API and TESK report (see the notes on TES
-    implementations).
+    implementations). No step overrides the final state of the task that
+    ignores an executor's error, as it ends in `COMPLETE` on TES 1.1.
 
     Args:
         job_id: The ID of the job in `ci.yml`.
@@ -146,24 +147,45 @@ def test_integration_versions(job_id: str, config_path: Path) -> None:
         for backend in config["custom"]["tes"]["backends"]
     }
     checked: dict[str, str] = {}
-    states: dict[str, str | None] = {}
     for step in job["steps"]:
         args = shlex.split(step.get("run", ""))
         if args[:1] == ["tests/integration/versions.sh"]:
             # Arguments: API, backend URL, backend API path, TES version
             checked[args[2]] = args[4]
-            states[args[2]] = step.get("env", {}).get("IGNORE_ERROR_STATE")
             # Runs unless the job is cancelled, and its failure fails the job
             assert step.get("if", "${{ !cancelled() }}") == "${{ !cancelled() }}"
             assert "continue-on-error" not in step
+            assert "IGNORE_ERROR_STATE" not in step.get("env", {})
     assert checked == expected, f"versions.sh steps of {job_id}: {checked}"
-    # Funnel 0.11.14 ends tasks with `ignore_error: true` in `EXECUTOR_ERROR`,
-    # the other backends get no such task (TES 1.0)
-    funnel = "http://funnel:8000"
-    expected_states: dict[str, str | None] = dict.fromkeys(expected)
-    if funnel in expected:
-        expected_states[funnel] = "EXECUTOR_ERROR"
-    assert states == expected_states
+    script = (ROOT / "tests" / "integration" / "versions.sh").read_text()
+    assert "IGNORE_ERROR_STATE" not in script
+
+
+def test_integration_funnel_version() -> None:
+    """The docs name the version of Funnel that the integration job runs.
+
+    `tests/integration/compose.yaml` builds Funnel's image from the official
+    one, pinned by tag and digest. The testing docs (`docs/development.md`)
+    name that version and no other one of Funnel, and the notes on TES
+    implementations (`docs/configuration.md`) say that CI runs it and have
+    notes on it.
+    """
+    compose = yaml.safe_load(
+        (ROOT / "tests" / "integration" / "compose.yaml").read_text()
+    )
+    build = compose["services"]["funnel"]["build"]["dockerfile_inline"]
+    pins = re.findall(
+        r"^FROM quay\.io/ohsu-comp-bio/funnel:(\d+\.\d+\.\d+)@sha256:[0-9a-f]{64}$",
+        build,
+        flags=re.MULTILINE,
+    )
+    assert len(pins) == 1, build
+    version = pins[0]
+    development = " ".join((ROOT / "docs" / "development.md").read_text().split())
+    assert set(re.findall(r"Funnel (\d+\.\d+\.\d+)", development)) == {version}
+    configuration = " ".join((ROOT / "docs" / "configuration.md").read_text().split())
+    assert f"CI runs tasks on real instances of Funnel {version} " in configuration
+    assert f"[Funnel](https://github.com/calypr/funnel) {version}:" in configuration
 
 
 def test_verification_signer_workflow() -> None:
