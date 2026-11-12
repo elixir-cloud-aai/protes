@@ -124,7 +124,9 @@ check GET "/tasks/${id}?view=FULL" 200 '
 # `null` counts as absent, as some backends serve unset fields as `null`)
 if [ "${version}" = 1.0 ]; then
   check_backend "${id}" '
-    .inputs[0].streamable == null
+    .inputs[0].path == "/in/input.txt"
+    and (.executors | length == 1)
+    and .inputs[0].streamable == null
     and .executors[0].ignore_error == null
     and .resources.backend_parameters == null'
 else
