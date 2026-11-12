@@ -12,7 +12,7 @@
 # `COMPLETE`, as TES 1.1 has it, unless `IGNORE_ERROR_STATE` says otherwise:
 # Funnel 0.11.14 runs the next executor, but ends the task in `EXECUTOR_ERROR`
 # (set `IGNORE_ERROR_STATE=EXECUTOR_ERROR` for it). The helpers and the image
-# are those of `check.sh`, with `check_backend` added: keep them in sync.
+# are in `lib.sh`, shared with `check.sh`.
 set -euo pipefail
 
 api="$1"
@@ -26,36 +26,9 @@ case "${version}" in
     exit 2
     ;;
 esac
-final_wait="${FINAL_WAIT:-180}"
-image='alpine:3.22@sha256:2e0b81d60597f449baa56dc25d355367869d2dca4cd57e866f1e2b52af3eb55f'
-body="$(mktemp)"
-trap 'rm -f "${body}"' EXIT
-
-# An access token of the fake identity provider
-auth="$(docker compose exec -T fake-tes python -c \
-  "import json, urllib.request; \
-  print(json.load(urllib.request.urlopen( \
-  'http://localhost:8080/oidc/token?sub=alice', timeout=60))['access_token'])")"
-
-# Request a path of proTES, with an optional JSON body; check the status and
-# that the JSON response matches a jq filter
-check() {
-  local method="$1" path="$2" status="$3" filter="$4" data="${5:-}" actual
-  local args=(--silent --show-error --max-time 60 --output "${body}"
-    --write-out '%{http_code}' -X "${method}"
-    --header 'Accept: application/json'
-    --header "Authorization: Bearer ${auth}")
-  if [ -n "${data}" ]; then
-    args+=(--header 'Content-Type: application/json' --data "${data}")
-  fi
-  actual="$(curl "${args[@]}" "${api}${path}")"
-  if [ "${actual}" != "${status}" ] \
-      || ! jq -e "${filter}" "${body}" > /dev/null; then
-    echo "::error::${backend}: ${method} ${path}: status ${actual}, expected ${status} and ${filter}"
-    cat "${body}"
-    return 1
-  fi
-}
+# shellcheck source=tests/integration/lib.sh
+. "$(dirname "$0")/lib.sh"
+auth="$(fake_token)"
 
 # A task for this backend, from the executors and other fields (JSON) given
 task() {
@@ -70,31 +43,11 @@ task() {
     } + $extra'
 }
 
-# Wait until a task has a state
-await_state() {
-  local state=""
-  for _ in $(seq "${final_wait}"); do
-    check GET "/tasks/$1?view=MINIMAL" 200 '.state != null'
-    state="$(jq -r .state "${body}")"
-    [ "${state}" = "$2" ] && return
-    sleep 1
-  done
-  echo "::error::${backend}: task $1 is ${state}, not $2"
-  check GET "/tasks/$1?view=FULL" 200 'true'
-  cat "${body}"
-  return 1
-}
-
 # Check the task of proTES as its backend serves it (view `FULL`), from the
 # Compose network, against a jq filter
 check_backend() {
-  local remote
   check GET "/tasks/$1?view=BASIC" 200 '.tags["gateway.backend_task_id"] | length > 0'
-  remote="$(jq -r '.tags["gateway.backend_task_id"]' "${body}")"
-  docker compose exec -T fake-tes python -c \
-    "import json, sys, urllib.request; \
-    print(json.dumps(json.load(urllib.request.urlopen(sys.argv[1], timeout=60))))" \
-    "${backend_api}/tasks/${remote}?view=FULL" > "${body}"
+  backend_task "$(backend_task_id)" FULL > "${body}"
   if ! jq -e "$2" "${body}" > /dev/null; then
     echo "::error::${backend}: task $1 at the backend doesn't match $2"
     cat "${body}"
