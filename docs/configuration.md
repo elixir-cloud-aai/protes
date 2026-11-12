@@ -298,7 +298,8 @@ What was seen when running these versions through proTES; other versions may
 behave differently. CI runs tasks on real instances of Funnel 0.11.14 and
 TESP-API 0.2.0 with Pulsar, and of TESK with tesk-api 1.1.0 (see
 [Testing](development.md)). A deployment on Rahti, CSC's OpenShift, was not
-tested.
+tested; [Testing a deployment](development.md#testing-a-deployment) has the
+checks to run on one.
 
 [TESP-API](https://github.com/CESNET/tesp-api) 0.2.0:
 

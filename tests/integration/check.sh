@@ -11,9 +11,26 @@
 # executor, with both streams, in `stdout`: set `COMBINED_LOGS=true` for it, so
 # that what an executor writes to its standard error is looked for there. TESK
 # reports tasks as canceled at once; `tesk/stopped.sh` checks their executors.
+# TESP-API with Pulsar 0.15 or later returns empty logs: set `EMPTY_LOGS=true`
+# for it, so that empty streams pass (other contents must still match).
+#
+# To check a deployed instance instead (e.g., on CSC's Rahti; see "Testing a
+# deployment" in `docs/development.md`), set `TOKEN` to an access token of a
+# user with the role `user`, and pass the public URL of its TES API and the URL
+# and API path of one of its TES instances, as in its config. Then docker
+# compose isn't needed, and the states of tasks at the backend are those that
+# proTES reports, as the backend may not accept the user's token. Tokens are
+# read from the environment only, so that they don't show up in the process
+# list.
 set -euo pipefail
 
 api="$1"
+# A user's token goes over HTTPS only (`ALLOW_HTTP=true` to allow HTTP)
+if [ -n "${TOKEN:-}" ] && [[ "${api}" != https://* ]] \
+    && [ "${ALLOW_HTTP:-false}" != true ]; then
+  echo "::error::${api} isn't an HTTPS URL; clients send tokens to it"
+  exit 1
+fi
 backend="$2"
 backend_api="$2$3"
 # Seconds to wait for a state (a pull and a start may take long)
@@ -23,15 +40,26 @@ stderr_field=stderr
 if [ "${COMBINED_LOGS:-false}" = true ]; then
   stderr_field=stdout
 fi
+# A jq function: whether a stream of an executor's log has a text; also if
+# it is empty with `EMPTY_LOGS=true` (TESP-API with Pulsar 0.15 or later)
+empty_logs=false
+if [ "${EMPTY_LOGS:-false}" = true ]; then
+  empty_logs=true
+fi
+logged="def logged(\$text):
+  if ${empty_logs} and (. // \"\") == \"\" then true else contains(\$text) end;"
 image='alpine:3.22@sha256:2e0b81d60597f449baa56dc25d355367869d2dca4cd57e866f1e2b52af3eb55f'
 body="$(mktemp)"
 trap 'rm -f "${body}"' EXIT
 
-# An access token of the fake identity provider
-auth="$(docker compose exec -T fake-tes python -c \
-  "import json, urllib.request; \
-  print(json.load(urllib.request.urlopen( \
-  'http://localhost:8080/oidc/token?sub=alice'))['access_token'])")"
+# An access token: `TOKEN`, or one of the fake identity provider
+auth="${TOKEN:-}"
+if [ -z "${auth}" ]; then
+  auth="$(docker compose exec -T fake-tes python -c \
+    "import json, urllib.request; \
+    print(json.load(urllib.request.urlopen( \
+    'http://localhost:8080/oidc/token?sub=alice'))['access_token'])")"
+fi
 
 # Request a path, with an optional JSON body; check the status and that the
 # JSON response matches a jq filter
@@ -39,12 +67,13 @@ check() {
   local method="$1" path="$2" status="$3" filter="$4" data="${5:-}" actual
   local args=(--silent --show-error --max-time 60 --output "${body}"
     --write-out '%{http_code}' -X "${method}"
-    --header 'Accept: application/json'
-    --header "Authorization: Bearer ${auth}")
+    --header 'Accept: application/json' --header @-)
   if [ -n "${data}" ]; then
     args+=(--header 'Content-Type: application/json' --data "${data}")
   fi
-  actual="$(curl "${args[@]}" "${api}${path}")"
+  # The token goes to curl on its standard input, not as an argument
+  actual="$(printf 'Authorization: Bearer %s\n' "${auth}" \
+    | curl "${args[@]}" "${api}${path}")"
   if [ "${actual}" != "${status}" ] \
       || ! jq -e "${filter}" "${body}" > /dev/null; then
     echo "::error::${backend}: ${method} ${path}: status ${actual}, expected ${status} and ${filter}"
@@ -70,10 +99,16 @@ create() {
 }
 
 # The state of a task of proTES as its backend reports it, by the identifier
-# that proTES got (from the Compose network, as the backend isn't published)
+# that proTES got (from the Compose network, as the backend isn't published);
+# with `TOKEN`, as proTES reports it
 backend_state() {
   local remote
-  check GET "/tasks/$1?view=BASIC" 200 '.tags["gateway.backend_task_id"] | length > 0'
+  # To standard error: callers capture the state, and go on if this fails
+  check GET "/tasks/$1?view=BASIC" 200 '.tags["gateway.backend_task_id"] | length > 0' >&2
+  if [ -n "${TOKEN:-}" ]; then
+    jq -r .state "${body}"
+    return
+  fi
   remote="$(jq -r '.tags["gateway.backend_task_id"]' "${body}")"
   docker compose exec -T fake-tes python -c \
     "import json, sys, urllib.request; \
@@ -100,13 +135,13 @@ echo "${backend}: a task that finishes"
 create 'cat /in/input.txt; echo integration-stdout; echo integration-stderr >&2'
 done="${id}"
 await_state "${done}" COMPLETE
-check GET "/tasks/${done}?view=FULL" 200 "
+check GET "/tasks/${done}?view=FULL" 200 "${logged}
   .tags[\"gateway.backend\"] == \"${backend}\"
   and (.logs | length == 1)
   and .logs[0].logs[0].exit_code == 0
-  and (.logs[0].logs[0].stdout | contains(\"integration-input\"))
-  and (.logs[0].logs[0].stdout | contains(\"integration-stdout\"))
-  and (.logs[0].logs[0].${stderr_field} | contains(\"integration-stderr\"))"
+  and (.logs[0].logs[0].stdout | logged(\"integration-input\"))
+  and (.logs[0].logs[0].stdout | logged(\"integration-stdout\"))
+  and (.logs[0].logs[0].${stderr_field} | logged(\"integration-stderr\"))"
 check GET "/tasks/${done}?view=BASIC" 200 '
   .state == "COMPLETE"
   and (.logs[0].logs[0] | has("stdout") or has("stderr") | not)
@@ -121,9 +156,9 @@ echo "${backend}: a task that fails"
 create 'echo integration-failure >&2; exit 3'
 failed="${id}"
 await_state "${failed}" EXECUTOR_ERROR
-check GET "/tasks/${failed}?view=FULL" 200 "
+check GET "/tasks/${failed}?view=FULL" 200 "${logged}
   .logs[0].logs[0].exit_code == 3
-  and (.logs[0].logs[0].${stderr_field} | contains(\"integration-failure\"))"
+  and (.logs[0].logs[0].${stderr_field} | logged(\"integration-failure\"))"
 
 echo "${backend}: a task that is canceled while it runs"
 create 'echo integration-started; sleep 300'
@@ -140,7 +175,9 @@ check POST "/tasks/${running}:cancel" 200 '. == {}'
 check GET "/tasks/${running}?view=MINIMAL" 200 '
   .state == "CANCELING" or .state == "CANCELED"'
 await_state "${running}" CANCELED
-if [ "$(backend_state "${running}")" != CANCELED ]; then
+if [ -n "${TOKEN:-}" ]; then
+  echo "${backend}: not checked whether the backend stopped the task (check it there)"
+elif [ "$(backend_state "${running}")" != CANCELED ]; then
   echo "::error::${backend}: task ${running} isn't canceled at its backend"
   exit 1
 fi

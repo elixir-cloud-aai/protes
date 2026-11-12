@@ -157,6 +157,67 @@ Shared actions are pinned to the full commit SHA of a release, with the
 release in a comment (`@<sha> # vX.Y.Z`); all pins name the same release, so
 bump them together (Dependabot does), as `tests/test_workflows.py` checks.
 
+## Testing a deployment
+
+The checks of a deployed instance, e.g., from the chart on CSC's Rahti with
+real TES instances, are scripts too. CI can't run them against a
+deployment, as they need the instance and access tokens of its users. Run
+them from a clone of the repository, with curl and jq, after each install
+or upgrade:
+
+- `tests/smoke/deployment.sh` checks that the API is served over HTTPS only
+  (plain HTTP is refused or redirected to HTTPS, as by the chart's OpenShift
+  Route), that the service info is public, and access control: no token
+  and an invalid token get `401`, a user with the role `user` lists tasks
+  and plugins, unknown tasks are forbidden, and, with `OTHER_TOKEN`, a user
+  without a role gets `403`. It creates no tasks. The smoke test runs its
+  access checks against the Compose stack, over plain HTTP
+  (`ALLOW_HTTP=true`); the HTTPS checks run only against deployments.
+- `tests/integration/check.sh`, the check of CI's integration jobs, runs
+  against the instance when `TOKEN` is set: per TES instance, it creates
+  tasks that finish, fail and are canceled, and checks their states and
+  logs. Pass the TES instance's URL and API path as in the config
+  (`tes.backends`), as the tasks are sent there with the tag
+  `gateway.backends`. Without the Compose stack, the script can't ask the
+  TES instance, so it takes the states that proTES reports, and doesn't
+  check whether the TES instance stopped a canceled task. The tasks run a
+  pinned Alpine image; canceled tasks may run for up to 5 minutes, as
+  TESP-API leaves their containers running.
+- Set `COMBINED_LOGS=true` for TESK (as CI does), and `EMPTY_LOGS=true` for
+  TESP-API with Pulsar 0.15 or later, which returns empty logs (see [Notes
+  on TES implementations](configuration.md#notes-on-tes-implementations)).
+
+For example, in Bash, with the instance's values (get the tokens from your
+identity provider; `read` keeps them out of the shell history):
+
+```bash
+API=https://tes.example.org/ga4gh/tes/v1
+read -rs TOKEN && export TOKEN        # a user with the role `user`
+read -rs OTHER_TOKEN && export OTHER_TOKEN  # optional: a user without a role
+tests/smoke/deployment.sh "${API}"
+# Funnel serves the TES API at the default path, TESP-API at `/v1`
+tests/integration/check.sh "${API}" https://funnel.example.org ""
+tests/integration/check.sh "${API}" https://tesp.example.org /v1
+# With Pulsar 0.15 or later:
+# EMPTY_LOGS=true tests/integration/check.sh "${API}" https://tesp.example.org /v1
+COMBINED_LOGS=true tests/integration/check.sh \
+  "${API}" https://tesk.example.org /ga4gh/tes/v1
+unset TOKEN OTHER_TOKEN
+```
+
+Each script prints failed checks with the response, and stops with an
+error (while waiting for a state, at the end of the wait). With `TOKEN`,
+`tests/integration/check.sh` refuses an API URL without HTTPS, as
+`tests/smoke/deployment.sh` does. What the scripts can't see from outside, check in the cluster:
+that the executors of canceled tasks stopped (for TESK, as
+`tests/integration/tesk/stopped.sh` does in CI), and the values of the
+Route (`tests/test_chart.py` checks that the README's values for OpenShift
+render a Route with TLS and a router timeout above the longest request to
+create a task). Where a real TES instance behaves differently from the fake
+backend of the smoke test (`tests/smoke/fake_tes.py`), correct the fake, and
+add the difference to [Notes on TES
+implementations](configuration.md#notes-on-tes-implementations).
+
 ## Dependencies
 
 The dependencies are declared, with version ranges, in `pyproject.toml`
