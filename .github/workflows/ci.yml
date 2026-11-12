@@ -411,7 +411,8 @@ jobs:
         run: docker compose logs
   # Runs the app against real TES implementations in Docker Compose
   # (`tests/integration/`): creates, tracks and cancels tasks on Funnel and
-  # TESP-API with Pulsar, as the smoke test only knows a fake backend. Pinned
+  # TESP-API with Pulsar, and relays tasks in TES 1.1 and 1.0, as the smoke
+  # test only knows a fake backend. Pinned
   # images, which run containers through the Docker socket of the runner. Not
   # needed by the gate, until it has proven reliable: third parties' registries
   # and packages must not block pull requests. Also not for edits of a pull
@@ -444,10 +445,20 @@ jobs:
           docker tag "${STAGE_IMAGE}@${STAGE_DIGEST}" "${STAGE_IMAGE}:latest"
       - name: Check Funnel
         run: tests/integration/check.sh "${API}" http://funnel:8000 ""
+      # The paths of TES versions: Funnel gets tasks in TES 1.1 (by its label
+      # `tes.version`), TESP-API in TES 1.0
+      - name: Check TES 1.1 on Funnel
+        if: ${{ !cancelled() }}
+        env:
+          IGNORE_ERROR_STATE: EXECUTOR_ERROR
+        run: tests/integration/versions.sh "${API}" http://funnel:8000 "" 1.1
       # Also if Funnel failed, to see whether the failure is specific to it
       - name: Check TESP-API
         if: ${{ !cancelled() }}
         run: tests/integration/check.sh "${API}" http://tesp-api:8080 /v1
+      - name: Check TES 1.0 on TESP-API
+        if: ${{ !cancelled() }}
+        run: tests/integration/versions.sh "${API}" http://tesp-api:8080 /v1 1.0
       - name: Show logs
         if: failure()
         run: docker compose logs
@@ -487,6 +498,10 @@ jobs:
         run: tests/integration/check.sh "${API}" http://k3s:31567 /ga4gh/tes/v1
       - name: Check canceled executors
         run: tests/integration/tesk/stopped.sh
+      # TESK reports TES 1.0
+      - name: Check TES 1.0 on TESK
+        if: ${{ !cancelled() }}
+        run: tests/integration/versions.sh "${API}" http://k3s:31567 /ga4gh/tes/v1 1.0
       - name: Show logs
         if: failure()
         run: |
