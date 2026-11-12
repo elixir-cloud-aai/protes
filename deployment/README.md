@@ -438,6 +438,10 @@ protes:
 A TES instance that serves the TES API at another path, such as TESP, needs
 `apiPath` in `tes.backends` (see [Configuration](#configuration)).
 
+After installing or upgrading, check the deployment from outside the
+cluster, with the scripts of the repository (see [Testing a
+deployment](https://protes.readthedocs.io/en/latest/development/#testing-a-deployment)).
+
 The chart sets no defaults for a particular ingress controller or Gateway
 implementation: their annotations, policies and NetworkPolicy peers go
 into the values (see the library chart's documentation, linked above, for
