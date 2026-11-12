@@ -612,7 +612,8 @@ flower:
 ```
 
 Before installing, check that the rendered manifests ask for no profile: the
-command prints `0`. The two `--api-versions` render as on OpenShift (leave
+command prints `0` (and exits with status 1, as `grep` found no match; in
+scripts with `set -e`, append `|| true`). The two `--api-versions` render as on OpenShift (leave
 them out for other clusters); if Flower is disabled, add `--set
 flower.enabled=true --set flower.existingSecret=<secret>` to check it too:
 
