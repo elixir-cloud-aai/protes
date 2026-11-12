@@ -99,10 +99,12 @@ minutes, and later tasks there wait for them.
 
 Both scripts source their helpers from `tests/integration/lib.sh`: requests
 to proTES (with the token on curl's standard input), waits for a state, and
-calls to the backend from the Compose network. Every request and every call
-to the backend has a limit of 60 seconds, and a wait for a state polls up to
-`FINAL_WAIT` times (default 180, about one poll a second), so that a stuck backend fails the job
-instead of stalling it.
+calls to the backend from the Compose network. Every request of these
+helpers and every call to the backend has a limit of 60 seconds (for the
+whole Compose call where `timeout` of GNU coreutils exists), and a wait for
+a state polls up to `FINAL_WAIT` times (default 180, about one poll a
+second), so that a stuck backend fails the job instead of stalling it. The
+scripts of `tests/integration/tesk/` call Compose without these limits.
 
 To run the job locally (with curl and jq), follow its steps in
 `.github/workflows/ci.yml`, including the pin of TESP-API's stage image:
