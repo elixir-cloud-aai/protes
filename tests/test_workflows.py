@@ -146,11 +146,16 @@ def test_integration_versions(job_id: str, config_path: Path) -> None:
         for backend in config["custom"]["tes"]["backends"]
     }
     checked = {}
+    states = {}
     for step in job["steps"]:
         args = shlex.split(step.get("run", ""))
         if args[:1] == ["tests/integration/versions.sh"]:
+            # Arguments: API, backend URL, backend API path, TES version
             checked[args[2]] = args[4]
-    assert checked == expected
+            states[args[2]] = step.get("env", {}).get("IGNORE_ERROR_STATE")
+    assert checked == expected, f"versions.sh steps of {job_id}: {checked}"
+    # Funnel 0.11.14 ends tasks with `ignore_error: true` in `EXECUTOR_ERROR`
+    assert states.get("http://funnel:8000", "EXECUTOR_ERROR") == "EXECUTOR_ERROR"
 
 
 def test_verification_signer_workflow() -> None:

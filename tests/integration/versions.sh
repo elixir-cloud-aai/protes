@@ -11,8 +11,8 @@
 # `COMPOSE_FILE` set as for `up`). The task that ignores an error ends in
 # `COMPLETE`, as TES 1.1 has it, unless `IGNORE_ERROR_STATE` says otherwise:
 # Funnel 0.11.14 runs the next executor, but ends the task in `EXECUTOR_ERROR`
-# (set `IGNORE_ERROR_STATE=EXECUTOR_ERROR` for it). The helpers are those of
-# `check.sh`, with `check_backend` added.
+# (set `IGNORE_ERROR_STATE=EXECUTOR_ERROR` for it). The helpers and the image
+# are those of `check.sh`, with `check_backend` added: keep them in sync.
 set -euo pipefail
 
 api="$1"
@@ -59,14 +59,15 @@ check() {
 
 # A task for this backend, from the executors and other fields (JSON) given
 task() {
-  local extra="${2:-null}"
+  local extra='{}'
+  [ -n "${2:-}" ] && extra="$2"
   jq -n --arg backend "${backend}" --argjson executors "$1" \
     --argjson extra "${extra}" '{
       name: "integration-versions",
       tags: {"gateway.backends":
         ({type: "allow", backends: [$backend]} | tojson)},
       executors: $executors
-    } + ($extra // {})'
+    } + $extra'
 }
 
 # Wait until a task has a state
@@ -118,11 +119,14 @@ check GET "/tasks/${id}?view=FULL" 200 '
   and .executors[0].ignore_error == false
   and .resources.backend_parameters["protes-integration"] == "hint"
   and (.logs[0].logs[0].stdout | contains("integration-input"))'
+# A TES 1.0 backend serves none of these fields (it may ignore fields that it
+# doesn't know, so the unit tests of the adapters check that proTES drops them;
+# `null` counts as absent, as some backends serve unset fields as `null`)
 if [ "${version}" = 1.0 ]; then
   check_backend "${id}" '
-    (.inputs[0] | has("streamable") | not)
-    and (.executors[0] | has("ignore_error") | not)
-    and ((.resources // {}) | has("backend_parameters") | not)'
+    .inputs[0].streamable == null
+    and .executors[0].ignore_error == null
+    and .resources.backend_parameters == null'
 else
   check_backend "${id}" '.inputs[0].streamable == true'
 fi

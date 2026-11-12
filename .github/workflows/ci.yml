@@ -411,9 +411,9 @@ jobs:
         run: docker compose logs
   # Runs the app against real TES implementations in Docker Compose
   # (`tests/integration/`): creates, tracks and cancels tasks on Funnel and
-  # TESP-API with Pulsar, and relays tasks in TES 1.1 and 1.0, as the smoke
-  # test only knows a fake backend. Pinned
-  # images, which run containers through the Docker socket of the runner. Not
+  # TESP-API with Pulsar, in TES 1.1 and 1.0, as the smoke test only knows a
+  # fake backend. Pinned images, which run containers through the Docker
+  # socket of the runner. Not
   # needed by the gate, until it has proven reliable: third parties' registries
   # and packages must not block pull requests. Also not for edits of a pull
   # request, which change nothing that it tests
