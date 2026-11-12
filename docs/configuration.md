@@ -313,9 +313,11 @@ tested.
   check on the Pulsar side whether it has stopped.
 - It writes one executor log for all executors of a task.
 
-[Funnel](https://github.com/ohsu-comp-bio/funnel) 0.11.14:
+[Funnel](https://github.com/calypr/funnel) 0.11.14:
 
 - The executor log of a canceled task shows `exit_code: 0`.
+- With `ignore_error: true` on an executor that fails, it runs the next
+  executors, but ends the task in `EXECUTOR_ERROR`, not `COMPLETE`.
 
 [TESK](https://github.com/elixir-cloud-aai/TESK) with tesk-api 1.1.0, the
 taskmaster and filer v0.10.6, on Kubernetes 1.36:
