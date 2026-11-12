@@ -179,10 +179,10 @@ def test_integration_funnel_version() -> None:
     assert len(pins) == 1, build
     version = pins[0]
     development = " ".join((ROOT / "docs" / "development.md").read_text().split())
-    assert re.search(rf"\bFunnel {re.escape(version)}(?![\d.])", development)
+    assert re.search(rf"\bFunnel {re.escape(version)}(?!\.?\d)", development)
     configuration = " ".join((ROOT / "docs" / "configuration.md").read_text().split())
     for pattern in (
-        rf"CI runs tasks on real instances of Funnel {re.escape(version)}(?![\d.])",
+        rf"CI runs tasks on real instances of Funnel {re.escape(version)}(?!\.?\d)",
         rf"\[Funnel\]\(https://github\.com/calypr/funnel\) {re.escape(version)}:",
     ):
         assert re.search(pattern, configuration), pattern
