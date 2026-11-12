@@ -443,22 +443,24 @@ jobs:
         run: |
           docker pull "${STAGE_IMAGE}@${STAGE_DIGEST}"
           docker tag "${STAGE_IMAGE}@${STAGE_DIGEST}" "${STAGE_IMAGE}:latest"
-      - name: Check Funnel
-        run: tests/integration/check.sh "${API}" http://funnel:8000 ""
       # The paths of TES versions: Funnel gets tasks in TES 1.1 (by its label
-      # `tes.version`), TESP-API in TES 1.0
+      # `tes.version`), TESP-API in TES 1.0. Before `check.sh`: its canceled
+      # tasks keep running on TESP-API with Pulsar for minutes, and later
+      # tasks there wait for them
       - name: Check TES 1.1 on Funnel
-        if: ${{ !cancelled() }}
         env:
           IGNORE_ERROR_STATE: EXECUTOR_ERROR
         run: tests/integration/versions.sh "${API}" http://funnel:8000 "" 1.1
-      # Also if Funnel failed, to see whether the failure is specific to it
-      - name: Check TESP-API
+      - name: Check Funnel
         if: ${{ !cancelled() }}
-        run: tests/integration/check.sh "${API}" http://tesp-api:8080 /v1
+        run: tests/integration/check.sh "${API}" http://funnel:8000 ""
+      # Also if Funnel failed, to see whether the failure is specific to it
       - name: Check TES 1.0 on TESP-API
         if: ${{ !cancelled() }}
         run: tests/integration/versions.sh "${API}" http://tesp-api:8080 /v1 1.0
+      - name: Check TESP-API
+        if: ${{ !cancelled() }}
+        run: tests/integration/check.sh "${API}" http://tesp-api:8080 /v1
       - name: Show logs
         if: failure()
         run: docker compose logs

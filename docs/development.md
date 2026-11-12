@@ -80,7 +80,7 @@ third parties' registries, so the gate doesn't need this job until it has
 proven reliable. Access to the Docker socket amounts to control of the host, so
 run the stack locally only on a disposable machine or VM.
 
-`tests/integration/versions.sh` then checks the paths of [TES
+`tests/integration/versions.sh` also checks the paths of [TES
 versions](tes-versions.md) on the same backends, with two tasks:
 
 - A task with fields of TES 1.1 that can be dropped: Funnel gets it in TES 1.1
@@ -93,7 +93,9 @@ The script's last argument is the TES version that proTES must find for the
 backend; `tests/test_workflows.py` checks that it matches each backend of
 the job's config. Funnel 0.11.14 ends the second task in `EXECUTOR_ERROR`,
 so its step sets `IGNORE_ERROR_STATE=EXECUTOR_ERROR` (the default is
-`COMPLETE`, as in TES 1.1).
+`COMPLETE`, as in TES 1.1). In this job, it runs before `check.sh`, as the
+canceled tasks of `check.sh` keep running on TESP-API with Pulsar for
+minutes, and later tasks there wait for them.
 
 To run the job locally (with curl and jq), follow its steps in
 `.github/workflows/ci.yml`, including the pin of TESP-API's stage image:
@@ -104,11 +106,11 @@ export SETUPTOOLS_SCM_PRETEND_VERSION=0.0.0+compose
 docker compose up -d --build --wait --wait-timeout 300
 # Pin the stage image here, as in the job's step
 API=http://localhost:8080/ga4gh/tes/v1
-tests/integration/check.sh "${API}" http://funnel:8000 ""
 IGNORE_ERROR_STATE=EXECUTOR_ERROR \
   tests/integration/versions.sh "${API}" http://funnel:8000 "" 1.1
-tests/integration/check.sh "${API}" http://tesp-api:8080 /v1
+tests/integration/check.sh "${API}" http://funnel:8000 ""
 tests/integration/versions.sh "${API}" http://tesp-api:8080 /v1 1.0
+tests/integration/check.sh "${API}" http://tesp-api:8080 /v1
 docker compose down
 ```
 
