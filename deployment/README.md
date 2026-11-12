@@ -588,6 +588,41 @@ the namespace's range. The contexts are set in the values
 and `flower`; the worker uses those of `protes`); mappings are merged with
 the defaults, and `null` removes a default.
 
+Some clusters set their own seccomp profile and reject pods that ask for
+one, such as the chart's default (`seccompProfile: {type: RuntimeDefault}`),
+e.g., OpenShift clusters whose security context constraints don't allow the
+profile `runtime/default`; the release then doesn't start there with the
+default values. On such clusters, remove the profile of each component in
+the values file (the worker uses that of `protes`), and the pods run with the
+profile that the cluster assigns:
+
+```yaml
+protes:
+  podSecurityContext:
+    seccompProfile: null
+mongodb:
+  podSecurityContext:
+    seccompProfile: null
+broker:
+  podSecurityContext:
+    seccompProfile: null
+flower:
+  podSecurityContext:
+    seccompProfile: null
+```
+
+Before installing, check that the rendered manifests ask for no profile: the
+command prints `0`. The two `--api-versions` render as on OpenShift (leave
+them out for other clusters); if Flower is disabled, add `--set
+flower.enabled=true --set flower.existingSecret=<secret>` to check it too:
+
+```bash
+helm template protes deployment -f values-prod.yaml \
+  --api-versions route.openshift.io/v1 \
+  --api-versions security.openshift.io/v1 \
+  | grep -ci seccomp
+```
+
 ## Network policies
 
 The chart creates

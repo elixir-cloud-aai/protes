@@ -596,6 +596,45 @@ def test_flower_openshift() -> None:
     assert "runAsGroup" not in context
 
 
+@pytest.mark.parametrize("removed", [False, True], ids=["default", "null"])
+def test_seccomp_profile(removed: bool) -> None:
+    """Pods ask for the runtime's default seccomp profile unless it is null.
+
+    `<component>.podSecurityContext.seccompProfile: null` removes it, for
+    clusters that set their own profile (see "Security context" in the
+    chart's README); the worker uses the pod security context of the app.
+    Rendered as on OpenShift, where the documented check runs.
+    """
+    nulls = [
+        arg
+        for component in ("protes", "mongodb", "broker", "flower")
+        for arg in ("--set-json", f"{component}.podSecurityContext.seccompProfile=null")
+    ]
+    docs = _render(
+        *FLOWER_ON,
+        "--api-versions",
+        "route.openshift.io/v1",
+        "--api-versions",
+        "security.openshift.io/v1",
+        *(nulls if removed else []),
+    )
+    workloads = [
+        ("Deployment", APP),
+        ("Deployment", WORKER),
+        ("Deployment", MONGODB),
+        ("StatefulSet", BROKER),
+        ("Deployment", FLOWER),
+    ]
+    for kind, name in workloads:
+        pod = _pod(docs, kind, name)
+        expected = None if removed else {"type": "RuntimeDefault"}
+        assert pod["securityContext"].get("seccompProfile") == expected, name
+        for container in pod["containers"] + pod.get("initContainers", []):
+            assert "seccompProfile" not in container.get("securityContext", {})
+    if removed:
+        assert "seccomp" not in yaml.safe_dump_all(list(docs.values())).lower()
+
+
 def test_flower_name_collision() -> None:
     """Rendering fails if the app and Flower would have the same name.
 
