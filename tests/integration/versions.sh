@@ -9,10 +9,8 @@
 # `config.yaml`, and the TES version that proTES must find for the backend
 # (`1.0` or `1.1`), as arguments; needs curl, jq and docker compose (with
 # `COMPOSE_FILE` set as for `up`). The task that ignores an error ends in
-# `COMPLETE`, as TES 1.1 has it, unless `IGNORE_ERROR_STATE` says otherwise:
-# Funnel 0.11.14 runs the next executor, but ends the task in `EXECUTOR_ERROR`
-# (set `IGNORE_ERROR_STATE=EXECUTOR_ERROR` for it). The helpers and the image
-# are in `lib.sh`, shared with `check.sh`.
+# `COMPLETE`, as TES 1.1 has it. The helpers and the image are in `lib.sh`,
+# shared with `check.sh`.
 set -euo pipefail
 
 api="$1"
@@ -83,9 +81,16 @@ if [ "${version}" = 1.0 ]; then
     and .executors[0].ignore_error == null
     and .resources.backend_parameters == null'
 else
+  # TES 1.1 lets a backend ignore keys of `backend_parameters` that it doesn't
+  # support, unless they are strict: it keeps the key or drops it (Funnel
+  # 0.12.3 keeps only the keys that it lists in its service info); any other
+  # value of the key fails
   check_backend "${id}" '
     .inputs[0].streamable == true
-    and .resources.backend_parameters["protes-integration"] == "hint"'
+    and (.resources.backend_parameters | type == "object")
+    and (.resources.backend_parameters
+      | (has("protes-integration") | not)
+        or .["protes-integration"] == "hint")'
 fi
 
 echo "${backend}: a task that ignores the error of an executor (TES ${version})"
@@ -101,8 +106,8 @@ else
   check POST /tasks 200 '.id | length > 0' "$(task "${executors}")"
   id="$(jq -r .id "${body}")"
   check_backend "${id}" '.executors[0].ignore_error == true'
-  # The next executor runs; the final state is `IGNORE_ERROR_STATE`
-  await_state "${id}" "${IGNORE_ERROR_STATE:-COMPLETE}"
+  # The next executor runs, and the task completes
+  await_state "${id}" COMPLETE
   check GET "/tasks/${id}?view=FULL" 200 '
     (.logs[0].logs | length == 2)
     and .logs[0].logs[0].exit_code == 3

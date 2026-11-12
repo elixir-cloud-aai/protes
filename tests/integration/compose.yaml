@@ -41,7 +41,7 @@ services:
             interval: 5s
             start_period: 5s
 
-    # The official image of Funnel (0.11.14) has no Docker CLI
+    # The official image of Funnel (0.12.3) has no Docker CLI
     funnel:
         image: protes-integration-funnel:local
         pull_policy: build
@@ -49,7 +49,7 @@ services:
             context: ./tests/integration
             dockerfile_inline: |
                 FROM docker:28.3.3-cli@sha256:0135662b510037ea581d99c2e5929c5e01185139c0b86986a418bd4da0b98a44 AS cli
-                FROM quay.io/ohsu-comp-bio/funnel:0.11.14@sha256:8e10ba4de436b058bed95427110d9fe947142162078274a6a91cfe3b3eb8d15a
+                FROM quay.io/ohsu-comp-bio/funnel:0.12.3@sha256:bfd615926d2bbc5aac76cd9640235f3e7fcd3badc95f58fbdff29368f86b6db4
                 COPY --from=cli /usr/local/bin/docker /usr/local/bin/docker
         command: ["server", "run", "--config", "/etc/funnel.yaml"]
         # Root for the Docker socket
