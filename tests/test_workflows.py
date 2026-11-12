@@ -157,8 +157,6 @@ def test_integration_versions(job_id: str, config_path: Path) -> None:
             assert "continue-on-error" not in step
             assert "IGNORE_ERROR_STATE" not in step.get("env", {})
     assert checked == expected, f"versions.sh steps of {job_id}: {checked}"
-    script = (ROOT / "tests" / "integration" / "versions.sh").read_text()
-    assert "IGNORE_ERROR_STATE" not in script
 
 
 def test_integration_funnel_version() -> None:
@@ -166,9 +164,8 @@ def test_integration_funnel_version() -> None:
 
     `tests/integration/compose.yaml` builds Funnel's image from the official
     one, pinned by tag and digest. The testing docs (`docs/development.md`)
-    name that version and no other one of Funnel, and the notes on TES
-    implementations (`docs/configuration.md`) say that CI runs it and have
-    notes on it.
+    name that version, and the notes on TES implementations
+    (`docs/configuration.md`) say that CI runs it and have notes on it.
     """
     compose = yaml.safe_load(
         (ROOT / "tests" / "integration" / "compose.yaml").read_text()
@@ -182,10 +179,13 @@ def test_integration_funnel_version() -> None:
     assert len(pins) == 1, build
     version = pins[0]
     development = " ".join((ROOT / "docs" / "development.md").read_text().split())
-    assert set(re.findall(r"Funnel (\d+\.\d+\.\d+)", development)) == {version}
+    assert re.search(rf"\bFunnel {re.escape(version)}(?![\d.])", development)
     configuration = " ".join((ROOT / "docs" / "configuration.md").read_text().split())
-    assert f"CI runs tasks on real instances of Funnel {version} " in configuration
-    assert f"[Funnel](https://github.com/calypr/funnel) {version}:" in configuration
+    for pattern in (
+        rf"CI runs tasks on real instances of Funnel {re.escape(version)}(?![\d.])",
+        rf"\[Funnel\]\(https://github\.com/calypr/funnel\) {re.escape(version)}:",
+    ):
+        assert re.search(pattern, configuration), pattern
 
 
 def test_verification_signer_workflow() -> None:

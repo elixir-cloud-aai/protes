@@ -20,7 +20,7 @@ custom:
   tes:
     backends:
       # Funnel 0.12.3 reports TES 1.1.0 itself; the label, which versions
-      # before 0.12 need, keeps that path of the config tested
+      # before 0.12.3 need, keeps that path of the config tested
       - type: ga4gh-tes
         url: http://funnel:8000
         url_schemes:

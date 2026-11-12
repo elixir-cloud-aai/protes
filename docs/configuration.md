@@ -274,9 +274,9 @@ instances](access-control.md#credentials-of-tes-instances)), and failing to
 get a token makes those whose version wasn't read before count as TES 1.0
 until the next read.
 
-**Set the label for Funnel before 0.12:** Funnel implements TES 1.1, and
-version 0.12.3 reports it (`type.version: "1.1.0"`), but version 0.11.14
-reports an empty `type.version` (`""`), so it would count as TES 1.0:
+**Set the label for Funnel before 0.12.3:** Funnel implements TES 1.1, and
+version 0.12.3 reports it (type `org.ga4gh`, `tes`, `1.1.0`), but version
+0.11.14 reports an empty `type.version` (`""`), so it would count as TES 1.0:
 
 ```yaml
 custom:
@@ -317,12 +317,12 @@ checks to run on one.
 
 [Funnel](https://github.com/calypr/funnel) 0.12.3:
 
-- It reports TES 1.1.0 in its service info, so it needs no label `tes.version`
-  (see [TES versions](#tes-versions)).
+- It was seen reporting TES 1.1.0 in its service info, so it needs no label
+  `tes.version` (see [TES versions](#tes-versions)); CI sets the label anyway.
 - With `ignore_error: true` on an executor that fails, it runs the next
   executors and ends the task in `COMPLETE`.
 
-Funnel 0.11.14, tested with earlier versions of proTES:
+Funnel 0.11.14, tested with proTES 0.5.0 and 0.6.0:
 
 - It reports an empty `type.version`, so set the label `tes.version: "1.1"`.
 - The executor log of a canceled task shows `exit_code: 0`.

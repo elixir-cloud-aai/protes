@@ -78,6 +78,7 @@ def client(monkeypatch: pytest.MonkeyPatch) -> type[FakeClient]:
         # as served by TESK, Poiesis and proTES
         ({"type": {"group": "org.ga4gh", "artifact": "TES", "version": 1.0}}, V10),
         (info(version="v1.1.0"), V11),
+        # as served by Funnel 0.12.3
         (info(version="1.1.0"), V11),
         # as served by Funnel 0.11.14
         (info(version=""), None),
