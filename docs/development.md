@@ -97,6 +97,13 @@ so its step sets `IGNORE_ERROR_STATE=EXECUTOR_ERROR` (the default is
 canceled tasks of `check.sh` keep running on TESP-API with Pulsar for
 minutes, and later tasks there wait for them.
 
+Both scripts source their helpers from `tests/integration/lib.sh`: requests
+to proTES (with the token on curl's standard input), waits for a state, and
+calls to the backend from the Compose network. Every request and every call
+to the backend has a limit of 60 seconds, and a wait for a state ends after
+`FINAL_WAIT` seconds (default 180), so that a stuck backend fails the job
+instead of stalling it.
+
 To run the job locally (with curl and jq), follow its steps in
 `.github/workflows/ci.yml`, including the pin of TESP-API's stage image:
 
