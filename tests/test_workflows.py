@@ -163,21 +163,22 @@ def test_integration_funnel_version() -> None:
     """The docs name the version of Funnel that the integration job runs.
 
     `tests/integration/compose.yaml` builds Funnel's image from the official
-    one, pinned by tag and digest. The testing docs (`docs/development.md`)
-    name that version, and the notes on TES implementations
-    (`docs/configuration.md`) say that CI runs it and have notes on it.
+    one, pinned by tag and digest, as the final stage. The testing docs
+    (`docs/development.md`) name that version, and the notes on TES
+    implementations (`docs/configuration.md`) say that CI runs it and have notes on it.
     """
     compose = yaml.safe_load(
         (ROOT / "tests" / "integration" / "compose.yaml").read_text()
     )
     build = compose["services"]["funnel"]["build"]["dockerfile_inline"]
-    pins = re.findall(
-        r"^FROM quay\.io/ohsu-comp-bio/funnel:(\d+\.\d+\.\d+)@sha256:[0-9a-f]{64}$",
-        build,
-        flags=re.MULTILINE,
+    stages = re.findall(r"^\s*FROM\s+(.+?)\s*$", build, flags=re.MULTILINE)
+    assert stages, build
+    pin = re.fullmatch(
+        r"quay\.io/ohsu-comp-bio/funnel:(\d+\.\d+\.\d+)@sha256:[0-9a-f]{64}",
+        stages[-1],
     )
-    assert len(pins) == 1, build
-    version = pins[0]
+    assert pin, build
+    version = pin[1]
     development = " ".join((ROOT / "docs" / "development.md").read_text().split())
     assert re.search(rf"\bFunnel {re.escape(version)}(?!\.?\d)", development)
     configuration = " ".join((ROOT / "docs" / "configuration.md").read_text().split())

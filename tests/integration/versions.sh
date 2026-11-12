@@ -83,11 +83,14 @@ if [ "${version}" = 1.0 ]; then
 else
   # TES 1.1 lets a backend ignore keys of `backend_parameters` that it doesn't
   # support, unless they are strict: it keeps the key or drops it (Funnel
-  # 0.12.3 keeps only the keys that it lists in its service info)
+  # 0.12.3 keeps only the keys that it lists in its service info); any other
+  # value of the key fails
   check_backend "${id}" '
     .inputs[0].streamable == true
-    and (.resources.backend_parameters["protes-integration"] // "hint")
-      == "hint"'
+    and (.resources.backend_parameters | type == "object")
+    and (.resources.backend_parameters
+      | (has("protes-integration") | not)
+        or .["protes-integration"] == "hint")'
 fi
 
 echo "${backend}: a task that ignores the error of an executor (TES ${version})"
