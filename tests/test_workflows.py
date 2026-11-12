@@ -120,6 +120,52 @@ def test_tesk_job() -> None:
     assert any(backend in run for run in runs if "check.sh" in run)
 
 
+@pytest.mark.parametrize(
+    ("job_id", "config_path"),
+    [
+        ("integration", ROOT / "tests" / "integration" / "config.yaml"),
+        ("integration-tesk", ROOT / "tests" / "integration" / "tesk" / "config.yaml"),
+    ],
+)
+def test_integration_versions(job_id: str, config_path: Path) -> None:
+    """Each integration job checks the TES version path of each of its backends.
+
+    `tests/integration/versions.sh` runs once per backend of the job's config,
+    with the version that proTES must find: that of the label `tes.version`,
+    else TES 1.0, which TESP-API and TESK report (see the notes on TES
+    implementations).
+
+    Args:
+        job_id: The ID of the job in `ci.yml`.
+        config_path: The config overlay of proTES in the job.
+    """
+    job = _load(WORKFLOWS / "ci.yml")["jobs"][job_id]
+    config = yaml.safe_load(config_path.read_text())
+    expected = {
+        backend["url"]: backend.get("labels", {}).get("tes.version", "1.0")
+        for backend in config["custom"]["tes"]["backends"]
+    }
+    checked: dict[str, str] = {}
+    states: dict[str, str | None] = {}
+    for step in job["steps"]:
+        args = shlex.split(step.get("run", ""))
+        if args[:1] == ["tests/integration/versions.sh"]:
+            # Arguments: API, backend URL, backend API path, TES version
+            checked[args[2]] = args[4]
+            states[args[2]] = step.get("env", {}).get("IGNORE_ERROR_STATE")
+            # Runs unless the job is cancelled, and its failure fails the job
+            assert step.get("if", "${{ !cancelled() }}") == "${{ !cancelled() }}"
+            assert "continue-on-error" not in step
+    assert checked == expected, f"versions.sh steps of {job_id}: {checked}"
+    # Funnel 0.11.14 ends tasks with `ignore_error: true` in `EXECUTOR_ERROR`,
+    # the other backends get no such task (TES 1.0)
+    funnel = "http://funnel:8000"
+    expected_states: dict[str, str | None] = dict.fromkeys(expected)
+    if funnel in expected:
+        expected_states[funnel] = "EXECUTOR_ERROR"
+    assert states == expected_states
+
+
 def test_verification_signer_workflow() -> None:
     """The verification commands name the workflow that signed the release.
 

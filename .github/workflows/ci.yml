@@ -411,8 +411,9 @@ jobs:
         run: docker compose logs
   # Runs the app against real TES implementations in Docker Compose
   # (`tests/integration/`): creates, tracks and cancels tasks on Funnel and
-  # TESP-API with Pulsar, as the smoke test only knows a fake backend. Pinned
-  # images, which run containers through the Docker socket of the runner. Not
+  # TESP-API with Pulsar, in TES 1.1 and 1.0, as the smoke test only knows a
+  # fake backend. Pinned images, which run containers through the Docker
+  # socket of the runner. Not
   # needed by the gate, until it has proven reliable: third parties' registries
   # and packages must not block pull requests. Also not for edits of a pull
   # request, which change nothing that it tests
@@ -442,9 +443,21 @@ jobs:
         run: |
           docker pull "${STAGE_IMAGE}@${STAGE_DIGEST}"
           docker tag "${STAGE_IMAGE}@${STAGE_DIGEST}" "${STAGE_IMAGE}:latest"
+      # The paths of TES versions: Funnel gets tasks in TES 1.1 (by its label
+      # `tes.version`), TESP-API in TES 1.0. Before `check.sh`: its canceled
+      # tasks keep running on TESP-API with Pulsar for minutes, and later
+      # tasks there wait for them
+      - name: Check TES 1.1 on Funnel
+        env:
+          IGNORE_ERROR_STATE: EXECUTOR_ERROR
+        run: tests/integration/versions.sh "${API}" http://funnel:8000 "" 1.1
       - name: Check Funnel
+        if: ${{ !cancelled() }}
         run: tests/integration/check.sh "${API}" http://funnel:8000 ""
       # Also if Funnel failed, to see whether the failure is specific to it
+      - name: Check TES 1.0 on TESP-API
+        if: ${{ !cancelled() }}
+        run: tests/integration/versions.sh "${API}" http://tesp-api:8080 /v1 1.0
       - name: Check TESP-API
         if: ${{ !cancelled() }}
         run: tests/integration/check.sh "${API}" http://tesp-api:8080 /v1
@@ -487,6 +500,10 @@ jobs:
         run: tests/integration/check.sh "${API}" http://k3s:31567 /ga4gh/tes/v1
       - name: Check canceled executors
         run: tests/integration/tesk/stopped.sh
+      # TESK reports TES 1.0
+      - name: Check TES 1.0 on TESK
+        if: ${{ !cancelled() }}
+        run: tests/integration/versions.sh "${API}" http://k3s:31567 /ga4gh/tes/v1 1.0
       - name: Show logs
         if: failure()
         run: |

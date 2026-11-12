@@ -73,12 +73,32 @@ and the Celery worker with it, and checks that the plugin tags new tasks.
 CI's `Integration` job runs the app against real TES implementations in Docker
 Compose (`tests/integration/`): it creates, tracks and cancels tasks on Funnel
 and on TESP-API with Pulsar, in pinned versions (see [Notes on TES
-implementations](configuration.md#notes-on-tes-implementations)). Their
-containers run through the Docker socket of the host, and the images come from
+implementations](configuration.md#notes-on-tes-implementations)), with
+`tests/integration/check.sh`. The backends' containers run through the Docker
+socket of the host, and the images come from
 third parties' registries, so the gate doesn't need this job until it has
 proven reliable. Access to the Docker socket amounts to control of the host, so
-run the stack locally only on a disposable machine or VM. To run it locally (with curl and jq), follow the steps of the
-job in `.github/workflows/ci.yml`, including the pin of TESP-API's stage image:
+run the stack locally only on a disposable machine or VM.
+
+`tests/integration/versions.sh` also checks the paths of [TES
+versions](tes-versions.md) on the same backends, with two tasks:
+
+- A task with fields of TES 1.1 that can be dropped: Funnel gets it in TES 1.1
+  (by its label `tes.version`), with these fields; TESP-API gets it in TES
+  1.0, without them. Clients get the task back as they sent it.
+- A task with `ignore_error: true` on a failing executor: Funnel gets it and
+  runs the next executor; proTES rejects it for TESP-API (`400`).
+
+The script's last argument is the TES version that proTES must find for the
+backend; `tests/test_workflows.py` checks that it matches each backend of
+the job's config. Funnel 0.11.14 ends the second task in `EXECUTOR_ERROR`,
+so its step sets `IGNORE_ERROR_STATE=EXECUTOR_ERROR` (the default is
+`COMPLETE`, as in TES 1.1). In this job, it runs before `check.sh`, as the
+canceled tasks of `check.sh` keep running on TESP-API with Pulsar for
+minutes, and later tasks there wait for them.
+
+To run the job locally (with curl and jq), follow its steps in
+`.github/workflows/ci.yml`, including the pin of TESP-API's stage image:
 
 ```bash
 export COMPOSE_FILE=docker-compose.yaml:tests/integration/compose.yaml
@@ -86,15 +106,18 @@ export SETUPTOOLS_SCM_PRETEND_VERSION=0.0.0+compose
 docker compose up -d --build --wait --wait-timeout 300
 # Pin the stage image here, as in the job's step
 API=http://localhost:8080/ga4gh/tes/v1
+IGNORE_ERROR_STATE=EXECUTOR_ERROR \
+  tests/integration/versions.sh "${API}" http://funnel:8000 "" 1.1
 tests/integration/check.sh "${API}" http://funnel:8000 ""
+tests/integration/versions.sh "${API}" http://tesp-api:8080 /v1 1.0
 tests/integration/check.sh "${API}" http://tesp-api:8080 /v1
 docker compose down
 ```
 
 CI's `Integration (TESK)` job, which the gate doesn't need either, runs the same
-check against [TESK](https://github.com/elixir-cloud-aai/TESK), from its chart
-in a throwaway [k3s](https://k3s.io/) cluster in a privileged container
-(`tests/integration/tesk/`). The chart comes from the commit of TESK's repository
+checks against [TESK](https://github.com/elixir-cloud-aai/TESK) (in TES 1.0),
+from its chart in a throwaway [k3s](https://k3s.io/) cluster in a privileged
+container (`tests/integration/tesk/`). The chart comes from the commit of TESK's repository
 that `install.sh` pins (or `TESK_COMMIT`), the images from `values.yaml`. As for
 the other backends, the check uses inputs with `content` only, and TESK has
 neither FTP nor S3 there. `COMBINED_LOGS=true` tells the check that TESK writes
@@ -110,6 +133,8 @@ docker compose up -d --build --wait protes protes-worker fake-tes
 COMBINED_LOGS=true tests/integration/check.sh \
   http://localhost:8080/ga4gh/tes/v1 http://k3s:31567 /ga4gh/tes/v1
 tests/integration/tesk/stopped.sh
+tests/integration/versions.sh \
+  http://localhost:8080/ga4gh/tes/v1 http://k3s:31567 /ga4gh/tes/v1 1.0
 docker compose down --volumes
 ```
 
@@ -591,6 +616,17 @@ On-Cloud:
    the authors.
 4. Last, GitHub's generated `**Full Changelog**: ...` line (no compare link
    of our own).
+
+The intro of the curated notes also says against which TES implementations
+the release was tested, as does a paragraph `**Tested TES implementations:**`
+in the release's section of the [Upgrading](upgrading.md) page: those of
+CI's jobs `Integration` and `Integration (TESK)` on the release commit, in
+the versions that [Notes on TES
+implementations](configuration.md#notes-on-tes-implementations) lists, with
+the TES version that each got (check that both jobs passed, as the gate
+doesn't need them), and any tested by hand, e.g., on a deployment. Name TES
+implementations whose job failed or was skipped, and deployments not
+tested, as not tested.
 
 The curated notes in `docs/releases/X.Y.Z.md` (for pre-releases, e.g.,
 `X.Y.Zrc1.md`) hold parts 1 and 2, without a title (the release's title is

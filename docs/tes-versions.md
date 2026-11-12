@@ -4,7 +4,8 @@ proTES serves [TES](https://github.com/ga4gh/task-execution-schemas) 1.1 to its
 clients, and relays tasks to TES instances of TES 1.0 and 1.1, so clients of
 TES 1.1 can use TES instances that implement only TES 1.0. How proTES finds out
 the version of a TES instance is described in [TES
-versions](configuration.md#tes-versions).
+versions](configuration.md#tes-versions). CI checks both paths against real
+TES instances (see [Testing](development.md)).
 
 proTES stores tasks in TES 1.1, as clients sent them. Each TES instance gets its
 own copy in its version. Plugins always get the task in TES 1.1, and must not
