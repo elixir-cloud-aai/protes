@@ -416,14 +416,27 @@ jobs:
   # socket of the runner. Not
   # needed by the gate, until it has proven reliable: third parties' registries
   # and packages must not block pull requests. Also not for edits of a pull
-  # request, which change nothing that it tests
+  # request, which change nothing that it tests. Two entries, which differ in
+  # the config overlay of proTES only (`INTEGRATION_CONFIG`): `label` gives
+  # Funnel's TES version by the label `tes.version` (`config.yaml`), `service
+  # info` lets proTES read it from Funnel's service info
+  # (`config-service-info.yaml`)
   integration:
-    name: Integration
+    name: Integration (${{ matrix.version-from }})
     if: ${{ github.event.action != 'edited' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - version-from: label
+            config: config.yaml
+          - version-from: service info
+            config: config-service-info.yaml
     env:
       COMPOSE_FILE: docker-compose.yaml:tests/integration/compose.yaml
+      INTEGRATION_CONFIG: ${{ matrix.config }}
       API: http://localhost:8080/ga4gh/tes/v1
       # Passed to the image build by Docker Compose, as for published images
       SETUPTOOLS_SCM_PRETEND_VERSION: 0.0.0+compose
@@ -444,9 +457,9 @@ jobs:
           docker pull "${STAGE_IMAGE}@${STAGE_DIGEST}"
           docker tag "${STAGE_IMAGE}@${STAGE_DIGEST}" "${STAGE_IMAGE}:latest"
       # The paths of TES versions: Funnel gets tasks in TES 1.1 (by its label
-      # `tes.version`), TESP-API in TES 1.0. Before `check.sh`: its canceled
-      # tasks keep running on TESP-API with Pulsar for minutes, and later
-      # tasks there wait for them
+      # `tes.version` or its service info, by the entry), TESP-API in TES
+      # 1.0. Before `check.sh`: its canceled tasks keep running on TESP-API
+      # with Pulsar for minutes, and later tasks there wait for them
       - name: Check TES 1.1 on Funnel
         run: tests/integration/versions.sh "${API}" http://funnel:8000 "" 1.1
       - name: Check Funnel
@@ -465,7 +478,8 @@ jobs:
   # The same check against TESK (`tests/integration/tesk/`), from its chart in a
   # throwaway k3s cluster in a privileged container, so that the node port is in
   # the Compose network. Not needed by the gate, like `integration`; a job of its
-  # own, as it needs another config and may fail for other reasons
+  # own, not an entry of `integration`, as it needs other services and may fail
+  # for other reasons
   integration-tesk:
     name: Integration (TESK)
     if: ${{ github.event.action != 'edited' }}

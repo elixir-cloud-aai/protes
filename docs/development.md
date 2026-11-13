@@ -70,7 +70,7 @@ plugins](plugin-images.md) from the app's image, with a test plugin
 (`tests/smoke/plugin/`, built with `python3 -m pip wheel`), restarts proTES
 and the Celery worker with it, and checks that the plugin tags new tasks.
 
-CI's `Integration` job runs the app against real TES implementations in Docker
+CI's `integration` job runs the app against real TES implementations in Docker
 Compose (`tests/integration/`): it creates, tracks and cancels tasks on Funnel
 0.12.3 and on TESP-API 0.2.0 with Pulsar 0.14.16, in images pinned by digest
 (see [Notes on TES
@@ -81,13 +81,29 @@ third parties' registries, so the gate doesn't need this job until it has
 proven reliable. Access to the Docker socket amounts to control of the host, so
 run the stack locally only on a disposable machine or VM.
 
+The job has two entries, which run the same steps and differ in the config
+overlay of proTES only (`INTEGRATION_CONFIG`, which
+`tests/integration/compose.yaml` reads, by default `config.yaml`):
+
+- `Integration (label)` (`tests/integration/config.yaml`) gives Funnel's TES
+  version by the label `tes.version` (`"1.1"`), as Funnel before 0.12.3
+  needs it: it tests the label path of the config.
+- `Integration (service info)` (`tests/integration/config-service-info.yaml`,
+  the same config without that label) lets proTES read Funnel's TES version
+  from its service info (`1.1.0`): it tests how proTES reads the version of a
+  backend that reports TES 1.1.
+
+TESP-API has no label in either config and reports TES 1.0 itself, so both
+entries test its version from the service info. `tests/test_workflows.py`
+checks that the two configs differ in that label only.
+
 `tests/integration/versions.sh` also checks the paths of [TES
 versions](tes-versions.md) on the same backends, with two tasks:
 
 - A task with fields of TES 1.1 that can be dropped: Funnel gets it in TES 1.1
-  (by its label `tes.version`), with these fields (Funnel drops the key of
-  `backend_parameters` that it doesn't list, as TES 1.1 allows for keys that
-  aren't strict); TESP-API gets it in TES 1.0, without them. Clients get the
+  (by its label `tes.version` or its service info, by the entry), with these
+  fields (Funnel drops the key of `backend_parameters` that it doesn't list,
+  as TES 1.1 allows for keys that aren't strict); TESP-API gets it in TES 1.0, without them. Clients get the
   task back as they sent it.
 - A task with `ignore_error: true` on a failing executor: Funnel gets it,
   runs the next executor and ends the task in `COMPLETE`, as TES 1.1 has it;
@@ -95,9 +111,9 @@ versions](tes-versions.md) on the same backends, with two tasks:
 
 The script's last argument is the TES version that proTES must find for the
 backend; `tests/test_workflows.py` checks that it matches each backend of
-the job's config. In this job, it runs before `check.sh`, as the
-canceled tasks of `check.sh` keep running on TESP-API with Pulsar for
-minutes, and later tasks there wait for them.
+the config of each of the job's entries. In this job, it runs before
+`check.sh`, as the canceled tasks of `check.sh` keep running on TESP-API
+with Pulsar for minutes, and later tasks there wait for them.
 
 Both scripts source their helpers from `tests/integration/lib.sh`: requests
 to proTES (with the token on curl's standard input), waits for a state, and
@@ -109,11 +125,13 @@ second), so that a stuck backend fails the job instead of stalling it. The
 scripts of `tests/integration/tesk/` call Compose without these limits.
 
 To run the job locally (with curl and jq), follow its steps in
-`.github/workflows/ci.yml`, including the pin of TESP-API's stage image:
+`.github/workflows/ci.yml`, including the pin of TESP-API's stage image; for
+the entry `service info`, set `INTEGRATION_CONFIG` as in the comment:
 
 ```bash
 export COMPOSE_FILE=docker-compose.yaml:tests/integration/compose.yaml
 export SETUPTOOLS_SCM_PRETEND_VERSION=0.0.0+compose
+# export INTEGRATION_CONFIG=config-service-info.yaml
 docker compose up -d --build --wait --wait-timeout 300
 # Pin the stage image here, as in the job's step
 API=http://localhost:8080/ga4gh/tes/v1
@@ -630,10 +648,11 @@ On-Cloud:
 The intro of the curated notes also says against which TES implementations
 the release was tested, as does a paragraph `**Tested TES implementations:**`
 in the release's section of the [Upgrading](upgrading.md) page: those of
-CI's jobs `Integration` and `Integration (TESK)` on the release commit, in
+CI's jobs `Integration (label)`, `Integration (service info)` and
+`Integration (TESK)` on the release commit, in
 the versions that [Notes on TES
 implementations](configuration.md#notes-on-tes-implementations) lists, with
-the TES version that each got (check that both jobs passed, as the gate
+the TES version that each got (check that all three passed, as the gate
 doesn't need them), and any tested by hand, e.g., on a deployment. Name TES
 implementations whose job failed or was skipped, and deployments not
 tested, as not tested.
