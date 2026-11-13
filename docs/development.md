@@ -76,10 +76,10 @@ Compose (`tests/integration/`): it creates, tracks and cancels tasks on Funnel
 (see [Notes on TES
 implementations](configuration.md#notes-on-tes-implementations)), with
 `tests/integration/check.sh`. The backends' containers run through the Docker
-socket of the host, and the images come from
-third parties' registries, so the gate doesn't need this job until it has
-proven reliable. Access to the Docker socket amounts to control of the host, so
-run the stack locally only on a disposable machine or VM.
+socket of the host, and the images come from third parties' registries. The
+gate (`CI passed`) needs this job, so it runs for edits of a pull request too.
+Access to the Docker socket amounts to control of the host, so run the stack
+locally only on a disposable machine or VM.
 
 The job has two entries, which run the same steps and differ in the config
 overlay of proTES only (`INTEGRATION_CONFIG`, which
@@ -142,7 +142,8 @@ tests/integration/check.sh "${API}" http://tesp-api:8080 /v1
 docker compose down
 ```
 
-CI's `Integration (TESK)` job, which the gate doesn't need either, runs the same
+CI's `Integration (TESK)` job, which the gate doesn't need until it has proven
+reliable (and which skips edits of a pull request), runs the same
 checks against [TESK](https://github.com/elixir-cloud-aai/TESK) (in TES 1.0),
 from its chart in a throwaway [k3s](https://k3s.io/) cluster in a privileged
 container (`tests/integration/tesk/`). The chart comes from the commit of TESK's repository

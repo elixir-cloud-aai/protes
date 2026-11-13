@@ -20,7 +20,7 @@ WORKFLOWS = ROOT / ".github" / "workflows"
 GATE = "passed"
 # Jobs that don't block pull requests, until they have proven reliable: they
 # depend on the registries and packages of third parties
-NOT_IN_GATE = {"integration", "integration-tesk"}
+NOT_IN_GATE = {"integration-tesk"}
 # Funnel's URL in the integration configs, and the TES versions that backends
 # report in their service info, where not TES 1.0 (TESP-API and TESK; see the
 # notes on TES implementations)
@@ -76,6 +76,18 @@ def test_gate_needs_all_jobs() -> None:
     assert gate["name"] == "CI passed"
     assert gate["if"] == "always()"
     assert sorted(gate["needs"]) == sorted(set(jobs) - {GATE} - NOT_IN_GATE)
+
+
+def test_gated_jobs_run_on_edits() -> None:
+    """The jobs that the gate needs don't skip edits of pull requests.
+
+    A run for an edit reports the gate for the head commit, so a job that it
+    skipped would pass unchecked, e.g. after it failed in the run for the
+    commit.
+    """
+    jobs = _load(WORKFLOWS / "ci.yml")["jobs"]
+    for job_id in jobs[GATE]["needs"]:
+        assert "edited" not in jobs[job_id].get("if", ""), job_id
 
 
 def test_ci_concurrency() -> None:
