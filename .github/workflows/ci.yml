@@ -413,17 +413,14 @@ jobs:
   # (`tests/integration/`): creates, tracks and cancels tasks on Funnel and
   # TESP-API with Pulsar, in TES 1.1 and 1.0, as the smoke test only knows a
   # fake backend. Pinned images, which run containers through the Docker
-  # socket of the runner. Not
-  # needed by the gate, until it has proven reliable: third parties' registries
-  # and packages must not block pull requests. Also not for edits of a pull
-  # request, which change nothing that it tests. Two entries, which differ in
+  # socket of the runner. Needed by the gate, and so not skipped for edits of
+  # a pull request, like the other jobs. Two entries, which differ in
   # the config overlay of proTES only (`INTEGRATION_CONFIG`): `label` gives
   # Funnel's TES version by the label `tes.version` (`config.yaml`), `service
   # info` lets proTES read it from Funnel's service info
   # (`config-service-info.yaml`)
   integration:
     name: Integration (${{ matrix.version-from }})
-    if: ${{ github.event.action != 'edited' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -477,9 +474,11 @@ jobs:
         run: docker compose logs
   # The same check against TESK (`tests/integration/tesk/`), from its chart in a
   # throwaway k3s cluster in a privileged container, so that the node port is in
-  # the Compose network. Not needed by the gate, like `integration`; a job of its
-  # own, not an entry of `integration`, as it needs other services and may fail
-  # for other reasons
+  # the Compose network. Not needed by the gate, until it has proven reliable:
+  # third parties' registries and packages must not block pull requests. Also
+  # not for edits of a pull request, which change nothing that it tests. A job
+  # of its own, not an entry of `integration`, as it needs other services and
+  # may fail for other reasons
   integration-tesk:
     name: Integration (TESK)
     if: ${{ github.event.action != 'edited' }}
@@ -776,7 +775,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     if: always()
-    needs: [title, lint, test, chart, docs, readiness, smoke, push, scan, publish]
+    needs: [title, lint, test, chart, docs, readiness, smoke, integration, push, scan, publish]
     permissions: {}
     steps:
       - name: Check results of all jobs
