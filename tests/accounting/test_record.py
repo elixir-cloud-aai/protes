@@ -146,10 +146,14 @@ def test_record_untimed(logs: list[Any]) -> None:
         {},
         {"cpu_cores": None, "ram_gb": True, "disk_gb": -1, "preemptible": "yes"},
         {"cpu_cores": "2"},
+        {"cpu_cores": float("inf"), "ram_gb": float("nan"), "disk_gb": 1e306},
     ],
 )
 def test_record_without_resources(resources: dict[str, Any] | None) -> None:
-    """Resources that are not requested (or invalid) are not accounted."""
+    """Resources that are not requested (or invalid) are not accounted.
+
+    Also amounts that are not finite, or whose resource-seconds would not be.
+    """
     document = {"task": {"id": "TASK01", "resources": resources}}
     usage = record(
         [tes.TaskLog(start_time=START, end_time=START + timedelta(hours=1))],
@@ -215,3 +219,29 @@ def test_record_usage_without_task(
         )
     assert usage.count_documents({}) == 0
     assert "Usage not recorded: task not found" in caplog.text
+
+
+def test_record_usage_untimed_keeps_timed(
+    collections: tuple[Collection[dict[str, Any]], Collection[dict[str, Any]]],
+) -> None:
+    """An untimed record doesn't replace a timed one, but a timed one does.
+
+    E.g., a poll delivered again, which gets the task without its full logs.
+    """
+    tasks, usage = collections
+    timed = tes.Task(
+        state="COMPLETE",
+        logs=[tes.TaskLog(start_time=START, end_time=START + timedelta(hours=1))],
+    )
+    untimed = tes.Task(state="COMPLETE")
+    for response in (untimed, timed, untimed):
+        record_usage(
+            tasks=tasks,
+            usage=usage,
+            worker_id="worker-1",
+            response=response,
+            backend="https://tes.example.org",
+        )
+    (stored,) = usage.find()
+    assert stored["timed"]
+    assert stored["wall_seconds"] == 3600.0

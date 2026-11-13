@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime
 import logging
+import re
 from typing import Any
 
 from connexion import request
@@ -21,6 +22,12 @@ from pro_tes.config_models import CustomConfig
 from pro_tes.exceptions import InvalidUsageTime
 from pro_tes.ga4gh.tes.task_runs import TaskRuns
 from pro_tes.utils.db import TASK_DB, USAGE_COLLECTION
+
+# Date-times of RFC 3339 (section 5.6), whose time zone may be left out
+RFC3339_DATE_TIME = re.compile(
+    r"\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}:\d{2}(\.\d+)?([Zz]|[+-]\d{2}:\d{2})?",
+    re.ASCII,
+)
 
 # Get logger instance
 logger = logging.getLogger(__name__)
@@ -153,6 +160,8 @@ def _parse_time(value: str | None, name: str) -> datetime | None:
 
     Returns:
         The time, in UTC (also if it has no time zone); `None` if not sent.
+        Only RFC 3339 date-times are valid, except that the time zone may be
+        left out, and that leap seconds (`:60`) are not.
 
     Raises:
         pro_tes.exceptions.InvalidUsageTime: The value is no valid time, or
@@ -160,8 +169,12 @@ def _parse_time(value: str | None, name: str) -> datetime | None:
     """
     if value is None:
         return None
+    # `fromisoformat` also takes other ISO 8601 forms (e.g., dates), and only
+    # an uppercase `T` and `Z`, which RFC 3339 allows in lowercase too
+    if RFC3339_DATE_TIME.fullmatch(value) is None:
+        raise InvalidUsageTime(f"`{name}` is no valid time")
     try:
-        parsed = datetime.fromisoformat(value)
+        parsed = datetime.fromisoformat(value.upper())
         # in UTC, as MongoDB stores times; out of its range (e.g., year 10000
         # in UTC) is invalid
         return (

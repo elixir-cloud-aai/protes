@@ -1,6 +1,7 @@
 """Tests of the totals of the resources that tasks used, per user."""
 
 from datetime import UTC, datetime, timedelta
+import sys
 from typing import Any
 
 from pymongo import MongoClient
@@ -101,3 +102,24 @@ def test_totals_in_time_range(usage: Collection[dict[str, Any]]) -> None:
     totals = usage_totals(usage, user_id="alice", until=since)
     assert totals[0]["tasks"] == 1
     assert usage_totals(usage, since=START + timedelta(days=30)) == []
+
+
+def test_totals_overflow(usage: Collection[dict[str, Any]]) -> None:
+    """Sums too large for a float are the largest float, which JSON can hold."""
+    for task in ("TASK01", "TASK02"):
+        usage.insert_one(
+            {
+                "_id": task,
+                "user_id": "carol",
+                "timed": True,
+                "finished_at": datetime(2026, 11, 13, tzinfo=UTC),
+                "wall_seconds": 1.0,
+                "cpu_core_seconds": 0.0,
+                "ram_gb_seconds": 1e308,
+                "disk_gb_seconds": 0.0,
+            }
+        )
+    (total,) = usage_totals(usage, user_id="carol")
+    assert total["ram_gb_seconds"] == sys.float_info.max
+    assert total["wall_seconds"] == 2.0
+    assert total["tasks"] == 2

@@ -3,9 +3,11 @@
 from collections.abc import Iterable
 from datetime import UTC, datetime
 import logging
+import math
 from typing import Any
 
 from pymongo.collection import Collection
+from pymongo.errors import DuplicateKeyError
 
 logger = logging.getLogger(__name__)
 
@@ -65,11 +67,12 @@ def _amount(value: Any) -> float | None:
         value: The amount, as stored.
 
     Returns:
-        The amount; `None` if it is no non-negative number.
+        The amount; `None` if it is no finite, non-negative number.
     """
     if isinstance(value, bool) or not isinstance(value, int | float):
         return None
-    return float(value) if value >= 0 else None
+    amount = float(value)
+    return amount if math.isfinite(amount) and amount >= 0 else None
 
 
 def usage_record(
@@ -84,7 +87,10 @@ def usage_record(
     The run time is the sum of the times of the attempts of the task at its
     TES instance (its task logs) whose start and end are known; the
     resource-seconds are the requested resources times the run time. Tasks
-    whose run time is unknown (`timed` false) count 0 seconds.
+    whose run time is unknown (`timed` false) count 0 seconds. Amounts that
+    are not finite, non-negative numbers, or whose resource-seconds would not
+    be finite, are not accounted (`None`, 0 resource-seconds), so that
+    records stay valid JSON (totals too, cf. :py:func:`usage_totals`).
 
     Args:
         document: Stored task, with its owner (`user_id`), identifier
@@ -119,8 +125,11 @@ def usage_record(
     record["finished_at"] = record["end_time"] or now
     for name, field in RESOURCES.items():
         amount = _amount(resources.get(name))
+        product = (amount or 0.0) * seconds
+        if not math.isfinite(product):
+            amount, product = None, 0.0
         record[name] = amount
-        record[field] = (amount or 0.0) * seconds
+        record[field] = product
     return record
 
 
@@ -134,7 +143,9 @@ def record_usage(
     """Record the resources that a task used, once it finished.
 
     The record replaces an earlier one of the task (e.g., if the poll that
-    stores its final state is retried).
+    stores its final state is retried), unless it is untimed and the earlier
+    one is timed: a poll delivered again gets the task without its full logs,
+    which may lack the times.
 
     Args:
         tasks: Database collection of the tasks.
@@ -163,4 +174,11 @@ def record_usage(
         state=str(response.state),
         now=datetime.now(UTC),
     )
-    usage.replace_one({"_id": record["_id"]}, record, upsert=True)
+    if record["timed"]:
+        usage.replace_one({"_id": record["_id"]}, record, upsert=True)
+        return
+    try:
+        usage.insert_one(record)
+    except DuplicateKeyError:
+        # the filter keeps a timed record: an untimed one is then dropped
+        usage.replace_one({"_id": record["_id"], "timed": {"$ne": True}}, record)

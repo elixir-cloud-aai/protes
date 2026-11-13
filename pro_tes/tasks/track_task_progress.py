@@ -35,7 +35,7 @@ from celery.signals import worker_ready
 from foca import get_collection, get_custom_config
 from kombu.exceptions import OperationalError
 from pymongo.collection import Collection
-from pymongo.errors import OperationFailure, PyMongoError
+from pymongo.errors import ConnectionFailure, OperationFailure, PyMongoError
 import requests
 
 from pro_tes.accounting import record_usage
@@ -530,11 +530,11 @@ def _record_usage(
 ) -> None:
     """Record the resources that a finished task used (`custom.accounting`).
 
-    Before its final state is stored: if MongoDB can't be reached, the poll
-    is retried, and records the task again (replacing the record). Other
-    errors, also those that MongoDB reports (`OperationFailure`, e.g., a
-    refused write or a timeout), are logged only, so that the task still
-    finishes.
+    Before its final state is stored: if MongoDB can't be reached
+    (`ConnectionFailure`), the poll is retried, and records the task again
+    (replacing the record). Other errors, also the other errors of PyMongo
+    (e.g., a refused write or a timeout that MongoDB reports, or a
+    client-side error), are logged only, so that the task still finishes.
 
     Args:
         collection: Database collection of the tasks.
@@ -551,13 +551,12 @@ def _record_usage(
             response=response,
             backend=kwargs["remote_host"],
         )
-    except Exception as exc:
-        # errors that MongoDB reports (e.g., missing rights, a validator)
-        # may recur on every retry, which would keep the task from finishing
-        if isinstance(exc, INFRASTRUCTURE_ERRORS) and not isinstance(
-            exc, OperationFailure
-        ):
-            raise
+    except ConnectionFailure:
+        raise
+    except Exception:
+        # other errors (e.g., missing rights, a validator, a client-side
+        # error) may recur on every retry, which would keep the task from
+        # finishing
         logger.exception("[%s] Usage of the task not recorded", worker_id)
 
 

@@ -109,16 +109,16 @@ paths:
         in: query
         required: false
         description: >-
-          Only tasks that finished at or after this time (RFC 3339; UTC if
-          without time zone).
+          Only tasks that finished at or after this time (date-time of RFC
+          3339, e.g., `2026-11-01T00:00:00Z`; UTC if without time zone).
         schema:
           type: string
       - name: until
         in: query
         required: false
         description: >-
-          Only tasks that finished before this time (RFC 3339; UTC if
-          without time zone).
+          Only tasks that finished before this time (date-time of RFC
+          3339, e.g., `2026-11-01T00:00:00Z`; UTC if without time zone).
         schema:
           type: string
       responses:

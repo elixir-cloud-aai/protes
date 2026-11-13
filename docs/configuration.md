@@ -748,21 +748,27 @@ right before they store its final state:
   logs of its TES instance (`logs[].start_time` and `end_time`, or else the
   earliest start and the latest end of its executors), summed up over its
   attempts (task logs). Tasks whose TES instance logged no start or no end
-  count 0 seconds, and are counted as `untimed_tasks`.
+  count 0 seconds, and are counted as `untimed_tasks`. The times come from
+  the view `FULL` of the task, or, without it (`post_task.max_log_size: 0`,
+  or a poll that the broker delivers again), from the view `BASIC`, which
+  also holds them; a record without times never replaces one with times.
 - **Resources:** the CPU cores, RAM and disk that the task requested
   (`resources.cpu_cores`, `ram_gb` and `disk_gb`, as proTES stored the
   task), each times the run time (`cpu_core_seconds`, `ram_gb_seconds`,
   `disk_gb_seconds`). TES instances don't report the resources that tasks
   consumed, so these are allocations, not measurements; resources that a
-  task doesn't request (the TES instance applies its defaults) count 0.
+  task doesn't request (the TES instance applies its defaults) count 0, as
+  do amounts that are not finite, non-negative numbers, or whose product
+  with the run time would not be finite.
 - **Not recorded:** tasks that never reached a TES instance, tasks whose
   final state proTES set itself (e.g., `SYSTEM_ERROR` after
   `max_cancel_time` or `max_create_time`, or `CANCELED` when the TES
   instance no longer has a canceled task), tasks that finished while
-  accounting was off, and tasks whose record failed, also by an error
-  that MongoDB reported (e.g., a refused write or a timeout; logged as
-  `Usage of the task not recorded`). If MongoDB can't be reached, the poll
-  is retried until it can, and the task is recorded then.
+  accounting was off, and tasks whose record failed, also by any other
+  error of the MongoDB client than a lost connection (e.g., a refused
+  write or a timeout that MongoDB reported; logged as `Usage of the task
+  not recorded`). If MongoDB can't be reached, the poll is retried until it
+  can, and the task is recorded then.
 
 Each record (collection `usage` of the database of the tasks) holds the
 owner of the task (`user_id`, as in the task document, see [Task

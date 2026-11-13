@@ -195,9 +195,11 @@ query parameters limit the totals:
 
 - `user_id`: the tasks of one user only;
 - `since` and `until`: the tasks that finished at or after `since` and
-  before `until` (RFC 3339, e.g., `2026-11-01T00:00:00Z`; UTC without time
-  zone), by the end of the task at its TES instance, or, if that is unknown,
-  by when it was recorded. Other values give `400 Bad Request`.
+  before `until` (date-times of RFC 3339, e.g., `2026-11-01T00:00:00Z`; UTC
+  without time zone), by the end of the task at its TES instance, or, if that
+  is unknown, by when it was recorded. Other values, also other forms of
+  ISO 8601 (e.g., a date without time) and leap seconds (`:60`), give
+  `400 Bad Request`.
 
 Only admins may get it (rule `admins-get-usage`); everyone else gets `403
 Forbidden` (see [Access control](access-control.md#roles)). All users are

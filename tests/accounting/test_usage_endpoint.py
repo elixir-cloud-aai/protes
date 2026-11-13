@@ -60,13 +60,16 @@ def test_get_usage(client: FlaskClient, records: None, user: str) -> None:
 
 
 def test_get_usage_filtered(client: FlaskClient, records: None) -> None:
-    """Admins may filter by user and time range (UTC without time zone)."""
+    """Admins may filter by user and time range.
+
+    UTC without time zone; `t` and `z` may be lowercase, as in RFC 3339.
+    """
     headers = make_headers(ADMIN)
     response = client.get(PATH, query_string={"user_id": USER}, headers=headers)
     assert [total["user_id"] for total in response.get_json()["users"]] == [USER]
     response = client.get(
         PATH,
-        query_string={"since": "2026-11-02T00:00:00", "until": "2026-11-03T00:00:00Z"},
+        query_string={"since": "2026-11-02t00:00:00", "until": "2026-11-03T00:00:00z"},
         headers=headers,
     )
     assert response.status_code == 200
@@ -82,11 +85,25 @@ def test_get_usage_recording(app: FlaskApp, client: FlaskClient) -> None:
 
 
 @pytest.mark.parametrize(
-    "value", ["yesterday", "9999-12-31T23:59:59-05:00", "0001-01-01T00:00:00+01:00"]
+    "value",
+    [
+        "yesterday",
+        "9999-12-31T23:59:59-05:00",
+        "0001-01-01T00:00:00+01:00",
+        "2026-11-01",
+        "20261101T000000Z",
+        "2026-11-01T00:00",
+        "2026-W44-7T00:00:00Z",
+        "2016-12-31T23:59:60Z",
+    ],
 )
 @pytest.mark.parametrize("name", ["since", "until"])
 def test_get_usage_invalid_time(client: FlaskClient, name: str, value: str) -> None:
-    """Invalid times, also out of range in UTC, are rejected (`400`)."""
+    """Invalid times are rejected (`400`).
+
+    Also times out of range in UTC, and ISO 8601 values that are no RFC 3339
+    date-time (e.g., dates without time).
+    """
     response = client.get(PATH, query_string={name: value}, headers=make_headers(ADMIN))
     assert response.status_code == 400
     assert response.get_json()["detail"] == (

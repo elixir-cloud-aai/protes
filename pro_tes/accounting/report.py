@@ -1,6 +1,8 @@
 """Totals of the resources that tasks used, per user."""
 
 from datetime import datetime
+import math
+import sys
 from typing import Any
 
 from pymongo.collection import Collection
@@ -31,7 +33,8 @@ def usage_totals(
         Per user (`user_id`; `None` for tasks without owner), in the order
         of the user identifiers: the number of tasks (`tasks`), of those
         whose run time is unknown (`untimed_tasks`), and the sums of their
-        run times (`wall_seconds`) and resource-seconds.
+        run times (`wall_seconds`) and resource-seconds; sums too large for a
+        float are the largest float.
     """
     match: dict[str, Any] = {}
     if user_id is not None:
@@ -53,4 +56,16 @@ def usage_totals(
     totals = usage.aggregate(
         [{"$match": match}, {"$group": group}, {"$sort": {"_id": 1}}]
     )
-    return [{"user_id": total.pop("_id"), **total} for total in totals]
+    # sums of finite records may still overflow, which JSON can't represent
+    return [
+        {
+            "user_id": total.pop("_id"),
+            **{
+                key: value
+                if not isinstance(value, float) or math.isfinite(value)
+                else sys.float_info.max
+                for key, value in total.items()
+            },
+        }
+        for total in totals
+    ]
