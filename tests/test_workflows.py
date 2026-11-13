@@ -21,6 +21,11 @@ GATE = "passed"
 # Jobs that don't block pull requests, until they have proven reliable: they
 # depend on the registries and packages of third parties
 NOT_IN_GATE = {"integration", "integration-tesk"}
+# Funnel's URL in the integration configs, and the TES versions that backends
+# report in their service info, where not TES 1.0 (TESP-API and TESK; see the
+# notes on TES implementations)
+FUNNEL = "http://funnel:8000"
+REPORTED = {FUNNEL: "1.1"}
 # The last release signed by the release workflow before its file was renamed
 # from `release.yaml` to `release.yml`
 LAST_RELEASE_YAML = Version("0.3.0")
@@ -120,32 +125,91 @@ def test_tesk_job() -> None:
     assert any(backend in run for run in runs if "check.sh" in run)
 
 
+def _integration_configs() -> list[Path]:
+    """Return the config overlays of the entries of the job `integration`.
+
+    Returns:
+        The paths of the files in `tests/integration/`, by entry of the matrix.
+    """
+    job = _load(WORKFLOWS / "ci.yml")["jobs"]["integration"]
+    assert job["env"]["INTEGRATION_CONFIG"] == "${{ matrix.config }}"
+    return [
+        ROOT / "tests" / "integration" / entry["config"]
+        for entry in job["strategy"]["matrix"]["include"]
+    ]
+
+
+def test_integration_matrix() -> None:
+    """The job `integration` gets Funnel's TES version from a label and not.
+
+    Its entries `label` (`config.yaml`) and `service info`
+    (`config-service-info.yaml`) differ in the config overlay of proTES only,
+    which `tests/integration/compose.yaml` takes from `INTEGRATION_CONFIG`
+    (by default `config.yaml`), and the second file is the first without the
+    label `tes.version` of Funnel, so that proTES reads its version from
+    Funnel's service info.
+    """
+    job = _load(WORKFLOWS / "ci.yml")["jobs"]["integration"]
+    assert job["name"] == "Integration (${{ matrix.version-from }})"
+    assert job["strategy"]["fail-fast"] is False
+    assert job["strategy"]["matrix"]["include"] == [
+        {"version-from": "label", "config": "config.yaml"},
+        {"version-from": "service info", "config": "config-service-info.yaml"},
+    ]
+    compose = yaml.safe_load(
+        (ROOT / "tests" / "integration" / "compose.yaml").read_text()
+    )
+    for service in ("protes", "protes-worker"):
+        overlay = compose["services"][service]["environment"]["FOCA_CONFIG_OVERLAY"]
+        assert overlay == "/integration/${INTEGRATION_CONFIG:-config.yaml}"
+    labeled_path, unlabeled_path = _integration_configs()
+    labeled = yaml.safe_load(labeled_path.read_text())
+    funnel = next(
+        backend
+        for backend in labeled["custom"]["tes"]["backends"]
+        if backend["url"] == FUNNEL
+    )
+    assert funnel.pop("labels") == {"tes.version": "1.1"}
+    assert yaml.safe_load(unlabeled_path.read_text()) == labeled
+
+
 @pytest.mark.parametrize(
-    ("job_id", "config_path"),
+    ("job_id", "config_paths"),
     [
-        ("integration", ROOT / "tests" / "integration" / "config.yaml"),
-        ("integration-tesk", ROOT / "tests" / "integration" / "tesk" / "config.yaml"),
+        ("integration", _integration_configs()),
+        (
+            "integration-tesk",
+            [ROOT / "tests" / "integration" / "tesk" / "config.yaml"],
+        ),
     ],
 )
-def test_integration_versions(job_id: str, config_path: Path) -> None:
+def test_integration_versions(job_id: str, config_paths: list[Path]) -> None:
     """Each integration job checks the TES version path of each of its backends.
 
     `tests/integration/versions.sh` runs once per backend of the job's config,
     with the version that proTES must find: that of the label `tes.version`,
-    else TES 1.0, which TESP-API and TESK report (see the notes on TES
-    implementations). No step overrides the final state of the task that
-    ignores an executor's error, as it ends in `COMPLETE` on TES 1.1.
+    else the one that the backend reports (`REPORTED`, else TES 1.0). The
+    steps are the same in every entry of the job's matrix, so each entry's
+    config must give the same versions. No step overrides the final state of
+    the task that ignores an executor's error, as it ends in `COMPLETE` on TES
+    1.1.
 
     Args:
         job_id: The ID of the job in `ci.yml`.
-        config_path: The config overlay of proTES in the job.
+        config_paths: The config overlays of proTES in the job, by entry.
     """
     job = _load(WORKFLOWS / "ci.yml")["jobs"][job_id]
-    config = yaml.safe_load(config_path.read_text())
-    expected = {
-        backend["url"]: backend.get("labels", {}).get("tes.version", "1.0")
-        for backend in config["custom"]["tes"]["backends"]
-    }
+    expected = []
+    for path in config_paths:
+        backends = yaml.safe_load(path.read_text())["custom"]["tes"]["backends"]
+        expected.append(
+            {
+                backend["url"]: backend.get("labels", {}).get(
+                    "tes.version", REPORTED.get(backend["url"], "1.0")
+                )
+                for backend in backends
+            }
+        )
     checked: dict[str, str] = {}
     for step in job["steps"]:
         args = shlex.split(step.get("run", ""))
@@ -156,7 +220,8 @@ def test_integration_versions(job_id: str, config_path: Path) -> None:
             assert step.get("if", "${{ !cancelled() }}") == "${{ !cancelled() }}"
             assert "continue-on-error" not in step
             assert "IGNORE_ERROR_STATE" not in step.get("env", {})
-    assert checked == expected, f"versions.sh steps of {job_id}: {checked}"
+    for versions in expected:
+        assert checked == versions, f"versions.sh steps of {job_id}: {checked}"
 
 
 def test_integration_funnel_version() -> None:
