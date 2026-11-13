@@ -332,6 +332,33 @@ specification has it; that of the API of proTES too."""
 # Absolute paths of unreserved characters (RFC 3986, section 2.3)
 _API_PATH = re.compile(r"(?:/[A-Za-z0-9._~-]+)+")
 
+# Absolute URIs without query and fragment (RFC 3986, sections 3 and 4.3):
+# a scheme, then unreserved, reserved (but `?`, `#`) and percent-encoded
+# characters only
+_RESOURCE = re.compile(
+    r"[A-Za-z][A-Za-z0-9+.-]*:(?:[A-Za-z0-9._~!$&'()*+,;=:@/\[\]-]|%[0-9A-Fa-f]{2})+"
+)
+
+
+def _is_resource(value: str) -> bool:
+    """Check whether a value is a resource indicator (RFC 8707, section 2).
+
+    Args:
+        value: The value.
+
+    Returns:
+        Whether it is an absolute URI without query and fragment, with a
+        host or path, and a valid port, if any.
+    """
+    if not _RESOURCE.fullmatch(value):
+        return False
+    parts = urlsplit(value)
+    try:
+        parts.port  # noqa: B018 (raises on invalid ports)
+    except ValueError:
+        return False
+    return bool(parts.netloc or parts.path)
+
 
 class TesServiceEntry(ServiceEntry):
     """TES instance of `custom.tes.backends`, with the settings of proTES.
@@ -521,19 +548,12 @@ class Tes(ConfigModel):
                 raise ValueError(
                     f"`audience` of {entry.url} must not have surrounding whitespace"
                 )
-            if parameter == "resource":
-                parts = urlsplit(audience)
-                if (
-                    not parts.scheme
-                    or not (parts.netloc or parts.path)
-                    or "?" in audience
-                    or "#" in audience
-                ):
-                    raise ValueError(
-                        f"`audience` of {entry.url} must be an absolute URI"
-                        " without query and fragment, for `audience_parameter:"
-                        " resource` (RFC 8707)"
-                    )
+            if parameter == "resource" and not _is_resource(audience):
+                raise ValueError(
+                    f"`audience` of {entry.url} must be an absolute URI"
+                    " without query and fragment, for `audience_parameter:"
+                    " resource` (RFC 8707)"
+                )
         return self
 
     @property

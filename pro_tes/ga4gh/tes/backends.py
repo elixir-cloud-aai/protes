@@ -200,12 +200,14 @@ class TokenKey(NamedTuple):
         endpoint: URL of the token endpoint.
         client_id: Client ID of proTES.
         scope: Requested scope, if any.
+        audience_parameter: Parameter of the requested audience, if any.
         audience: Requested audience, if any.
     """
 
     endpoint: str
     client_id: str
     scope: str | None
+    audience_parameter: str | None
     audience: str | None
 
 
@@ -237,42 +239,31 @@ class TokenProvider:
 
     def __init__(self) -> None:
         """Create a provider with empty caches."""
-        # guards the dictionaries; held during token requests never, and
-        # during requests of discovery documents only until the first one of
-        # the issuer succeeds
+        # guards the caches and the fetches in progress; held during token
+        # requests never, and during requests of discovery documents only
+        # until the first one of the issuer succeeds
         self._lock = threading.Lock()
+        # notified whenever a fetch ends
+        self._fetched = threading.Condition(self._lock)
         self._tokens: dict[TokenKey, _Token] = {}
-        self._fetch_locks: dict[TokenKey, threading.Lock] = {}
+        self._fetching: set[TokenKey] = set()
         self._token_endpoints: dict[str, str] = {}
 
     def clear(self) -> None:
         """Remove all cached tokens and token endpoints."""
         with self._lock:
             self._tokens.clear()
-            self._fetch_locks.clear()
             self._token_endpoints.clear()
-
-    def _cached(self, key: TokenKey) -> tuple[_Token | None, bool]:
-        """Get a cached token, and whether it is fresh (not to be refreshed).
-
-        Args:
-            key: Key of the token.
-
-        Returns:
-            The cached token, if any, and whether it is fresh.
-        """
-        with self._lock:
-            token = self._tokens.get(key)
-        return token, token is not None and time.monotonic() < token.refresh_at
 
     def get_token(self, config: Tes, audience: str | None = None) -> str:
         """Get an access token of proTES.
 
         A cached token is used until `refresh_before` seconds before it
         expires (at most half its lifetime before), then a new one is
-        fetched; if that fails, the cached token is used until it expires.
-        Tokens are cached per token endpoint, client, scope and audience;
-        expired ones are removed whenever a token is fetched.
+        fetched (meanwhile, other threads use the cached one); if that
+        fails, the cached token is used until it expires. Tokens are cached
+        per token endpoint, client, scope and audience; expired ones are
+        removed whenever a token is fetched.
 
         Args:
             config: TES backend configuration.
@@ -292,59 +283,50 @@ class TokenProvider:
         idp = config.client_credentials
         if idp.audience_parameter is None:
             audience = None
-        with self._lock:
-            # the discovery document is fetched once per issuer
+        with self._fetched:
             endpoint = self._get_token_endpoint(config=config)
-        key = TokenKey(endpoint, client_id, idp.scope, audience)
-        token, fresh = self._cached(key)
-        if token is not None and fresh:
-            return token.value
-        with self._lock:
-            fetch_lock = self._fetch_locks.setdefault(key, threading.Lock())
-        if token is not None and time.monotonic() < token.expires_at:
-            # being refreshed by another thread: use it meanwhile
-            if not fetch_lock.acquire(blocking=False):
-                return token.value
-        else:
-            fetch_lock.acquire()
-        try:
-            # another thread may have fetched it in the meantime
-            token, fresh = self._cached(key)
-            if token is not None and fresh:
-                return token.value
-            try:
-                new = self._fetch_token(
-                    endpoint=endpoint,
-                    client_id=client_id,
-                    client_secret=client_secret,
-                    idp=idp,
-                    audience=audience,
-                )
-            except BackendAuthError as exc:
-                if token is None or time.monotonic() >= token.expires_at:
-                    raise
-                # the messages of BackendAuthError name endpoints, audiences
-                # and error types only, never tokens or client secrets
-                # nosemgrep  # logger-credential-disclosure: see above
-                logger.warning(
-                    "Using the cached access token until it expires: %s", exc
-                )
-                return token.value
-            with self._lock:
+            key = TokenKey(
+                endpoint, client_id, idp.scope, idp.audience_parameter, audience
+            )
+            while True:
+                token = self._tokens.get(key)
                 now = time.monotonic()
-                for stale in [
-                    k for k, v in self._tokens.items() if now >= v.expires_at
-                ]:
-                    del self._tokens[stale]
-                    # locks of fetches in progress are kept, so that their
-                    # tokens are still fetched once; those of keys without
-                    # tokens (failed fetches) stay, bounded by the backends
-                    if not self._fetch_locks[stale].locked():
-                        del self._fetch_locks[stale]
-                self._tokens[key] = new
-            return new.value
-        finally:
-            fetch_lock.release()
+                if token is not None and now < token.refresh_at:
+                    return token.value
+                if key not in self._fetching:
+                    self._fetching.add(key)
+                    break
+                if token is not None and now < token.expires_at:
+                    # being refreshed by another thread: use it meanwhile
+                    return token.value
+                self._fetched.wait()
+        try:
+            new = self._fetch_token(
+                endpoint=endpoint,
+                client_id=client_id,
+                client_secret=client_secret,
+                idp=idp,
+                audience=audience,
+            )
+        except BackendAuthError as exc:
+            with self._fetched:
+                self._fetching.discard(key)
+                self._fetched.notify_all()
+            if token is None or time.monotonic() >= token.expires_at:
+                raise
+            # the messages of BackendAuthError name endpoints, audiences and
+            # error types only, never tokens or client secrets
+            # nosemgrep  # logger-credential-disclosure: see above
+            logger.warning("Using the cached access token until it expires: %s", exc)
+            return token.value
+        with self._fetched:
+            now = time.monotonic()
+            for stale in [k for k, v in self._tokens.items() if now >= v.expires_at]:
+                del self._tokens[stale]
+            self._tokens[key] = new
+            self._fetching.discard(key)
+            self._fetched.notify_all()
+        return new.value
 
     def _get_token_endpoint(self, config: Tes) -> str:
         """Get the token endpoint, from the config or the issuer's discovery.

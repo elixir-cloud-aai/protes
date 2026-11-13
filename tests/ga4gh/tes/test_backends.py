@@ -354,6 +354,18 @@ def test_token_audience(idp: FakeIdp, clock: Clock, parameter: str) -> None:
     ]
 
 
+def test_token_audience_parameters_apart(idp: FakeIdp, clock: Clock) -> None:
+    """Tokens for the same audience in other parameters are cached apart."""
+    get = backends.token_provider.get_token
+    for parameter in ("resource", "audience"):
+        config = tes_config(issuer=ISSUER, audience_parameter=parameter)
+        get(config=config, audience="https://tes1.example.org")
+    assert [list(request["data"]) for request in idp.requests] == [
+        ["grant_type", "resource"],
+        ["grant_type", "audience"],
+    ]
+
+
 def test_token_audience_refused(idp: FakeIdp, clock: Clock) -> None:
     """Errors of token requests name the requested audience."""
     idp.token_status = 400
@@ -929,6 +941,66 @@ def test_backend_config_default() -> None:
             },
             "needs `auth: client_credentials`",
         ),
+        (
+            {
+                "backends": [
+                    {"type": "ga4gh-tes", "url": BACKEND_URL, "audience": "https://"},
+                ],
+                "client_credentials": {
+                    "issuer": ISSUER,
+                    "audience_parameter": "resource",
+                },
+            },
+            "absolute URI",
+        ),
+        (
+            {
+                "backends": [
+                    {
+                        "type": "ga4gh-tes",
+                        "url": BACKEND_URL,
+                        "audience": "https://tes.example.org:port",
+                    },
+                ],
+                "client_credentials": {
+                    "issuer": ISSUER,
+                    "audience_parameter": "resource",
+                },
+            },
+            "absolute URI",
+        ),
+        (
+            {
+                "backends": [
+                    {
+                        "type": "ga4gh-tes",
+                        "url": BACKEND_URL,
+                        "audience": "https://tes example.org",
+                    },
+                ],
+                "client_credentials": {
+                    "issuer": ISSUER,
+                    "audience_parameter": "resource",
+                },
+            },
+            "absolute URI",
+        ),
+        (
+            {
+                "backends": [
+                    {
+                        "type": "ga4gh-tes",
+                        "url": BACKEND_URL,
+                        "audience": "https://tes.example.org/%zz",
+                    },
+                ],
+                "client_credentials": {
+                    "issuer": ISSUER,
+                    "audience_parameter": "resource",
+                },
+            },
+            "absolute URI",
+        ),
         ({"url_schemes": []}, "at least 1"),
         ({"url_schemes": ["ftp"]}, "https"),
         ({"max_response_size": 1024 * 1024 - 1}, "greater than or equal"),
@@ -943,7 +1015,11 @@ def test_tes_config_invalid(config: dict[str, Any], match: str) -> None:
 
 @pytest.mark.parametrize(
     "parameter, audience",
-    [("resource", "urn:example:tes"), ("audience", "tes-client")],
+    [
+        ("resource", "urn:example:tes"),
+        ("resource", "https://[::1]:8443/tes%20api"),
+        ("audience", "tes-client"),
+    ],
 )
 def test_tes_config_audience(parameter: str, audience: str) -> None:
     """Entries may set the audience of their tokens, if audiences are requested.
