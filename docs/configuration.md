@@ -759,9 +759,10 @@ right before they store its final state:
   final state proTES set itself (e.g., `SYSTEM_ERROR` after
   `max_cancel_time` or `max_create_time`, or `CANCELED` when the TES
   instance no longer has a canceled task), tasks that finished while
-  accounting was off, and tasks whose record failed for another reason
-  than an unavailable MongoDB (logged as `Usage of the task not recorded`;
-  if MongoDB is unavailable, the poll is retried until it is available).
+  accounting was off, and tasks whose record failed, also by an error
+  that MongoDB reported (e.g., a refused write or a timeout; logged as
+  `Usage of the task not recorded`). If MongoDB can't be reached, the poll
+  is retried until it can, and the task is recorded then.
 
 Each record (collection `usage` of the database of the tasks) holds the
 owner of the task (`user_id`, as in the task document, see [Task

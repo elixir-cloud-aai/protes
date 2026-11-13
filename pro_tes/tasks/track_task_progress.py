@@ -530,9 +530,11 @@ def _record_usage(
 ) -> None:
     """Record the resources that a finished task used (`custom.accounting`).
 
-    Before its final state is stored: if MongoDB is unavailable, the poll is
-    retried, and records the task again (replacing the record). Other errors
-    are logged only, so that the task still finishes.
+    Before its final state is stored: if MongoDB can't be reached, the poll
+    is retried, and records the task again (replacing the record). Other
+    errors, also those that MongoDB reports (`OperationFailure`, e.g., a
+    refused write or a timeout), are logged only, so that the task still
+    finishes.
 
     Args:
         collection: Database collection of the tasks.
@@ -549,13 +551,13 @@ def _record_usage(
             response=response,
             backend=kwargs["remote_host"],
         )
-    except OperationFailure:
-        # refused by MongoDB (e.g., missing rights, a validator), which a
-        # retry would not change
-        logger.exception("[%s] Usage of the task not recorded", worker_id)
-    except INFRASTRUCTURE_ERRORS:
-        raise
-    except Exception:
+    except Exception as exc:
+        # errors that MongoDB reports (e.g., missing rights, a validator)
+        # may recur on every retry, which would keep the task from finishing
+        if isinstance(exc, INFRASTRUCTURE_ERRORS) and not isinstance(
+            exc, OperationFailure
+        ):
+            raise
         logger.exception("[%s] Usage of the task not recorded", worker_id)
 
 

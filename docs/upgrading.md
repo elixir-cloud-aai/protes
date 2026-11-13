@@ -187,7 +187,7 @@ before are not recorded. The endpoint needs the new rule `admins-get-usage`
 of the base config: overlays whose policies are a list (which replaces all
 rules) must add it, or admins get `403`. proTES creates the collection
 `usage` with two indexes (`finished_at`; `user_id`, `finished_at`) on its
-first start; the records are kept until you delete them (see [Usage
+first start, also while accounting is off; the records are kept until you delete them (see [Usage
 records](operations.md#usage-records)).
 
 **Retention of finished tasks (opt-in):** the Celery workers can now delete
