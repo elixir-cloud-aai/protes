@@ -318,7 +318,8 @@ checks to run on one.
 [Funnel](https://github.com/calypr/funnel) 0.12.3:
 
 - It was seen reporting TES 1.1.0 in its service info, so it needs no label
-  `tes.version` (see [TES versions](#tes-versions)); CI sets the label anyway.
+  `tes.version` (see [TES versions](#tes-versions)); CI runs it both with and
+  without the label (see [Testing](development.md)).
 - With `ignore_error: true` on an executor that fails, it runs the next
   executors and ends the task in `COMPLETE`.
 - It drops keys of `backend_parameters` that it doesn't list in its service

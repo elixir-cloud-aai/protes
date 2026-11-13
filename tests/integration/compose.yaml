@@ -5,13 +5,16 @@
 # resolved against the directory of the first file, i.e., the repository root.
 # Funnel and Pulsar start containers on the host, through the Docker socket.
 # TESP-API stages inputs with `willdockerhub/curl-wget:latest`, a name that it
-# hard-codes: the job in CI pulls that image by digest, and tags it so
+# hard-codes: the job in CI pulls that image by digest, and tags it so.
+# `INTEGRATION_CONFIG` names the config overlay of proTES in this directory:
+# `config.yaml` (the default), or `config-service-info.yaml`, without the
+# label `tes.version` of Funnel (the entries of the job's matrix)
 
 services:
 
     protes:
         environment:
-            FOCA_CONFIG_OVERLAY: /integration/config.yaml
+            FOCA_CONFIG_OVERLAY: /integration/${INTEGRATION_CONFIG:-config.yaml}
         volumes:
             - ./tests/integration:/integration:ro
         depends_on:
@@ -20,7 +23,7 @@ services:
 
     protes-worker:
         environment:
-            FOCA_CONFIG_OVERLAY: /integration/config.yaml
+            FOCA_CONFIG_OVERLAY: /integration/${INTEGRATION_CONFIG:-config.yaml}
         volumes:
             - ./tests/integration:/integration:ro
         depends_on:
