@@ -549,6 +549,10 @@ def _record_usage(
             response=response,
             backend=kwargs["remote_host"],
         )
+    except OperationFailure:
+        # refused by MongoDB (e.g., missing rights, a validator), which a
+        # retry would not change
+        logger.exception("[%s] Usage of the task not recorded", worker_id)
     except INFRASTRUCTURE_ERRORS:
         raise
     except Exception:

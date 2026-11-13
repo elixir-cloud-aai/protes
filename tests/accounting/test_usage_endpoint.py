@@ -81,12 +81,13 @@ def test_get_usage_recording(app: FlaskApp, client: FlaskClient) -> None:
     assert response.get_json() == {"recording": True, "users": []}
 
 
+@pytest.mark.parametrize(
+    "value", ["yesterday", "9999-12-31T23:59:59-05:00", "0001-01-01T00:00:00+01:00"]
+)
 @pytest.mark.parametrize("name", ["since", "until"])
-def test_get_usage_invalid_time(client: FlaskClient, name: str) -> None:
-    """Invalid times are rejected (`400`)."""
-    response = client.get(
-        PATH, query_string={name: "yesterday"}, headers=make_headers(ADMIN)
-    )
+def test_get_usage_invalid_time(client: FlaskClient, name: str, value: str) -> None:
+    """Invalid times, also out of range in UTC, are rejected (`400`)."""
+    response = client.get(PATH, query_string={name: value}, headers=make_headers(ADMIN))
     assert response.status_code == 400
     assert response.get_json()["detail"] == (
         "`since` or `until` is no valid time (RFC 3339)."

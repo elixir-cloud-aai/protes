@@ -177,6 +177,19 @@ unless you set them (see [Task limits](configuration.md#task-limits)). proTES
 creates a new index on the tasks (`user_id`, `task.state`) on its first start,
 which takes a moment for large collections.
 
+**Accounting of resource usage (opt-in):** the Celery workers can now record
+the run time and requested resources of each task that finishes at its TES
+instance, with its owner, and admins get the totals per user at `GET /usage`
+(`custom.accounting.enabled`); off by default, so nothing is recorded unless
+you set it (see [Accounting of resource
+usage](configuration.md#accounting-of-resource-usage)). Tasks that finished
+before are not recorded. The endpoint needs the new rule `admins-get-usage`
+of the base config: overlays whose policies are a list (which replaces all
+rules) must add it, or admins get `403`. proTES creates the collection
+`usage` with two indexes (`finished_at`; `user_id`, `finished_at`) on its
+first start; the records are kept until you delete them (see [Usage
+records](operations.md#usage-records)).
+
 **Retention of finished tasks (opt-in):** the Celery workers can now delete
 finished tasks `custom.retention.finished_days` days after they finished,
 with their owner roles; off by default, so nothing changes unless you set it

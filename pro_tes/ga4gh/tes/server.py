@@ -152,18 +152,25 @@ def _parse_time(value: str | None, name: str) -> datetime | None:
         name: Name of the parameter.
 
     Returns:
-        The time, in UTC if it has no time zone; `None` if not sent.
+        The time, in UTC (also if it has no time zone); `None` if not sent.
 
     Raises:
-        pro_tes.exceptions.InvalidUsageTime: The value is no valid time.
+        pro_tes.exceptions.InvalidUsageTime: The value is no valid time, or
+            is out of range in UTC.
     """
     if value is None:
         return None
     try:
         parsed = datetime.fromisoformat(value)
-    except ValueError as exc:
+        # in UTC, as MongoDB stores times; out of its range (e.g., year 10000
+        # in UTC) is invalid
+        return (
+            parsed.astimezone(UTC)
+            if parsed.tzinfo is not None
+            else parsed.replace(tzinfo=UTC)
+        )
+    except (ValueError, OverflowError) as exc:
         raise InvalidUsageTime(f"`{name}` is no valid time") from exc
-    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
 # GET /tasks

@@ -2029,18 +2029,25 @@ def test_usage_not_recorded_by_default(
     assert get_collection(DB, "usage").count_documents({}) == 0
 
 
+@pytest.mark.parametrize(
+    "error", [ValueError("bug"), OperationFailure("unauthorized", code=13)], ids=str
+)
 def test_usage_error_logged(
     tasks: Collection[dict[str, Any]],
     client_class: type[FakeClient],
     accounting: Accounting,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
+    error: Exception,
 ) -> None:
-    """Errors of the accounting are logged; the task still finishes."""
+    """Errors of the accounting are logged; the task still finishes.
+
+    Also writes that MongoDB refuses, which retries would not change.
+    """
 
     def fail(**kwargs: Any) -> None:
-        """Fail like a bug."""
-        raise ValueError("bug")
+        """Fail like a bug, or a refused write."""
+        raise error
 
     monkeypatch.setattr(track_task_progress, "record_usage", fail)
     run()
