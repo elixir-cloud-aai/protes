@@ -222,10 +222,17 @@ def check_backends(conf: Tes | None = None, public_url: str | None = None) -> No
         if entry.auth == "client_credentials"
     ]
     if token_recipients:
+        parameter = conf.client_credentials.audience_parameter
+        audiences = (
+            ""
+            if parameter is None
+            else f" (each for its own audience, requested with `{parameter}`)"
+        )
         # logs the URLs of the backends, not tokens
         # nosemgrep  # logger-credential-disclosure: see above
         logger.info(
-            "TES backends with access tokens of proTES: %s",
+            "TES backends with access tokens of proTES%s: %s",
+            audiences,
             ", ".join(token_recipients),
         )
     if conf.uses_tokens:

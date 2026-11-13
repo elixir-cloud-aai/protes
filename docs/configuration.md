@@ -78,6 +78,12 @@ custom:
       issuer: https://login.example.org/oidc/
 ```
 
+By default, all TES instances with `auth: client_credentials` get the same
+access token of proTES; with `client_credentials.audience_parameter`
+(`resource` or `audience`), each gets a token for its own audience: the
+`audience` of its entry, or else its URL (see [Tokens per TES
+instance](access-control.md#tokens-per-tes-instance)).
+
 URLs are normalized (e.g., lowercase host, without default port and trailing
 slashes) and must use one of the schemes of the entry's `url_schemes`
 (default: `https` only; add `http` for local tests only, as credentials are
