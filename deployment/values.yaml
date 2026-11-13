@@ -61,6 +61,11 @@ config:
     # off; see docs/configuration.md, Retention of finished tasks)
     # retention:
     #   finished_days: 90
+    # Example: record the resources that tasks used, per user, for admins
+    # (`GET /usage`; default: off; see docs/configuration.md, Accounting of
+    # resource usage)
+    # accounting:
+    #   enabled: true
     # Examples:
     # tes:
     #   # Identity provider of the client of proTES (credentials from

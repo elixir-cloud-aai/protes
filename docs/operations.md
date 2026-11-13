@@ -161,6 +161,52 @@ no longer used once the registry has been read again, see `refresh_interval`
 in [Discovery in a service
 registry](configuration.md#discovery-in-a-service-registry)).
 
+## Usage records
+
+With [accounting of resource
+usage](configuration.md#accounting-of-resource-usage), each task that
+finished at its TES instance has a record in the collection `usage` (by
+task identifier, `_id`), with its owner (`user_id`), and admins get the
+totals per user at [`GET /usage`](api.md#usage). The records hold the
+subject identifier of the owner, which is personal data: they are kept
+until you delete them, also after their tasks are deleted (by the
+[retention of finished tasks](configuration.md#retention-of-finished-tasks)
+or by hand), so delete them once they are no longer needed for accounting,
+e.g., with `mongosh`:
+
+```js
+// records of tasks that finished before a date
+db.usage.deleteMany({ finished_at: { $lt: ISODate("2026-01-01T00:00:00Z") } })
+// records of a user (e.g., on request)
+db.usage.deleteMany({ user_id: "<sub>" })
+```
+
+To delete records automatically some time after their tasks finished, add
+a TTL index on `finished_at` (e.g., after 400 days), in a [config
+overlay](configuration.md), which replaces the indexes of the collection,
+so repeat the others:
+
+```yaml
+db:
+  dbs:
+    taskStore:
+      collections:
+        usage:
+          indexes:
+            - keys:
+                finished_at: 1
+              options:
+                expireAfterSeconds: 34560000
+            - keys:
+                user_id: 1
+                finished_at: 1
+```
+
+MongoDB doesn't change the options of an existing index: drop the index
+`finished_at_1` first (`db.usage.dropIndex("finished_at_1")`), then restart
+proTES, which creates the indexes of the config. Records whose task
+finished at an unknown time are deleted by when they were recorded.
+
 ## Task provenance
 
 Each new task has the provenance of its [plugin pipeline](plugins.md) in

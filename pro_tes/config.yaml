@@ -58,9 +58,9 @@ security:
   # Access control: users (the role `user`) may create tasks, and list their
   # own; the user creating a task becomes its owner, and only owners may read
   # and cancel a task. Admins (the role `admin`) may only use the permissions
-  # API and read the provenance of tasks, not the tasks of others. Roles are
-  # given to groups of the identity provider (values of the claim
-  # `claim_groups`) by `group_mapping`, e.g.:
+  # API, read the provenance of tasks and the usage per user, not the tasks of
+  # others. Roles are given to groups of the identity provider (values of the
+  # claim `claim_groups`) by `group_mapping`, e.g.:
   # claim_groups: groups
   # group_mapping:
   #   compute-users: user
@@ -88,6 +88,8 @@ security:
       # the provenance of a task, also for admins (no inputs or logs)
       owners-get-provenance: [p, owner, "/ga4gh/tes/v1/tasks/:id/provenance", (GET)|(HEAD)]
       admins-get-provenance: [p, admin, "/ga4gh/tes/v1/tasks/:id/provenance", (GET)|(HEAD)]
+      # the resources that tasks used, per user (`custom.accounting`)
+      admins-get-usage: [p, admin, /ga4gh/tes/v1/usage, (GET)|(HEAD)]
       # what users may choose per task (FOCA's plugin listing)
       users-list-plugins: [p, user, /ga4gh/tes/v1/plugins, (GET)|(HEAD)]
       users-get-plugins: [p, user, "/ga4gh/tes/v1/plugins/:id", (GET)|(HEAD)]
@@ -143,6 +145,16 @@ db:
                 failed_at: 1
               options:
                 expireAfterSeconds: 2592000
+        # Records of the resources that finished tasks used, if
+        # `custom.accounting.enabled`; kept until operators delete them (see
+        # `docs/operations.md`), also after the retention of their tasks
+        usage:
+          indexes:
+            - keys:
+                finished_at: 1
+            - keys:
+                user_id: 1
+                finished_at: 1
 
 # API configuration
 # Cf. https://foca.readthedocs.io/en/latest/configuration/api/
@@ -396,6 +408,12 @@ custom:
     finished_days: null
     interval: 3600
     batch_size: 500
+  # Accounting of the resources that tasks used, per user, off by default:
+  # the Celery workers record the run time of each task that finished at its
+  # TES instance and the resources it requested, with its owner (`user_id`);
+  # admins get the totals per user at `GET /usage` (see `docs/configuration.md`)
+  accounting:
+    enabled: false
 
 # Plugins (FOCA's gateway plugins, `foca.plugins`) process each new task
 # (`POST /tasks`): they may change the task, choose and order the TES backends

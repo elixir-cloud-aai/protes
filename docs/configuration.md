@@ -727,6 +727,52 @@ The Celery workers delete the tasks:
   `finished_days` days ago, oldest first, by an index (`task.state`,
   `_id`) that leaves out unfinished tasks and tombstones.
 
+## Accounting of resource usage
+
+Deployments can record which resources the tasks of each user used, and
+give admins the totals per user (see [Usage](api.md#usage)). Accounting is
+off by default:
+
+```yaml
+custom:
+  accounting:
+    enabled: true
+```
+
+With `enabled: true`, the Celery workers record each task that finishes at
+its TES instance (any final state that the TES instance reports:
+`COMPLETE`, `EXECUTOR_ERROR`, `SYSTEM_ERROR`, `CANCELED` or `PREEMPTED`),
+right before they store its final state:
+
+- **Run time:** the time between the start and the end of the task in the
+  logs of its TES instance (`logs[].start_time` and `end_time`, or else the
+  earliest start and the latest end of its executors), summed up over its
+  attempts (task logs). Tasks whose TES instance logged no start or no end
+  count 0 seconds, and are counted as `untimed_tasks`.
+- **Resources:** the CPU cores, RAM and disk that the task requested
+  (`resources.cpu_cores`, `ram_gb` and `disk_gb`, as proTES stored the
+  task), each times the run time (`cpu_core_seconds`, `ram_gb_seconds`,
+  `disk_gb_seconds`). TES instances don't report the resources that tasks
+  consumed, so these are allocations, not measurements; resources that a
+  task doesn't request (the TES instance applies its defaults) count 0.
+- **Not recorded:** tasks that never reached a TES instance, tasks whose
+  final state proTES set itself (e.g., `SYSTEM_ERROR` after
+  `max_cancel_time` or `max_create_time`, or `CANCELED` when the TES
+  instance no longer has a canceled task), tasks that finished while
+  accounting was off, and tasks whose record failed for another reason
+  than an unavailable MongoDB (logged as `Usage of the task not recorded`;
+  if MongoDB is unavailable, the poll is retried until it is available).
+
+Each record (collection `usage` of the database of the tasks) holds the
+owner of the task (`user_id`, as in the task document, see [Task
+owners](operations.md#task-owners)), the task identifier, the URL of the TES
+instance, the final state, the times, the requested resources and the
+products above; nothing else of the task. The records are kept when tasks
+are deleted by the [retention of finished
+tasks](#retention-of-finished-tasks), until operators delete them (see
+[Usage records](operations.md#usage-records)). Turning accounting off stops
+the recording; stored records are still served.
+
 ## Security
 
 The TES API requires access tokens of the trusted issuers

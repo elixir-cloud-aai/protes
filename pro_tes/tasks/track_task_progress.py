@@ -38,12 +38,18 @@ from pymongo.collection import Collection
 from pymongo.errors import OperationFailure, PyMongoError
 import requests
 
+from pro_tes.accounting import record_usage
 from pro_tes.celery_worker import celery
 from pro_tes.config_models import CustomConfig
 from pro_tes.ga4gh.tes.backends import create_client
 from pro_tes.ga4gh.tes.models import TesState, TesTask, TesTaskLog
 from pro_tes.ga4gh.tes.states import States
-from pro_tes.utils.db import TASK_COLLECTION, TASK_DB, DbDocumentConnector
+from pro_tes.utils.db import (
+    TASK_COLLECTION,
+    TASK_DB,
+    USAGE_COLLECTION,
+    DbDocumentConnector,
+)
 from pro_tes.utils.misc import has_credentials, strip_auth
 from pro_tes.utils.models import TaskModelConverter
 
@@ -519,6 +525,36 @@ def _cancel_timed_out(collection: Collection[dict[str, Any]], worker_id: str) ->
     return True
 
 
+def _record_usage(
+    collection: Collection[dict[str, Any]], kwargs: dict[str, Any], response: Any
+) -> None:
+    """Record the resources that a finished task used (`custom.accounting`).
+
+    Before its final state is stored: if MongoDB is unavailable, the poll is
+    retried, and records the task again (replacing the record). Other errors
+    are logged only, so that the task still finishes.
+
+    Args:
+        collection: Database collection of the tasks.
+        kwargs: Arguments of the poll (cf.
+            :py:func:`task__track_task_progress`).
+        response: The finished task, as served by its backend.
+    """
+    worker_id = kwargs["worker_id"]
+    try:
+        record_usage(
+            tasks=collection,
+            usage=get_collection(TASK_DB, USAGE_COLLECTION),
+            worker_id=worker_id,
+            response=response,
+            backend=kwargs["remote_host"],
+        )
+    except INFRASTRUCTURE_ERRORS:
+        raise
+    except Exception:
+        logger.exception("[%s] Usage of the task not recorded", worker_id)
+
+
 def _poll(kwargs: dict[str, Any], redelivered: bool = False) -> None:
     """Poll a task at its backend once, and schedule the next poll.
 
@@ -612,6 +648,8 @@ def _poll(kwargs: dict[str, Any], redelivered: bool = False) -> None:
             remote_task_id=kwargs["remote_task_id"],
             basic=response,
         )
+    if get_custom_config(CustomConfig).accounting.enabled:
+        _record_usage(collection=collection, kwargs=kwargs, response=response)
     try:
         _store_final(db_client=db_client, worker_id=worker_id, response=response)
     except Exception:

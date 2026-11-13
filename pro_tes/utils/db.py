@@ -32,6 +32,9 @@ TASK_COLLECTION = "tasks"
 PLUGIN_BUILDS_COLLECTION = "plugin_builds"
 PIPELINES_COLLECTION = "pipelines"
 FAILED_RUNS_COLLECTION = "failed_runs"
+# Collection of the records of the resources that tasks used, in the
+# database of the tasks (`custom.accounting`)
+USAGE_COLLECTION = "usage"
 # Projection of stored tasks without the MongoDB identifier and the
 # provenance, which may be large (up to 1 MiB) and is not needed to process
 # tasks
