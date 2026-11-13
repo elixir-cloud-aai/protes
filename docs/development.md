@@ -653,8 +653,8 @@ CI's jobs `Integration (label)`, `Integration (service info)` and
 `Integration (TESK)` on the release commit, in
 the versions that [Notes on TES
 implementations](configuration.md#notes-on-tes-implementations) lists, with
-the TES version that each got (check that all three passed, as the gate
-doesn't need them), and any tested by hand, e.g., on a deployment. Name TES
+the TES version that each got (check that `Integration (TESK)` passed, as the
+gate doesn't need it), and any tested by hand, e.g., on a deployment. Name TES
 implementations whose job failed or was skipped, and deployments not
 tested, as not tested.
 
