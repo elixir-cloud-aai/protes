@@ -273,6 +273,13 @@ class ClientCredentials(ConfigModel):
             `token_endpoint` is set.
         token_endpoint: Token endpoint of the identity provider.
         scope: Scope of the requested tokens (space-separated), if any.
+        audience_parameter: Parameter of token requests that names the TES
+            backend that a token is for, so that each backend gets a token
+            of its own, which the others don't accept: `resource` (RFC 8707,
+            resource indicators) or `audience` (as some identity providers
+            name it); the value is the `audience` of the backend's entry, or
+            else its URL. By default, no backend is named, and all backends
+            get the same token.
         auth_method: How the client authenticates at the token endpoint:
             with HTTP Basic (`client_secret_basic`) or in the request body
             (`client_secret_post`).
@@ -286,6 +293,8 @@ class ClientCredentials(ConfigModel):
             `token_endpoint` is set.
         token_endpoint: Token endpoint of the identity provider.
         scope: Scope of the requested tokens (space-separated), if any.
+        audience_parameter: Parameter of token requests that names the TES
+            backend that a token is for (`resource` or `audience`), if any.
         auth_method: How the client authenticates at the token endpoint:
             with HTTP Basic (`client_secret_basic`) or in the request body
             (`client_secret_post`).
@@ -297,6 +306,7 @@ class ClientCredentials(ConfigModel):
     issuer: str | None = None
     token_endpoint: str | None = None
     scope: str | None = None
+    audience_parameter: Literal["resource", "audience"] | None = None
     auth_method: Literal["client_secret_basic", "client_secret_post"] = (
         "client_secret_basic"
     )
@@ -322,6 +332,33 @@ specification has it; that of the API of proTES too."""
 # Absolute paths of unreserved characters (RFC 3986, section 2.3)
 _API_PATH = re.compile(r"(?:/[A-Za-z0-9._~-]+)+")
 
+# Absolute URIs without query and fragment (RFC 3986, sections 3 and 4.3):
+# a scheme, then unreserved, reserved (but `?`, `#`) and percent-encoded
+# characters only
+_RESOURCE = re.compile(
+    r"[A-Za-z][A-Za-z0-9+.-]*:(?:[A-Za-z0-9._~!$&'()*+,;=:@/\[\]-]|%[0-9A-Fa-f]{2})+"
+)
+
+
+def _is_resource(value: str) -> bool:
+    """Check whether a value is a resource indicator (RFC 8707, section 2).
+
+    Args:
+        value: The value.
+
+    Returns:
+        Whether it is an absolute URI without query and fragment, with a
+        host or path, and a valid port, if any.
+    """
+    if not _RESOURCE.fullmatch(value):
+        return False
+    parts = urlsplit(value)
+    try:
+        parts.port  # noqa: B018 (raises on invalid ports)
+    except ValueError:
+        return False
+    return bool(parts.netloc or parts.path)
+
 
 class TesServiceEntry(ServiceEntry):
     """TES instance of `custom.tes.backends`, with the settings of proTES.
@@ -330,14 +367,21 @@ class TesServiceEntry(ServiceEntry):
         api_path: Path of the TES API, relative to `url`, for TES instances
             that serve it elsewhere than the TES specification says; `/` if
             it is at `url` itself.
+        audience: Audience of the access tokens of proTES for the TES
+            instance, requested with `client_credentials.audience_parameter`
+            (e.g., the client ID of the TES instance); by default, its URL.
         **data: Fields of :py:class:`foca.plugins.backends.ServiceEntry`.
 
     Attributes:
         api_path: Path of the TES API, relative to `url`, without trailing
             slash (empty if it is at `url` itself).
+        audience: Audience of the access tokens of proTES for the TES
+            instance, requested with `client_credentials.audience_parameter`
+            (e.g., the client ID of the TES instance); by default, its URL.
     """
 
     api_path: str = DEFAULT_API_PATH
+    audience: str | None = Field(default=None, min_length=1)
 
     @field_validator("api_path")
     @classmethod
@@ -468,6 +512,47 @@ class Tes(ConfigModel):
                 raise ValueError(
                     f"Label `tes.version` of {entry.url}: {label!r} is none of the"
                     f" supported TES versions ({sorted(map(str, SUPPORTED))})"
+                )
+        return self
+
+    @model_validator(mode="after")
+    def check_audiences(self) -> Self:
+        """Check the audiences of the entries of TES instances.
+
+        Returns:
+            The configuration.
+
+        Raises:
+            ValueError: An entry has an audience, but no `auth:
+                client_credentials`, or audiences are not requested
+                (`client_credentials.audience_parameter`); or an audience
+                has surrounding whitespace; or one requested as `resource`
+                is not an absolute URI without query and fragment (RFC
+                8707, section 2).
+        """
+        parameter = self.client_credentials.audience_parameter
+        for entry in self.backends.root:
+            audience = getattr(entry, "audience", None)
+            if audience is None:
+                continue
+            if entry.auth != "client_credentials":
+                raise ValueError(
+                    f"`audience` of {entry.url} needs `auth: client_credentials`"
+                )
+            if parameter is None:
+                raise ValueError(
+                    f"`audience` of {entry.url} needs"
+                    " `client_credentials.audience_parameter`"
+                )
+            if audience != audience.strip():
+                raise ValueError(
+                    f"`audience` of {entry.url} must not have surrounding whitespace"
+                )
+            if parameter == "resource" and not _is_resource(audience):
+                raise ValueError(
+                    f"`audience` of {entry.url} must be an absolute URI"
+                    " without query and fragment, for `audience_parameter:"
+                    " resource` (RFC 8707)"
                 )
         return self
 

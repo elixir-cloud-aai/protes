@@ -2,12 +2,43 @@
 
 The [release notes](changelog.md) list the breaking changes of each release.
 This page describes how existing setups and data are affected, and what to
-change: first for upgrades from 0.5.0 ([To version
+change: first for upgrades from 0.6.0 ([To version
+0.7.0](#to-version-070)), then from 0.5.0 ([To version
 0.6.0](#to-version-060)), then from 0.4.0 ([To version
 0.5.0](#to-version-050)), then for upgrades from 0.3.0 ([To version
 0.4.0](#to-version-040)), then for deployments from before 0.3.0, i.e.,
 images tagged by date, on FOCA 0.12 ([From versions before
 0.3.0](#from-versions-before-030)), which apply the steps of both parts.
+
+## To version 0.7.0
+
+**Tokens per TES instance (optional):** proTES can request an access token
+of its own for each TES instance, so that TES instances (also those
+discovered in service registries) can't use their tokens at each other.
+Nothing changes unless you set it: by default, all TES instances with `auth:
+client_credentials` still get the same token. To use it, your identity
+provider must issue tokens for a requested audience, and your TES instances
+must check it; then set `custom.tes.client_credentials.audience_parameter`
+to the parameter that your identity provider reads (`resource`, RFC 8707,
+or `audience`), and, for TES instances that expect another audience than
+their URL, `audience` in their entries (`tes.backends[].audience` with the
+Helm chart):
+
+```yaml
+custom:
+  tes:
+    backends:
+      - type: ga4gh-tes
+        url: https://tes.example.org
+        audience: urn:example:tes
+    client_credentials:
+      issuer: https://login.example.org/oidc/
+      audience_parameter: resource
+```
+
+See [Tokens per TES
+instance](access-control.md#tokens-per-tes-instance) for what to check
+before relying on it.
 
 ## To version 0.6.0
 

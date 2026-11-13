@@ -68,6 +68,10 @@ config:
     #   # deployment/README.md, Secrets)
     #   client_credentials:
     #     issuer: "https://login.example.org/oidc/"
+    #     # A token per TES instance, for its `audience` or else its URL:
+    #     # `resource` (RFC 8707) or `audience`; by default (null), one
+    #     # token for all TES instances
+    #     audience_parameter: resource
     #   # true: read service infos of TES backends (for their TES versions,
     #   # and the API paths of discovered ones)
     #   # with their credentials; by default (false) anonymously. With true,
@@ -120,7 +124,10 @@ tes:
   # environment variables (`auth: basic`, set via `protes.extraEnv`) or not
   # at all (`auth: none`); see deployment/README.md, Configuration. TES
   # instances that serve the TES API elsewhere than at `/ga4gh/tes/v1` set
-  # `apiPath` (e.g., TESP: `/v1`).
+  # `apiPath` (e.g., TESP: `/v1`). With
+  # `config.custom.tes.client_credentials.audience_parameter`, each TES
+  # instance gets a token for its own audience: `audience` of its entry, or
+  # else its URL (see docs/access-control.md, Tokens per TES instance).
   # Examples:
   backends: []
   #   - type: ga4gh-tes

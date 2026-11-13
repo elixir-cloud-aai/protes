@@ -540,6 +540,11 @@
                     "pattern": "^/([A-Za-z0-9._~-]+(/[A-Za-z0-9._~-]+)*/?)?$",
                     "description": "Path of the TES API, relative to url (api_path), if not /ga4gh/tes/v1; e.g., /v1 for TESP"
                   },
+                  "audience": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Audience of the access tokens of proTES for the TES instance, requested with config.custom.tes.client_credentials.audience_parameter; defaults to url"
+                  },
                   "urlSchemes": {
                     "type": "array",
                     "minItems": 1,

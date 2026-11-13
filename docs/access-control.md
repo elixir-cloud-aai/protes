@@ -283,6 +283,10 @@ custom:
       issuer: https://login.example.org/oidc/
       # Scope of the tokens, if the identity provider needs one
       scope: null
+      # Parameter that names the TES instance in token requests, for a
+      # token per TES instance: `resource` (RFC 8707) or `audience`; by
+      # default (null), all TES instances get the same token (see below)
+      audience_parameter: null
       # `client_secret_basic` (HTTP Basic) or `client_secret_post`
       auth_method: client_secret_basic
 ```
@@ -295,20 +299,22 @@ checks the credentials on startup, too.
 
 The client of proTES is registered at the identity provider for the client
 credentials grant; it is a client of its own, not the client of the front
-ends whose tokens proTES accepts (`security.auth.audience`). All TES
-instances with `client_credentials` get the same token, so each of them
-could use it at the others until it expires: configure only TES instances
-that you trust, and keep the lifetime of the tokens short. This includes
-the TES instances discovered in service registries, whose entries default
-to `auth: client_credentials`: every TES instance that a registry's admins
-verify gets the token, and could use it at the other TES instances of
-proTES, also at the configured ones. The token has no audience per TES
-instance. Use registries whose admins you trust as much as the TES
-instances that you configure yourself, or set `auth: none` for registry
-entries whose TES instances don't need the token of proTES. On startup,
-proTES logs which TES instances get its token (`TES backends with access
-tokens of proTES: ...`), with the registries whose verified TES instances
-get it (`those verified by registry <url>`). Service infos, read for the TES
+ends whose tokens proTES accepts (`security.auth.audience`). By default,
+all TES instances with `client_credentials` get the same token, so each of
+them could use it at the others until it expires: configure only TES
+instances that you trust, and keep the lifetime of the tokens short. This
+includes the TES instances discovered in service registries, whose entries
+default to `auth: client_credentials`: every TES instance that a registry's
+admins verify gets the token, and could use it at the other TES instances
+of proTES, also at the configured ones. Use registries whose admins you
+trust as much as the TES instances that you configure yourself, or set
+`auth: none` for registry entries whose TES instances don't need the token
+of proTES; or request a token per TES instance (see [Tokens per TES
+instance](#tokens-per-tes-instance)). On startup, proTES logs which TES
+instances get its token (`TES backends with access tokens of proTES: ...`,
+with ``(each for its own audience, requested with `resource`)`` for tokens
+per TES instance), with the registries whose verified TES instances get it
+(`those verified by registry <url>`). Service infos, read for the TES
 versions of TES instances (and the API paths of discovered ones), get no
 credentials, unless
 `custom.tes.probe_with_token` is set, which sends the token also to TES
@@ -349,3 +355,63 @@ e.g., for token exchange): enable only plugins that you trust with it.
 proTES doesn't tell TES instances on whose behalf it forwards tasks yet:
 they only see proTES. Tags with the identity of the user are planned, once
 their names are agreed with other services.
+
+### Tokens per TES instance
+
+With `custom.tes.client_credentials.audience_parameter`, proTES requests a
+token of its own for each TES instance, which names the TES instance as the
+audience of the token, so that a TES instance that checks the audience
+refuses the tokens of the others. The parameter of the token request is
+`resource` (resource indicators, [RFC
+8707](https://www.rfc-editor.org/rfc/rfc8707)) or `audience` (as some
+identity providers name it); its value is the `audience` of the TES
+instance's entry, as written, or else its URL (normalized, e.g., without
+trailing slash). TES instances discovered in a service registry always get tokens
+for their base URLs: the URLs that the registry lists, normalized and
+without the TES API path (e.g., `https://tes.example.org` for
+`https://tes.example.org/ga4gh/tes/v1/`). For `resource`, an `audience` of
+an entry must be an absolute URI without query and fragment (e.g.,
+`urn:example:tes`); for `audience`, it can be any string without
+surrounding whitespace (e.g., the client ID of the TES instance). proTES
+caches the tokens per audience (entries with the same `audience` share a
+token), and refuses to start if an entry sets `audience` without `auth:
+client_credentials`, or while `audience_parameter` is not set. Errors of
+token requests name the audience, in quotes (`No access token for resource
+'<audience>' from <token endpoint>: ...`).
+
+```yaml
+custom:
+  tes:
+    backends:
+      # Gets a token for `https://tes.example.org`
+      - type: ga4gh-tes
+        url: https://tes.example.org
+      # Gets a token for the audience of the entry
+      - type: ga4gh-tes
+        url: https://tes.example.com
+        audience: urn:example:tes
+      # Each verified TES instance gets a token for its URL
+      - type: ga4gh-service-registry
+        url: https://registry.example.org/ga4gh/registry/v1
+    client_credentials:
+      issuer: https://login.example.org/oidc/
+      audience_parameter: resource
+```
+
+This protects TES instances from each other only if all of the following
+hold:
+
+- the identity provider issues tokens for the requested audience (in the
+  `aud` claim of the token, or in what its token introspection returns).
+  Identity providers that set the audience of a client once, at its
+  registration, ignore the parameter (all TES instances get tokens with
+  that audience again) or refuse the request (`invalid_target`, logged as
+  `No access token for <parameter> '<audience>' from <token endpoint>`, and
+  tasks aren't forwarded to the TES instance);
+- each TES instance accepts only tokens for its own audience, e.g., its URL
+  as proTES sends it, or the `audience` of its entry.
+
+proTES doesn't check the audience of the tokens it gets, which may be
+opaque to it. Test the setup before relying on it: decode a token of the
+identity provider for one TES instance, and check that the other TES
+instances refuse it.
