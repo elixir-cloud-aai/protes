@@ -404,8 +404,41 @@ def test_token_audiences_concurrent(
     release.set()
     for thread in threads:
         thread.join(timeout=10)
+        assert not thread.is_alive()
     assert results == ["token-2", "token-2"]
     assert len(idp.requests) == 2
+
+
+def test_token_refresh_pending(
+    idp: FakeIdp, clock: Clock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """While one thread refreshes a token, the others use the cached one.
+
+    Instead of waiting for the identity provider, e.g., while it is slow.
+    """
+    assert get_token() == "token-1"
+    clock.now += 240
+    started = threading.Event()
+    release = threading.Event()
+    post = idp.post
+
+    def slow_post(url: str, **kwargs: Any) -> FakeResponse:
+        """Hold the request until released."""
+        started.set()
+        assert release.wait(timeout=10)
+        return post(url, **kwargs)
+
+    monkeypatch.setattr(backends.requests, "post", slow_post)
+    results: list[str] = []
+    thread = threading.Thread(target=lambda: results.append(get_token()))
+    thread.start()
+    assert started.wait(timeout=10)
+    assert get_token() == "token-1"
+    release.set()
+    thread.join(timeout=10)
+    assert not thread.is_alive()
+    assert results == ["token-2"]
+    assert get_token() == "token-2"
 
 
 def test_token_audience_not_requested(idp: FakeIdp, clock: Clock) -> None:

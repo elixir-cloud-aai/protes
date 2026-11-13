@@ -376,8 +376,8 @@ surrounding whitespace (e.g., the client ID of the TES instance). proTES
 caches the tokens per audience (entries with the same `audience` share a
 token), and refuses to start if an entry sets `audience` without `auth:
 client_credentials`, or while `audience_parameter` is not set. Errors of
-token requests name the audience (`No access token for resource <audience>
-from <token endpoint>: ...`).
+token requests name the audience, in quotes (`No access token for resource
+'<audience>' from <token endpoint>: ...`).
 
 ```yaml
 custom:
@@ -406,7 +406,7 @@ hold:
   Identity providers that set the audience of a client once, at its
   registration, ignore the parameter (all TES instances get tokens with
   that audience again) or refuse the request (`invalid_target`, logged as
-  `No access token for <parameter> <audience> from <token endpoint>`, and
+  `No access token for <parameter> '<audience>' from <token endpoint>`, and
   tasks aren't forwarded to the TES instance);
 - each TES instance accepts only tokens for its own audience, e.g., its URL
   as proTES sends it, or the `audience` of its entry.

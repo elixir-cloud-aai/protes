@@ -228,15 +228,18 @@ class TokenProvider:
     """Access tokens of proTES (client credentials grant), cached.
 
     Thread-safe; each process (e.g., each Gunicorn or Celery worker) has its
-    own cache. Each token (cf. :py:data:`TokenKey`) is fetched by one thread
-    at a time, so that threads that need the same new token at the same time
-    wait for the same fetch instead of each fetching one; threads that need
-    other tokens (e.g., for other audiences) don't wait for it.
+    own cache. Each token (cf. :py:class:`TokenKey`) is fetched by one
+    thread at a time, so that threads that need the same new token at the
+    same time wait for the same fetch instead of each fetching one; threads
+    that need other tokens (e.g., for other audiences) don't wait for it, nor
+    do threads that can still use the cached token while it is refreshed.
     """
 
     def __init__(self) -> None:
         """Create a provider with empty caches."""
-        # guards the dictionaries, never held during token requests
+        # guards the dictionaries; held during token requests never, and
+        # during requests of discovery documents only until the first one of
+        # the issuer succeeds
         self._lock = threading.Lock()
         self._tokens: dict[TokenKey, _Token] = {}
         self._fetch_locks: dict[TokenKey, threading.Lock] = {}
@@ -298,7 +301,13 @@ class TokenProvider:
             return token.value
         with self._lock:
             fetch_lock = self._fetch_locks.setdefault(key, threading.Lock())
-        with fetch_lock:
+        if token is not None and time.monotonic() < token.expires_at:
+            # being refreshed by another thread: use it meanwhile
+            if not fetch_lock.acquire(blocking=False):
+                return token.value
+        else:
+            fetch_lock.acquire()
+        try:
             # another thread may have fetched it in the meantime
             token, fresh = self._cached(key)
             if token is not None and fresh:
@@ -327,9 +336,15 @@ class TokenProvider:
                     k for k, v in self._tokens.items() if now >= v.expires_at
                 ]:
                     del self._tokens[stale]
-                    self._fetch_locks.pop(stale, None)
+                    # locks of fetches in progress are kept, so that their
+                    # tokens are still fetched once; those of keys without
+                    # tokens (failed fetches) stay, bounded by the backends
+                    if not self._fetch_locks[stale].locked():
+                        del self._fetch_locks[stale]
                 self._tokens[key] = new
             return new.value
+        finally:
+            fetch_lock.release()
 
     def _get_token_endpoint(self, config: Tes) -> str:
         """Get the token endpoint, from the config or the issuer's discovery.
