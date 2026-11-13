@@ -190,7 +190,9 @@ time in seconds, and the requested resources times the run time:
 ```
 
 `recording` tells whether finishing tasks are recorded
-(`custom.accounting.enabled`); stored records are served either way. The
+(`custom.accounting.enabled`); stored records are served either way. A total
+too large for a 64-bit float is the largest one (`1.7976931348623157e+308`),
+as JSON has no infinity. The
 query parameters limit the totals:
 
 - `user_id`: the tasks of one user only;

@@ -10,6 +10,7 @@ import pytest
 import tes
 
 from pro_tes.accounting import usage_record, usage_totals
+from pro_tes.accounting.report import SUMMED
 from tests.conftest import DB
 
 START = datetime(2026, 11, 1, tzinfo=UTC)
@@ -104,22 +105,22 @@ def test_totals_in_time_range(usage: Collection[dict[str, Any]]) -> None:
     assert usage_totals(usage, since=START + timedelta(days=30)) == []
 
 
-def test_totals_overflow(usage: Collection[dict[str, Any]]) -> None:
+@pytest.mark.parametrize("field", SUMMED)
+def test_totals_overflow(usage: Collection[dict[str, Any]], field: str) -> None:
     """Sums too large for a float are the largest float, which JSON can hold."""
     for task in ("TASK01", "TASK02"):
+        record = dict.fromkeys(SUMMED, 1.0)
+        record[field] = 1e308
         usage.insert_one(
             {
                 "_id": task,
                 "user_id": "carol",
                 "timed": True,
                 "finished_at": datetime(2026, 11, 13, tzinfo=UTC),
-                "wall_seconds": 1.0,
-                "cpu_core_seconds": 0.0,
-                "ram_gb_seconds": 1e308,
-                "disk_gb_seconds": 0.0,
+                **record,
             }
         )
     (total,) = usage_totals(usage, user_id="carol")
-    assert total["ram_gb_seconds"] == sys.float_info.max
-    assert total["wall_seconds"] == 2.0
+    assert total[field] == sys.float_info.max
+    assert all(total[name] == 2.0 for name in SUMMED if name != field)
     assert total["tasks"] == 2

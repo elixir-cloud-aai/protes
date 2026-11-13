@@ -95,6 +95,7 @@ def test_get_usage_recording(app: FlaskApp, client: FlaskClient) -> None:
         "2026-11-01T00:00",
         "2026-W44-7T00:00:00Z",
         "2016-12-31T23:59:60Z",
+        "2026-11-01T00:00:00+05:60",
     ],
 )
 @pytest.mark.parametrize("name", ["since", "until"])

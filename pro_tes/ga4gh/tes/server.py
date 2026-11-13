@@ -25,7 +25,8 @@ from pro_tes.utils.db import TASK_DB, USAGE_COLLECTION
 
 # Date-times of RFC 3339 (section 5.6), whose time zone may be left out
 RFC3339_DATE_TIME = re.compile(
-    r"\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}:\d{2}(\.\d+)?([Zz]|[+-]\d{2}:\d{2})?",
+    r"\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}:\d{2}(\.\d+)?"
+    r"([Zz]|[+-]([01]\d|2[0-3]):[0-5]\d)?",
     re.ASCII,
 )
 

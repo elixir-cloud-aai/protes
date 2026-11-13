@@ -13,6 +13,21 @@ from pro_tes.accounting.record import RESOURCES
 SUMMED = ("wall_seconds", *RESOURCES.values())
 
 
+def _cap(value: Any) -> Any:
+    """Cap a total that overflowed, which JSON can't represent.
+
+    Args:
+        value: The total, as summed up by MongoDB.
+
+    Returns:
+        The largest float if the total is a float that is not finite; else
+        the total.
+    """
+    if isinstance(value, float) and not math.isfinite(value):
+        return sys.float_info.max
+    return value
+
+
 def usage_totals(
     usage: Collection[dict[str, Any]],
     user_id: str | None = None,
@@ -56,16 +71,9 @@ def usage_totals(
     totals = usage.aggregate(
         [{"$match": match}, {"$group": group}, {"$sort": {"_id": 1}}]
     )
-    # sums of finite records may still overflow, which JSON can't represent
-    return [
-        {
-            "user_id": total.pop("_id"),
-            **{
-                key: value
-                if not isinstance(value, float) or math.isfinite(value)
-                else sys.float_info.max
-                for key, value in total.items()
-            },
-        }
-        for total in totals
-    ]
+    report = []
+    for total in totals:
+        user = total.pop("_id")
+        # sums of finite records may still overflow
+        report.append({"user_id": user, **{k: _cap(v) for k, v in total.items()}})
+    return report
