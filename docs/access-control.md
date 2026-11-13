@@ -312,7 +312,7 @@ trust as much as the TES instances that you configure yourself, or set
 of proTES; or request a token per TES instance (see [Tokens per TES
 instance](#tokens-per-tes-instance)). On startup, proTES logs which TES
 instances get its token (`TES backends with access tokens of proTES: ...`,
-with `(each for its own audience, requested with <parameter>)` for tokens
+with ``(each for its own audience, requested with `resource`)`` for tokens
 per TES instance), with the registries whose verified TES instances get it
 (`those verified by registry <url>`). Service infos, read for the TES
 versions of TES instances (and the API paths of discovered ones), get no
@@ -365,13 +365,19 @@ refuses the tokens of the others. The parameter of the token request is
 `resource` (resource indicators, [RFC
 8707](https://www.rfc-editor.org/rfc/rfc8707)) or `audience` (as some
 identity providers name it); its value is the `audience` of the TES
-instance's entry, or else its URL (normalized, e.g., without trailing
-slash). TES instances discovered in a service registry always get tokens
-for their URLs, as listed in the registry. For `resource`, an `audience` of
-an entry must be an absolute URI without fragment (e.g., `urn:example:tes`);
-for `audience`, it can be any string (e.g., the client ID of the TES
-instance). proTES caches the tokens per TES instance, and refuses to start
-if an entry sets `audience` but `audience_parameter` is not set.
+instance's entry, as written, or else its URL (normalized, e.g., without
+trailing slash). TES instances discovered in a service registry always get tokens
+for their base URLs: the URLs that the registry lists, normalized and
+without the TES API path (e.g., `https://tes.example.org` for
+`https://tes.example.org/ga4gh/tes/v1/`). For `resource`, an `audience` of
+an entry must be an absolute URI without query and fragment (e.g.,
+`urn:example:tes`); for `audience`, it can be any string without
+surrounding whitespace (e.g., the client ID of the TES instance). proTES
+caches the tokens per audience (entries with the same `audience` share a
+token), and refuses to start if an entry sets `audience` without `auth:
+client_credentials`, or while `audience_parameter` is not set. Errors of
+token requests name the audience (`No access token for resource <audience>
+from <token endpoint>: ...`).
 
 ```yaml
 custom:
@@ -400,8 +406,8 @@ hold:
   Identity providers that set the audience of a client once, at its
   registration, ignore the parameter (all TES instances get tokens with
   that audience again) or refuse the request (`invalid_target`, logged as
-  `No access token from <token endpoint>`, and tasks aren't forwarded
-  to the TES instance);
+  `No access token for <parameter> <audience> from <token endpoint>`, and
+  tasks aren't forwarded to the TES instance);
 - each TES instance accepts only tokens for its own audience, e.g., its URL
   as proTES sends it, or the `audience` of its entry.
 

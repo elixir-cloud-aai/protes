@@ -650,7 +650,9 @@ def test_client_discovered_token(
     )
     discovering.add("a", "https://tes1.example.org")
     monkeypatch.setattr(
-        backends.token_provider, "get_token", lambda config, audience: "token-of-protes"
+        backends.token_provider,
+        "get_token",
+        lambda config, audience=None: "token-of-protes",
     )
     client = backends.create_client(host="https://tes1.example.org")
     assert client._request_params()["headers"]["Authorization"] == (
@@ -675,7 +677,7 @@ def test_client_discovered_token_audience(
     discovering.add("b", "https://tes2.example.org")
     audiences: list[str | None] = []
 
-    def get_token(config: Any, audience: str | None) -> str:
+    def get_token(config: Any, audience: str | None = None) -> str:
         """Record the audience of the token."""
         audiences.append(audience)
         return f"token-for-{audience}"
@@ -920,7 +922,9 @@ def test_api_path_discovered_refused_with_token(
     )
     config.probe_with_token = True
     monkeypatch.setattr(
-        backends.token_provider, "get_token", lambda config, audience: "token-of-protes"
+        backends.token_provider,
+        "get_token",
+        lambda config, audience=None: "token-of-protes",
     )
     discovering.add("a", "https://tes1.example.org")
     fake_tes.answers["https://tes1.example.org/service-info"] = http.HttpResponse(
@@ -1071,7 +1075,9 @@ def test_api_path_discovered_token(
     )
     config.probe_with_token = probe_with_token
     monkeypatch.setattr(
-        backends.token_provider, "get_token", lambda config, audience: "token-of-protes"
+        backends.token_provider,
+        "get_token",
+        lambda config, audience=None: "token-of-protes",
     )
     discovering.add("a", "https://tes1.example.org")
     client = backends.create_client(host="https://tes1.example.org")
@@ -1091,7 +1097,7 @@ def test_api_path_discovered_no_token(
     )
     config.probe_with_token = True
 
-    def no_token(config: Any, audience: str | None) -> str:
+    def no_token(config: Any, audience: str | None = None) -> str:
         """Fail to get a token."""
         raise BackendAuthError("no token")
 

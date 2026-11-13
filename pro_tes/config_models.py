@@ -340,7 +340,6 @@ class TesServiceEntry(ServiceEntry):
         api_path: Path of the TES API, relative to `url`, for TES instances
             that serve it elsewhere than the TES specification says; `/` if
             it is at `url` itself.
-            `/` if it is at `url` itself.
         audience: Audience of the access tokens of proTES for the TES
             instance, requested with `client_credentials.audience_parameter`
             (e.g., the client ID of the TES instance); by default, its URL.
@@ -497,28 +496,43 @@ class Tes(ConfigModel):
             The configuration.
 
         Raises:
-            ValueError: An entry has an audience, but audiences are not
-                requested (`client_credentials.audience_parameter`); or one
-                requested as `resource` is not an absolute URI without
-                fragment (RFC 8707, section 2).
+            ValueError: An entry has an audience, but no `auth:
+                client_credentials`, or audiences are not requested
+                (`client_credentials.audience_parameter`); or an audience
+                has surrounding whitespace; or one requested as `resource`
+                is not an absolute URI without query and fragment (RFC
+                8707, section 2).
         """
         parameter = self.client_credentials.audience_parameter
         for entry in self.backends.root:
             audience = getattr(entry, "audience", None)
             if audience is None:
                 continue
+            if entry.auth != "client_credentials":
+                raise ValueError(
+                    f"`audience` of {entry.url} needs `auth: client_credentials`"
+                )
             if parameter is None:
                 raise ValueError(
                     f"`audience` of {entry.url} needs"
                     " `client_credentials.audience_parameter`"
                 )
+            if audience != audience.strip():
+                raise ValueError(
+                    f"`audience` of {entry.url} must not have surrounding whitespace"
+                )
             if parameter == "resource":
                 parts = urlsplit(audience)
-                if not parts.scheme or parts.fragment or "#" in audience:
+                if (
+                    not parts.scheme
+                    or not (parts.netloc or parts.path)
+                    or "?" in audience
+                    or "#" in audience
+                ):
                     raise ValueError(
                         f"`audience` of {entry.url} must be an absolute URI"
-                        " without fragment, for `audience_parameter: resource`"
-                        " (RFC 8707)"
+                        " without query and fragment, for `audience_parameter:"
+                        " resource` (RFC 8707)"
                     )
         return self
 

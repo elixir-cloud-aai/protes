@@ -354,6 +354,60 @@ def test_token_audience(idp: FakeIdp, clock: Clock, parameter: str) -> None:
     ]
 
 
+def test_token_audience_refused(idp: FakeIdp, clock: Clock) -> None:
+    """Errors of token requests name the requested audience."""
+    idp.token_status = 400
+    config = tes_config(issuer=ISSUER, audience_parameter="resource")
+    with pytest.raises(
+        BackendAuthError,
+        match=r"No access token for resource 'https://tes1\.example\.org' from",
+    ):
+        backends.token_provider.get_token(
+            config=config, audience="https://tes1.example.org"
+        )
+
+
+def test_token_audiences_concurrent(
+    idp: FakeIdp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A slow token request for one audience doesn't hold up the others.
+
+    Threads that need the same token wait for the same request.
+    """
+    config = tes_config(issuer=ISSUER, audience_parameter="resource")
+    get = backends.token_provider.get_token
+    assert get(config=config, audience="https://fast.example.org") == "token-1"
+    started = threading.Event()
+    release = threading.Event()
+    post = idp.post
+
+    def slow_post(url: str, **kwargs: Any) -> FakeResponse:
+        """Hold the request for the slow audience until released."""
+        if kwargs["data"].get("resource") == "https://slow.example.org":
+            started.set()
+            assert release.wait(timeout=10)
+        return post(url, **kwargs)
+
+    monkeypatch.setattr(backends.requests, "post", slow_post)
+    results: list[str] = []
+
+    def fetch_slow() -> None:
+        """Get the token of the slow audience."""
+        results.append(get(config=config, audience="https://slow.example.org"))
+
+    threads = [threading.Thread(target=fetch_slow) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    assert started.wait(timeout=10)
+    # cached, while the other request is pending
+    assert get(config=config, audience="https://fast.example.org") == "token-1"
+    release.set()
+    for thread in threads:
+        thread.join(timeout=10)
+    assert results == ["token-2", "token-2"]
+    assert len(idp.requests) == 2
+
+
 def test_token_audience_not_requested(idp: FakeIdp, clock: Clock) -> None:
     """Without `audience_parameter`, audiences are not requested: one token."""
     get = backends.token_provider.get_token
@@ -674,6 +728,8 @@ def test_backend_config_default() -> None:
     assert entry.url == BACKEND_URL
     assert config.uses_tokens
     assert not Tes().uses_tokens
+    # one token for all backends
+    assert Tes().client_credentials.audience_parameter is None
     assert Tes().max_response_size == 10 * 1024 * 1024
 
 
@@ -760,7 +816,19 @@ def test_backend_config_default() -> None:
                     "audience_parameter": "resource",
                 },
             },
-            "without fragment",
+            "without query and fragment",
+        ),
+        (
+            {
+                "backends": [
+                    {"type": "ga4gh-tes", "url": BACKEND_URL, "audience": "urn:x#"},
+                ],
+                "client_credentials": {
+                    "issuer": ISSUER,
+                    "audience_parameter": "resource",
+                },
+            },
+            "without query and fragment",
         ),
         (
             {"backends": [{"type": "ga4gh-tes", "url": BACKEND_URL, "audience": ""}]},
@@ -769,6 +837,64 @@ def test_backend_config_default() -> None:
         (
             {"client_credentials": {"issuer": ISSUER, "audience_parameter": "aud"}},
             "'resource' or 'audience'",
+        ),
+        (
+            {
+                "backends": [
+                    {
+                        "type": "ga4gh-tes",
+                        "url": BACKEND_URL,
+                        "audience": " https://tes.example.org",
+                    },
+                ],
+                "client_credentials": {
+                    "issuer": ISSUER,
+                    "audience_parameter": "audience",
+                },
+            },
+            "surrounding whitespace",
+        ),
+        (
+            {
+                "backends": [
+                    {
+                        "type": "ga4gh-tes",
+                        "url": BACKEND_URL,
+                        "audience": "https://tes.example.org?q=1",
+                    },
+                ],
+                "client_credentials": {
+                    "issuer": ISSUER,
+                    "audience_parameter": "resource",
+                },
+            },
+            "without query",
+        ),
+        (
+            {
+                "backends": [
+                    {"type": "ga4gh-tes", "url": BACKEND_URL, "audience": "tes:"},
+                ],
+                "client_credentials": {
+                    "issuer": ISSUER,
+                    "audience_parameter": "resource",
+                },
+            },
+            "absolute URI",
+        ),
+        (
+            {
+                "backends": [
+                    {
+                        "type": "ga4gh-tes",
+                        "url": BACKEND_URL,
+                        "auth": "none",
+                        "audience": "tes",
+                    },
+                ],
+                "client_credentials": {"audience_parameter": "audience"},
+            },
+            "needs `auth: client_credentials`",
         ),
         ({"url_schemes": []}, "at least 1"),
         ({"url_schemes": ["ftp"]}, "https"),
@@ -804,7 +930,6 @@ def test_tes_config_audience(parameter: str, audience: str) -> None:
     (entry,) = config.backends.root
     assert isinstance(entry, TesServiceEntry)
     assert entry.audience == audience
-    assert Tes().client_credentials.audience_parameter is None
 
 
 def test_tes_config_http() -> None:
