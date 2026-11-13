@@ -273,6 +273,13 @@ class ClientCredentials(ConfigModel):
             `token_endpoint` is set.
         token_endpoint: Token endpoint of the identity provider.
         scope: Scope of the requested tokens (space-separated), if any.
+        audience_parameter: Parameter of token requests that names the TES
+            backend that a token is for, so that each backend gets a token
+            of its own, which the others don't accept: `resource` (RFC 8707,
+            resource indicators) or `audience` (as some identity providers
+            name it); the value is the `audience` of the backend's entry, or
+            else its URL. By default, no backend is named, and all backends
+            get the same token.
         auth_method: How the client authenticates at the token endpoint:
             with HTTP Basic (`client_secret_basic`) or in the request body
             (`client_secret_post`).
@@ -286,6 +293,8 @@ class ClientCredentials(ConfigModel):
             `token_endpoint` is set.
         token_endpoint: Token endpoint of the identity provider.
         scope: Scope of the requested tokens (space-separated), if any.
+        audience_parameter: Parameter of token requests that names the TES
+            backend that a token is for (`resource` or `audience`), if any.
         auth_method: How the client authenticates at the token endpoint:
             with HTTP Basic (`client_secret_basic`) or in the request body
             (`client_secret_post`).
@@ -297,6 +306,7 @@ class ClientCredentials(ConfigModel):
     issuer: str | None = None
     token_endpoint: str | None = None
     scope: str | None = None
+    audience_parameter: Literal["resource", "audience"] | None = None
     auth_method: Literal["client_secret_basic", "client_secret_post"] = (
         "client_secret_basic"
     )
@@ -330,14 +340,22 @@ class TesServiceEntry(ServiceEntry):
         api_path: Path of the TES API, relative to `url`, for TES instances
             that serve it elsewhere than the TES specification says; `/` if
             it is at `url` itself.
+            `/` if it is at `url` itself.
+        audience: Audience of the access tokens of proTES for the TES
+            instance, requested with `client_credentials.audience_parameter`
+            (e.g., the client ID of the TES instance); by default, its URL.
         **data: Fields of :py:class:`foca.plugins.backends.ServiceEntry`.
 
     Attributes:
         api_path: Path of the TES API, relative to `url`, without trailing
             slash (empty if it is at `url` itself).
+        audience: Audience of the access tokens of proTES for the TES
+            instance, requested with `client_credentials.audience_parameter`
+            (e.g., the client ID of the TES instance); by default, its URL.
     """
 
     api_path: str = DEFAULT_API_PATH
+    audience: str | None = Field(default=None, min_length=1)
 
     @field_validator("api_path")
     @classmethod
@@ -469,6 +487,39 @@ class Tes(ConfigModel):
                     f"Label `tes.version` of {entry.url}: {label!r} is none of the"
                     f" supported TES versions ({sorted(map(str, SUPPORTED))})"
                 )
+        return self
+
+    @model_validator(mode="after")
+    def check_audiences(self) -> Self:
+        """Check the audiences of the entries of TES instances.
+
+        Returns:
+            The configuration.
+
+        Raises:
+            ValueError: An entry has an audience, but audiences are not
+                requested (`client_credentials.audience_parameter`); or one
+                requested as `resource` is not an absolute URI without
+                fragment (RFC 8707, section 2).
+        """
+        parameter = self.client_credentials.audience_parameter
+        for entry in self.backends.root:
+            audience = getattr(entry, "audience", None)
+            if audience is None:
+                continue
+            if parameter is None:
+                raise ValueError(
+                    f"`audience` of {entry.url} needs"
+                    " `client_credentials.audience_parameter`"
+                )
+            if parameter == "resource":
+                parts = urlsplit(audience)
+                if not parts.scheme or parts.fragment or "#" in audience:
+                    raise ValueError(
+                        f"`audience` of {entry.url} must be an absolute URI"
+                        " without fragment, for `audience_parameter: resource`"
+                        " (RFC 8707)"
+                    )
         return self
 
     @property

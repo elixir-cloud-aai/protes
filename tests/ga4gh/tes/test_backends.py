@@ -30,7 +30,12 @@ from urllib3.exceptions import (
     SSLError,
 )
 
-from pro_tes.config_models import ClientCredentials, CustomConfig, Tes
+from pro_tes.config_models import (
+    ClientCredentials,
+    CustomConfig,
+    Tes,
+    TesServiceEntry,
+)
 from pro_tes.exceptions import (
     BackendAddressNotAllowed,
     BackendAuthError,
@@ -322,6 +327,58 @@ def test_token_endpoint_configured(idp: FakeIdp, clock: Clock) -> None:
     assert request["auth"] is backends.NO_CREDENTIALS
 
 
+@pytest.mark.parametrize("parameter", ["resource", "audience"])
+def test_token_audience(idp: FakeIdp, clock: Clock, parameter: str) -> None:
+    """Tokens are requested and cached per audience, in the configured parameter.
+
+    Requests without an audience name none, and get a token of their own.
+    """
+    config = tes_config(issuer=ISSUER, scope="tes", audience_parameter=parameter)
+    get = backends.token_provider.get_token
+    assert get(config=config, audience="https://tes1.example.org") == "token-1"
+    assert get(config=config, audience="https://tes2.example.org") == "token-2"
+    assert get(config=config, audience="https://tes1.example.org") == "token-1"
+    assert get(config=config) == "token-3"
+    assert [request["data"] for request in idp.requests] == [
+        {
+            "grant_type": "client_credentials",
+            "scope": "tes",
+            parameter: "https://tes1.example.org",
+        },
+        {
+            "grant_type": "client_credentials",
+            "scope": "tes",
+            parameter: "https://tes2.example.org",
+        },
+        {"grant_type": "client_credentials", "scope": "tes"},
+    ]
+
+
+def test_token_audience_not_requested(idp: FakeIdp, clock: Clock) -> None:
+    """Without `audience_parameter`, audiences are not requested: one token."""
+    get = backends.token_provider.get_token
+    assert get(config=tes_config(), audience="https://tes1.example.org") == "token-1"
+    assert get(config=tes_config(), audience="https://tes2.example.org") == "token-1"
+    (request,) = idp.requests
+    assert request["data"] == {"grant_type": "client_credentials"}
+
+
+def test_token_expired_removed(idp: FakeIdp, clock: Clock) -> None:
+    """Expired tokens are removed from the cache when a token is fetched.
+
+    So that the tokens of backends that are gone (e.g., no longer verified
+    by a registry) don't stay in the cache.
+    """
+    config = tes_config(issuer=ISSUER, audience_parameter="resource")
+    get = backends.token_provider.get_token
+    get(config=config, audience="https://tes1.example.org")
+    clock.now += 300
+    get(config=config, audience="https://tes2.example.org")
+    assert [key[-1] for key in backends.token_provider._tokens] == [
+        "https://tes2.example.org"
+    ]
+
+
 @pytest.mark.parametrize("name", [backends.CLIENT_ID_ENV, backends.CLIENT_SECRET_ENV])
 def test_token_client_missing(
     idp: FakeIdp, monkeypatch: pytest.MonkeyPatch, name: str
@@ -462,6 +519,41 @@ def test_client_token(configured: None, idp: FakeIdp) -> None:
         assert "auth" not in kwargs
         assert kwargs["data"] == "{}"
         assert kwargs["timeout"] == (5, 15)
+
+
+def test_client_token_audience(configured: None, idp: FakeIdp) -> None:
+    """With `audience_parameter`, each backend gets a token for its own URL.
+
+    Or for the `audience` of its entry; requests that use proTES' token for
+    a backend with other credentials get one for that backend's URL, too.
+    """
+    conf = get_custom_config(CustomConfig).tes
+    conf.client_credentials = ClientCredentials(
+        issuer=ISSUER, audience_parameter="resource"
+    )
+    conf.backends = BackendListConfig.model_validate(
+        [
+            *conf.backends.root,
+            TesServiceEntry(
+                type="ga4gh-tes",
+                url=f"{BACKEND_URL}/named",
+                audience="urn:example:tes",
+            ),
+        ]
+    )
+    token = request_kwargs(f"{BACKEND_URL}/token")
+    named = request_kwargs(f"{BACKEND_URL}/named")
+    chosen = backends.create_client(host=f"{BACKEND_URL}/none")._request_params(
+        auth="client_credentials"
+    )
+    assert token["headers"]["Authorization"] == "Bearer token-1"
+    assert named["headers"]["Authorization"] == "Bearer token-2"
+    assert chosen["headers"]["Authorization"] == "Bearer token-3"
+    assert [request["data"]["resource"] for request in idp.requests] == [
+        f"{BACKEND_URL}/token",
+        "urn:example:tes",
+        f"{BACKEND_URL}/none",
+    ]
 
 
 def test_client_basic(
@@ -632,6 +724,52 @@ def test_backend_config_default() -> None:
             {"client_credentials": {"token_endpoint": "https://idp.example.org:x/t"}},
             "Invalid URL of the token endpoint",
         ),
+        (
+            {
+                "backends": [
+                    {"type": "ga4gh-tes", "url": BACKEND_URL, "audience": "tes"},
+                ],
+                "client_credentials": {"issuer": ISSUER},
+            },
+            "`audience` of https://tes.example.org needs"
+            " `client_credentials.audience_parameter`",
+        ),
+        (
+            {
+                "backends": [
+                    {"type": "ga4gh-tes", "url": BACKEND_URL, "audience": "tes"},
+                ],
+                "client_credentials": {
+                    "issuer": ISSUER,
+                    "audience_parameter": "resource",
+                },
+            },
+            "`audience` of https://tes.example.org must be an absolute URI",
+        ),
+        (
+            {
+                "backends": [
+                    {
+                        "type": "ga4gh-tes",
+                        "url": BACKEND_URL,
+                        "audience": "https://tes.example.org/#tes",
+                    },
+                ],
+                "client_credentials": {
+                    "issuer": ISSUER,
+                    "audience_parameter": "resource",
+                },
+            },
+            "without fragment",
+        ),
+        (
+            {"backends": [{"type": "ga4gh-tes", "url": BACKEND_URL, "audience": ""}]},
+            "at least 1 character",
+        ),
+        (
+            {"client_credentials": {"issuer": ISSUER, "audience_parameter": "aud"}},
+            "'resource' or 'audience'",
+        ),
         ({"url_schemes": []}, "at least 1"),
         ({"url_schemes": ["ftp"]}, "https"),
         ({"max_response_size": 1024 * 1024 - 1}, "greater than or equal"),
@@ -642,6 +780,31 @@ def test_tes_config_invalid(config: dict[str, Any], match: str) -> None:
     """Backend URLs need allowed schemes; token backends need an issuer."""
     with pytest.raises(pydantic.ValidationError, match=match):
         Tes(**config)
+
+
+@pytest.mark.parametrize(
+    "parameter, audience",
+    [("resource", "urn:example:tes"), ("audience", "tes-client")],
+)
+def test_tes_config_audience(parameter: str, audience: str) -> None:
+    """Entries may set the audience of their tokens, if audiences are requested.
+
+    For `resource`, as an absolute URI (RFC 8707, section 2); otherwise as
+    any string (e.g., a client ID).
+    """
+    config = Tes(
+        backends=[  # type: ignore[arg-type]
+            {"type": "ga4gh-tes", "url": BACKEND_URL, "audience": audience}
+        ],
+        client_credentials={  # type: ignore[arg-type]
+            "issuer": ISSUER,
+            "audience_parameter": parameter,
+        },
+    )
+    (entry,) = config.backends.root
+    assert isinstance(entry, TesServiceEntry)
+    assert entry.audience == audience
+    assert Tes().client_credentials.audience_parameter is None
 
 
 def test_tes_config_http() -> None:

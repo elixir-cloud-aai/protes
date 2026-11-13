@@ -16,7 +16,10 @@ their registry entry):
   provider with the OAuth 2.0 client credentials grant (RFC 6749, section
   4.4), with the client ID and secret of the environment variables
   `CLIENT_ID_ENV` and `CLIENT_SECRET_ENV`; tokens are cached, and fetched
-  anew shortly before they expire;
+  anew shortly before they expire; with
+  `custom.tes.client_credentials.audience_parameter`, each backend gets a
+  token for its own audience (cf. :py:func:`token_audience`), otherwise all
+  get the same;
 - `basic`: HTTP Basic credentials of the environment variables named in the
   config (a transitional mode, for backends that don't accept tokens yet);
 - `none`: no credentials.
@@ -217,7 +220,7 @@ class TokenProvider:
     def __init__(self) -> None:
         """Create a provider with empty caches."""
         self._lock = threading.Lock()
-        self._tokens: dict[tuple[str, str, str | None], _Token] = {}
+        self._tokens: dict[tuple[str, str, str | None, str | None], _Token] = {}
         self._token_endpoints: dict[str, str] = {}
 
     def clear(self) -> None:
@@ -226,15 +229,20 @@ class TokenProvider:
             self._tokens.clear()
             self._token_endpoints.clear()
 
-    def get_token(self, config: Tes) -> str:
+    def get_token(self, config: Tes, audience: str | None = None) -> str:
         """Get an access token of proTES.
 
         A cached token is used until `refresh_before` seconds before it
         expires (at most half its lifetime before), then a new one is
         fetched; if that fails, the cached token is used until it expires.
+        Tokens are cached per token endpoint, client, scope and audience;
+        expired ones are removed whenever a token is fetched.
 
         Args:
             config: TES backend configuration.
+            audience: Audience of the token, requested with
+                `client_credentials.audience_parameter` (ignored if that is
+                not set); by default, none.
 
         Returns:
             The access token.
@@ -246,9 +254,11 @@ class TokenProvider:
         client_id = get_env(CLIENT_ID_ENV)
         client_secret = get_env(CLIENT_SECRET_ENV)
         idp = config.client_credentials
+        if idp.audience_parameter is None:
+            audience = None
         with self._lock:
             endpoint = self._get_token_endpoint(config=config)
-            key = (endpoint, client_id, idp.scope)
+            key = (endpoint, client_id, idp.scope, audience)
             token = self._tokens.get(key)
             if token is not None and time.monotonic() < token.refresh_at:
                 return token.value
@@ -258,6 +268,7 @@ class TokenProvider:
                     client_id=client_id,
                     client_secret=client_secret,
                     idp=idp,
+                    audience=audience,
                 )
             except BackendAuthError as exc:
                 if token is None or time.monotonic() >= token.expires_at:
@@ -269,6 +280,9 @@ class TokenProvider:
                     "Using the cached access token until it expires: %s", exc
                 )
                 return token.value
+            now = time.monotonic()
+            for stale in [k for k, v in self._tokens.items() if now >= v.expires_at]:
+                del self._tokens[stale]
             self._tokens[key] = token
             return token.value
 
@@ -331,6 +345,7 @@ class TokenProvider:
         client_id: str,
         client_secret: str,
         idp: ClientCredentials,
+        audience: str | None = None,
     ) -> _Token:
         """Fetch an access token with the client credentials grant.
 
@@ -339,6 +354,8 @@ class TokenProvider:
             client_id: Client ID of proTES.
             client_secret: Client secret of proTES.
             idp: Settings of the client of proTES.
+            audience: Audience of the token, requested in the parameter
+                `idp.audience_parameter`; by default, none.
 
         Returns:
             The access token, with the time to fetch a new one.
@@ -350,6 +367,8 @@ class TokenProvider:
         data = {"grant_type": "client_credentials"}
         if idp.scope is not None:
             data["scope"] = idp.scope
+        if audience is not None and idp.audience_parameter is not None:
+            data[idp.audience_parameter] = audience
         # none from `.netrc` besides the client's (cf. `BackendSession`)
         auth: tuple[str, str] | requests.auth.AuthBase = NO_CREDENTIALS
         if idp.auth_method == "client_secret_basic":
@@ -405,6 +424,29 @@ class TokenProvider:
 
 
 token_provider = TokenProvider()
+
+
+def token_audience(
+    backend: Backend, entry: ServiceEntry | RegistryEntry, config: Tes
+) -> str | None:
+    """Get the audience of the access tokens of proTES for a backend.
+
+    Args:
+        backend: The backend.
+        entry: Entry of the backend in `custom.tes.backends` (the registry
+            entry, for discovered backends).
+        config: TES backend configuration.
+
+    Returns:
+        The `audience` of the backend's entry, or else its URL (for
+        discovered backends, always their URL); `None` if audiences are not
+        requested (`client_credentials.audience_parameter`).
+    """
+    if config.client_credentials.audience_parameter is None:
+        return None
+    if isinstance(entry, TesServiceEntry) and entry.audience is not None:
+        return entry.audience
+    return backend.url
 
 
 def get_backend_list(public_url: str | None = None) -> BackendList:
@@ -1074,7 +1116,10 @@ class TesClient(tes.HTTPClient):
         if auth is None:
             auth = self.backend.auth
         if auth == "client_credentials":
-            token = token_provider.get_token(config=config)
+            token = token_provider.get_token(
+                config=config,
+                audience=token_audience(self.backend, self.entry, config),
+            )
             kwargs["headers"]["Authorization"] = f"Bearer {token}"
         elif auth == "basic":
             basic = self.entry.basic if isinstance(self.entry, ServiceEntry) else None

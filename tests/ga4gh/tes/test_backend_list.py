@@ -650,12 +650,43 @@ def test_client_discovered_token(
     )
     discovering.add("a", "https://tes1.example.org")
     monkeypatch.setattr(
-        backends.token_provider, "get_token", lambda config: "token-of-protes"
+        backends.token_provider, "get_token", lambda config, audience: "token-of-protes"
     )
     client = backends.create_client(host="https://tes1.example.org")
     assert client._request_params()["headers"]["Authorization"] == (
         "Bearer token-of-protes"
     )
+
+
+def test_client_discovered_token_audience(
+    discovering: FakeRegistry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With `audience_parameter`, discovered backends get tokens for their URLs.
+
+    So that one discovered backend can't use its token at the others.
+    """
+    tes = get_custom_config(CustomConfig).tes
+    tes.backends = backend_list(auth="client_credentials")
+    tes.client_credentials = ClientCredentials(
+        token_endpoint="https://idp.example.org/token",  # noqa: S106 (a URL)
+        audience_parameter="resource",
+    )
+    discovering.add("a", "https://tes1.example.org")
+    discovering.add("b", "https://tes2.example.org")
+    audiences: list[str | None] = []
+
+    def get_token(config: Any, audience: str | None) -> str:
+        """Record the audience of the token."""
+        audiences.append(audience)
+        return f"token-for-{audience}"
+
+    monkeypatch.setattr(backends.token_provider, "get_token", get_token)
+    for url in ("https://tes1.example.org", "https://tes2.example.org"):
+        client = backends.create_client(host=url)
+        assert client._request_params()["headers"]["Authorization"] == (
+            f"Bearer token-for-{url}"
+        )
+    assert audiences == ["https://tes1.example.org", "https://tes2.example.org"]
 
 
 def test_task_relayed_to_discovered_backend(
@@ -889,7 +920,7 @@ def test_api_path_discovered_refused_with_token(
     )
     config.probe_with_token = True
     monkeypatch.setattr(
-        backends.token_provider, "get_token", lambda config: "token-of-protes"
+        backends.token_provider, "get_token", lambda config, audience: "token-of-protes"
     )
     discovering.add("a", "https://tes1.example.org")
     fake_tes.answers["https://tes1.example.org/service-info"] = http.HttpResponse(
@@ -1040,7 +1071,7 @@ def test_api_path_discovered_token(
     )
     config.probe_with_token = probe_with_token
     monkeypatch.setattr(
-        backends.token_provider, "get_token", lambda config: "token-of-protes"
+        backends.token_provider, "get_token", lambda config, audience: "token-of-protes"
     )
     discovering.add("a", "https://tes1.example.org")
     client = backends.create_client(host="https://tes1.example.org")
@@ -1060,7 +1091,7 @@ def test_api_path_discovered_no_token(
     )
     config.probe_with_token = True
 
-    def no_token(config: Any) -> str:
+    def no_token(config: Any, audience: str | None) -> str:
         """Fail to get a token."""
         raise BackendAuthError("no token")
 

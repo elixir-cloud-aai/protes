@@ -370,6 +370,28 @@ def test_registry_tokens_logged(
     assert "client-secret" not in caplog.text
 
 
+def test_audience_tokens_logged(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """With `audience_parameter`, the log says that each gets its own token."""
+    monkeypatch.setenv(CLIENT_ID_ENV, "protes")
+    monkeypatch.setenv(CLIENT_SECRET_ENV, "client-secret")
+    conf = Tes(
+        backends=[TOKEN_BACKEND, REGISTRY],  # type: ignore[arg-type]
+        client_credentials={  # type: ignore[arg-type]
+            "issuer": "https://login.example.org/",
+            "audience_parameter": "resource",
+        },
+    )
+    with caplog.at_level(logging.INFO, logger="pro_tes.security"):
+        check_backends(conf, public_url=PUBLIC_URL)
+    assert (
+        "TES backends with access tokens of proTES (each for its own audience,"
+        " requested with `resource`): https://tes1.example.org, those verified"
+        " by registry https://registry.example.org/api"
+    ) in caplog.text
+
+
 def test_no_backends(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
