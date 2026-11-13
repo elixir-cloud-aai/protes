@@ -155,6 +155,13 @@ class ProvenanceNotFound(NotFound):
     """
 
 
+class InvalidUsageTime(BadRequest):
+    """Raised when a time of a request for the usage of tasks is invalid.
+
+    Cf. the query parameters `since` and `until` of `GET /usage`.
+    """
+
+
 class TaskNotCancelable(Conflict):
     """Raised when a task has not finished, but can't be canceled.
 
@@ -219,6 +226,11 @@ exceptions = {
         "title": "Not found",
         "detail": "No provenance was recorded for the task.",
         "status": 404,
+    },
+    InvalidUsageTime: {
+        "title": "Bad request",
+        "detail": "`since` or `until` is no valid time (RFC 3339).",
+        "status": 400,
     },
     TaskNotCancelable: {
         "title": "Conflict",

@@ -16,6 +16,7 @@ control](access-control.md)).
 | `GET /tasks` | List the caller's tasks, newest first, one page at a time (`page_size`, at most `max_page_size` of the [config](configuration.md#tasks), and `max_page_size_full` tasks, of at most `max_page_bytes_full` bytes, for the view `FULL`; `page_token` from `next_page_token` of the previous page, which is empty on the last page), optionally only those whose name starts with `name_prefix` (taken literally; matched against the name of the task as submitted, before plugins may have renamed it), by `state`, or by tags (`tag_key` and `tag_value`, in pairs, taken literally: a key without a value, or with an empty one, matches any value of that tag; a task must match all pairs; more values than keys are rejected with `400 Bad Request`; needs MongoDB 5.0 or later). |
 | `GET /tasks/{id}` | Get a task of the caller, with its state as last tracked from the TES instance. |
 | `GET /tasks/{id}/provenance` | proTES extension: get the provenance of a task, for its owner and for admins (see [Provenance](#provenance)). |
+| `GET /usage` | proTES extension: get the resources that the tasks of each user used, for admins, if accounting is enabled (see [Usage](#usage)). |
 | `GET /plugins` | proTES extension (FOCA's plugin listing): list the plugins and presets that the caller may choose for its tasks, and the limits, for users; the default pipeline only for callers who may choose pipelines (see [Choices of clients](plugins.md#choices-of-clients)). |
 | `GET /plugins/{plugin_id}` | proTES extension: describe a plugin that the caller may choose (`404 Not Found` otherwise). |
 | `POST /tasks/{id}:cancel` | Cancel a task of the caller that has not finished yet (also in state `UNKNOWN`, e.g., not tracked yet), at the TES instance that runs it; the task is then in state `CANCELING` until the TES instance reports its final state (usually `CANCELED`), or answers that it no longer has the task (`404` or `410`; then `CANCELED`). Meanwhile, the task stays `CANCELING`, also while the TES instance is unavailable, until the first poll after `polling.max_cancel_time` seconds (default 3600; then `SYSTEM_ERROR`, and it is no longer tracked; see [Task tracking](operations.md#task-tracking)); finished tasks are left as they are, also tasks that finish while they are canceled (their final state is kept), and tasks that the TES instance refuses to cancel as they have finished there (`200`; proTES stores their final state with the next poll). If a TES instance refuses to cancel a task that it hasn't finished, the task stays as it is (`502 Bad Gateway`). Unfinished tasks whose identifier at their TES instance is unknown (e.g., while they are being forwarded, or if forwarding failed unexpectedly) can't be canceled (`409 Conflict`). |
@@ -167,6 +168,44 @@ unknown tasks. Tasks without provenance (e.g.,
 created by earlier versions) give `404 Not Found`. The record holds no
 inputs, logs, IP addresses, tokens, header values or claims: plugins'
 changes are recorded as paths and hashes only.
+
+## Usage
+
+`GET /usage` (a proTES extension) returns the resources that the tasks of
+each user used, as recorded when they finished, if [accounting of resource
+usage](configuration.md#accounting-of-resource-usage) is enabled: per user
+(`user_id`, the owner of the tasks; `null` for tasks without owner), the
+number of tasks, those without known run time (`untimed_tasks`), the run
+time in seconds, and the requested resources times the run time:
+
+```json
+{
+  "recording": true,
+  "users": [
+    {"user_id": "alice", "tasks": 12, "untimed_tasks": 0,
+     "wall_seconds": 5400.0, "cpu_core_seconds": 10800.0,
+     "ram_gb_seconds": 21600.0, "disk_gb_seconds": 54000.0}
+  ]
+}
+```
+
+`recording` tells whether finishing tasks are recorded
+(`custom.accounting.enabled`); stored records are served either way. A total
+too large for a 64-bit float is the largest one (`1.7976931348623157e+308`),
+as JSON has no infinity. The
+query parameters limit the totals:
+
+- `user_id`: the tasks of one user only;
+- `since` and `until`: the tasks that finished at or after `since` and
+  before `until` (date-times of RFC 3339, e.g., `2026-11-01T00:00:00Z`; UTC
+  without time zone), by the end of the task at its TES instance, or, if that
+  is unknown, by when it was recorded. Other values, also other forms of
+  ISO 8601 (e.g., a date without time) and leap seconds (`:60`), give
+  `400 Bad Request`.
+
+Only admins may get it (rule `admins-get-usage`); everyone else gets `403
+Forbidden` (see [Access control](access-control.md#roles)). All users are
+listed in one response, in the order of their identifiers.
 
 ## Errors
 

@@ -43,7 +43,7 @@ options](https://foca.readthedocs.io/en/latest/configuration/auth/)).
 | --- | --- |
 | `user` | create tasks, and list their own (`POST /tasks`, `GET /tasks`) |
 | `owner` (of a task) | read and cancel the task (`GET /tasks/{id}`, `POST /tasks/{id}:cancel`) |
-| `admin` | manage the access control rules ([permissions API](#permissions-api)); not the tasks of others |
+| `admin` | manage the access control rules ([permissions API](#permissions-api)), and get the resources that tasks used per user ([Usage](api.md#usage)); not the tasks of others |
 
 Roles are given to groups of the identity provider: the values of the claim
 `security.access_control.claim_groups` (from the token, or from the user info
@@ -57,9 +57,9 @@ The roles and their permissions are the policies of
 `security.access_control.policies` in the base config (see
 [FOCA's access control](https://foca.readthedocs.io/en/latest/access-control/)),
 named rules (`users-create-list-tasks`, `owners-get-cancel-tasks`,
-`owners-get-provenance`, `admins-get-provenance`, `users-list-plugins`,
-`users-get-plugins`, `admins-list-add-permissions` and
-`admins-manage-permissions`): a config
+`owners-get-provenance`, `admins-get-provenance`, `admins-get-usage`,
+`users-list-plugins`, `users-get-plugins`, `admins-list-add-permissions`
+and `admins-manage-permissions`): a config
 overlay adds, changes or removes (`null`) single rules by name, e.g., rules
 that let users only list their tasks, and owners only read them:
 

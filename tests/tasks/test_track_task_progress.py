@@ -1,7 +1,7 @@
 """Tests of the Celery tasks tracking tasks at TES backends."""
 
 from collections.abc import Callable, Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import time
 from typing import Any, ClassVar
 
@@ -20,6 +20,7 @@ from pymongo import MongoClient
 from pymongo.collection import Collection
 from pymongo.errors import (
     DocumentTooLarge,
+    InvalidOperation,
     OperationFailure,
     ServerSelectionTimeoutError,
 )
@@ -27,6 +28,7 @@ import pytest
 import requests
 import tes
 
+from pro_tes.accounting import Accounting
 from pro_tes.app import init_app
 from pro_tes.celery_worker import celery
 from pro_tes.config_models import CustomConfig, Polling
@@ -64,6 +66,8 @@ class FakeClient:
     # serves another state
     views: ClassVar[list[str]] = []
     full_logs: ClassVar[dict[str, Any]] = {}
+    # Fields of the task log of the other views (e.g., its times)
+    basic_logs: ClassVar[dict[str, Any]] = {}
     full_error: ClassVar[Exception | None] = None
     full_state: ClassVar[str | None] = None
     # Called when the view `FULL` is requested
@@ -110,7 +114,7 @@ class FakeClient:
         return tes.Task(
             id=task_id,
             state=state,
-            logs=[tes.TaskLog(logs=[], outputs=self.outputs)],
+            logs=[tes.TaskLog(logs=[], outputs=self.outputs, **self.basic_logs)],
         )
 
 
@@ -122,6 +126,7 @@ def client_class(monkeypatch: pytest.MonkeyPatch) -> type[FakeClient]:
     monkeypatch.setattr(FakeClient, "clients", [])
     monkeypatch.setattr(FakeClient, "requested", [])
     monkeypatch.setattr(FakeClient, "views", [])
+    monkeypatch.setattr(FakeClient, "basic_logs", {})
     monkeypatch.setattr(FakeClient, "full_logs", {})
     monkeypatch.setattr(FakeClient, "full_error", None)
     monkeypatch.setattr(FakeClient, "full_state", None)
@@ -1979,3 +1984,163 @@ def test_deleted_after_cancel_set_by_other_delivery() -> None:
     response.status_code = 404
     error = requests.HTTPError(response=response)
     assert track_task_progress._deleted_after_cancel(collection, "w", error)
+
+
+START = datetime(2026, 11, 13, 10, 0, tzinfo=UTC)
+
+
+@pytest.fixture
+def accounting(app: FlaskApp) -> Accounting:
+    """Accounting of the resources of tasks, enabled."""
+    config = get_custom_config(CustomConfig)
+    config.accounting = Accounting(enabled=True)
+    return config.accounting
+
+
+def test_usage_recorded(
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+    accounting: Accounting,
+) -> None:
+    """With accounting, the run time of a finished task is recorded.
+
+    From the log of its backend in the view `FULL`, with the backend's URL
+    and the final state.
+    """
+    tasks.update_one(
+        {"worker_id": ARGS["worker_id"]},
+        {"$set": {"user_id": "alice", "task.resources": {"cpu_cores": 4}}},
+    )
+    client_class.full_logs = {
+        "start_time": START,
+        "end_time": START + timedelta(minutes=30),
+    }
+    run()
+    (record,) = get_collection(DB, "usage").find()
+    assert record["_id"] == f"TASK-{ARGS['worker_id']}"
+    assert record["user_id"] == "alice"
+    assert record["backend"] == ARGS["remote_host"]
+    assert record["state"] == "COMPLETE"
+    assert record["wall_seconds"] == 1800.0
+    assert record["cpu_core_seconds"] == 7200.0
+
+
+def test_usage_not_recorded_by_default(
+    tasks: Collection[dict[str, Any]], client_class: type[FakeClient]
+) -> None:
+    """Without accounting (the default), nothing is recorded."""
+    run()
+    assert get_collection(DB, "usage").count_documents({}) == 0
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        ValueError("bug"),
+        OperationFailure("unauthorized", code=13),
+        InvalidOperation("client-side error"),
+    ],
+    ids=str,
+)
+def test_usage_error_logged(
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+    accounting: Accounting,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    error: Exception,
+) -> None:
+    """Errors of the accounting are logged; the task still finishes.
+
+    Also writes that MongoDB refuses, and other errors of PyMongo than lost
+    connections, which retries would not change.
+    """
+
+    def fail(**kwargs: Any) -> None:
+        """Fail like a bug, or a refused write."""
+        raise error
+
+    monkeypatch.setattr(track_task_progress, "record_usage", fail)
+    run()
+    document = tasks.find_one({"worker_id": ARGS["worker_id"]})
+    assert document is not None
+    assert document["task"]["state"] == "COMPLETE"
+    assert "Usage of the task not recorded" in caplog.text
+
+
+def test_usage_database_error_retried(
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+    accounting: Accounting,
+    retries: list[dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If MongoDB is unavailable, the poll is retried before the final state.
+
+    So that the retry records the task.
+    """
+
+    def unavailable(**kwargs: Any) -> None:
+        """Fail like an unavailable MongoDB."""
+        raise ServerSelectionTimeoutError("unavailable")
+
+    monkeypatch.setattr(track_task_progress, "record_usage", unavailable)
+    monkeypatch.setattr(TRACK.request, "retries", 0, raising=False)
+    with pytest.raises(Retried):
+        run()
+    assert len(retries) == 1
+    document = tasks.find_one({"worker_id": ARGS["worker_id"]})
+    assert document is not None
+    assert document["task"]["state"] == "QUEUED"
+
+
+def test_usage_recorded_without_full_logs(
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+    accounting: Accounting,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With `max_log_size: 0`, the run time is that of the view `BASIC`.
+
+    TES instances serve the times of task logs in all views but `MINIMAL`.
+    """
+    post_task = get_custom_config(CustomConfig).controllers.post_task
+    monkeypatch.setattr(post_task, "max_log_size", 0)
+    client_class.basic_logs = {
+        "start_time": START,
+        "end_time": START + timedelta(minutes=10),
+    }
+    run()
+    assert client_class.views == ["BASIC"]
+    (record,) = get_collection(DB, "usage").find()
+    assert record["timed"]
+    assert record["wall_seconds"] == 600.0
+
+
+def test_usage_kept_on_redelivery(
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+    accounting: Accounting,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A poll delivered again doesn't replace a timed record with an untimed one.
+
+    E.g., if the worker was lost after recording the task, before storing its
+    final state; the poll delivered again skips the view `FULL`.
+    """
+    client_class.full_logs = {
+        "start_time": START,
+        "end_time": START + timedelta(minutes=30),
+    }
+    run()
+    tasks.update_one(
+        {"worker_id": ARGS["worker_id"]}, {"$set": {"task.state": "RUNNING"}}
+    )
+    TRACK.push_request(delivery_info={"redelivered": True})
+    try:
+        run()
+    finally:
+        TRACK.pop_request()
+    (record,) = get_collection(DB, "usage").find()
+    assert record["timed"]
+    assert record["wall_seconds"] == 1800.0

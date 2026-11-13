@@ -85,8 +85,122 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
+  # proTES extension: the resources that tasks used, per user (see
+  # docs/api.md)
+  /usage:
+    get:
+      tags:
+      - TaskService
+      summary: GetUsage
+      description: |-
+        proTES extension: get the resources that tasks used, per user, as
+        recorded when they finished at their TES instances (if
+        `custom.accounting.enabled`): the number of tasks, their run times,
+        and the resources they requested times their run times. For admins.
+      operationId: GetUsage
+      parameters:
+      - name: user_id
+        in: query
+        required: false
+        description: Only the tasks of this user (their owner, `user_id`).
+        schema:
+          type: string
+      - name: since
+        in: query
+        required: false
+        description: >-
+          Only tasks that finished at or after this time (date-time of RFC
+          3339, e.g., `2026-11-01T00:00:00Z`; UTC if without time zone).
+        schema:
+          type: string
+      - name: until
+        in: query
+        required: false
+        description: >-
+          Only tasks that finished before this time (date-time of RFC
+          3339, e.g., `2026-11-01T00:00:00Z`; UTC if without time zone).
+        schema:
+          type: string
+      responses:
+        200:
+          description: The totals per user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UsageReport'
+        400:
+          description: '`since` or `until` is no valid time.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        403:
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
 components:
   schemas:
+    UsageReport:
+      description: >-
+        The resources that tasks used, per user (proTES extension).
+      type: object
+      required:
+      - recording
+      - users
+      properties:
+        recording:
+          type: boolean
+          description: >-
+            Whether the resources of finishing tasks are recorded
+            (`custom.accounting.enabled`); stored records are served either
+            way.
+        users:
+          type: array
+          description: Totals per user, in the order of their identifiers.
+          items:
+            $ref: '#/components/schemas/UserUsage'
+    UserUsage:
+      description: >-
+        The resources that the tasks of a user used: allocations (the
+        resources that the tasks requested, times their run times at their
+        TES instances), not measurements.
+      type: object
+      required:
+      - user_id
+      - tasks
+      - untimed_tasks
+      - wall_seconds
+      - cpu_core_seconds
+      - ram_gb_seconds
+      - disk_gb_seconds
+      properties:
+        user_id:
+          type: string
+          nullable: true
+          description: >-
+            The user (owner of the tasks); null for tasks without owner.
+        tasks:
+          type: integer
+          description: Number of tasks.
+        untimed_tasks:
+          type: integer
+          description: >-
+            Number of the tasks whose run time is unknown (their TES
+            instances logged no start or end); they count 0 seconds.
+        wall_seconds:
+          type: number
+          description: Run time of the tasks, in seconds.
+        cpu_core_seconds:
+          type: number
+          description: Requested CPU cores times run time.
+        ram_gb_seconds:
+          type: number
+          description: Requested RAM (GB) times run time.
+        disk_gb_seconds:
+          type: number
+          description: Requested disk (GB) times run time.
     TaskProvenance:
       description: >-
         Provenance of a task: the record of FOCA's plugin engine (see the
