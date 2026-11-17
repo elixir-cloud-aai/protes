@@ -120,7 +120,7 @@ dependencies = [
     # pins each plugin to an exact version, which `uv.lock` records with
     # hashes; Dependabot bumps the train
     "foca-plugins[generic-routing,tes-routing]==0.3.0",
-    "gunicorn>=26.2.0,<27",
+    "gunicorn>=26.2.0,<28",
     "py-tes>=1.1,<2",
     # Used directly (TES backends, identity provider); 2.33.0 fixes
     # CVE-2026-25645
