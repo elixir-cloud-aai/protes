@@ -358,6 +358,39 @@ taskmaster and filer v0.10.6, on Kubernetes 1.36:
 - A task canceled before its taskmaster's pod runs is reported as `CANCELED`,
   but keeps running: its executor runs to its end, using its resources. A task
   canceled later stops. Neither proTES nor clients can tell from the state.
+  tesk-api 1.2.0 and later stop such tasks, too.
+- Tasks with inputs, outputs or volumes need a default storage class, or the
+  chart's value `storageClass`.
+
+TESK with tesk-api 2.0.0 (the default of TESK's chart from 0.4.0 on), as its
+[API docs](https://github.com/elixir-cloud-aai/tesk-api/blob/v2.0.0/docs/api.md)
+and [upgrade
+notes](https://github.com/elixir-cloud-aai/tesk-api/blob/v2.0.0/docs/upgrading.md#to-200)
+describe it; CI doesn't run it yet:
+
+- It reports TES 1.1.0, so it needs no label `tes.version`, and `"1.1"` is
+  right for it. `ignore_error: true` needs a taskmaster of
+  [tesk-core](https://github.com/elixir-cloud-aai/tesk-core) 0.12.0 or later
+  (the default of the chart 0.4.0), and outputs with wildcards and
+  `path_prefix` a filer of that release, too: with an older taskmaster, such
+  tasks end in `SYSTEM_ERROR`, or their matches aren't uploaded. Set the label
+  `tes.version: "1.0"` for such a TESK, so that proTES sends these tasks to
+  other TES instances, or rejects them (see [TES versions](tes-versions.md)).
+- It accepts the fields of TES 1.1, but still rejects other fields it doesn't
+  know with `400 Bad Request`. It also rejects `backend_parameters_strict:
+  true` with `backend_parameters` (it supports none), with `400 Bad Request`;
+  proTES then tries the next TES instance (see [TES
+  versions](tes-versions.md)). Other `backend_parameters` it ignores, and lists
+  their keys in the task's system logs.
+- An executor's log has both streams in `stdout`, and no `stderr`, and no
+  `exit_code` until the executor's container has ended.
+- A canceled task is `CANCELING` while pods of its taskmaster, executors or
+  outputs filer still run, and `CANCELED` once they have ended; a task
+  canceled before its taskmaster's pod runs is stopped, too. It refuses to
+  cancel a task that has finished, with `400 Bad Request`; proTES answers such
+  cancels with `200 OK`, and leaves the task as it is.
+- A task whose failed executors Kubernetes all disrupted (e.g., preempted or
+  evicted) is `PREEMPTED`.
 - Tasks with inputs, outputs or volumes need a default storage class, or the
   chart's value `storageClass`.
 
