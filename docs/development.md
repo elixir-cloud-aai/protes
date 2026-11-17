@@ -183,8 +183,9 @@ The checks are configured in
 [`.pre-commit-config.yaml`](https://github.com/elixir-cloud-aai/protes/blob/dev/.pre-commit-config.yaml)
 and
 [`pyproject.toml`](https://github.com/elixir-cloud-aai/protes/blob/dev/pyproject.toml).
-Project-specific rules are in `.semgrep/` (security) and `.ast-grep/`
-(anti-patterns such as HTTP status codes as strings). The ast-grep rule
+Project-specific rules are in `.semgrep/` (security, shared with FOCA and
+the other FOCA apps) and `.ast-grep/` (anti-patterns such as HTTP status
+codes as strings or calls of the root logger), each with tests. The ast-grep rule
 `framework-free-tasks` forbids imports of Flask, Werkzeug, Connexion and
 Starlette in `pro_tes/`, except in `app.py`, `exceptions.py` and the
 controllers (`pro_tes/ga4gh/tes/server.py`): the rest gets plain data (the
