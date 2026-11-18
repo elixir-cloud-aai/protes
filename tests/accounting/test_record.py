@@ -1,6 +1,8 @@
 """Tests of the records of the resources that finished tasks used."""
 
 from datetime import UTC, datetime, timedelta, timezone
+from importlib.metadata import version
+from types import SimpleNamespace
 from typing import Any
 
 import mongomock
@@ -75,7 +77,95 @@ def test_record_from_task_log() -> None:
         "ram_gb_seconds": 14400.0,
         "disk_gb": 10.0,
         "disk_gb_seconds": 36000.0,
+        "tool": None,
+        "attempts": [
+            {
+                "start_time": START,
+                "end_time": START + timedelta(hours=1),
+                "outputs_bytes": None,
+            }
+        ],
+        "protes_version": version("pro-tes"),
     }
+
+
+def test_record_for_reports() -> None:
+    """Records hold the tool, and the times and output sizes per attempt.
+
+    For execution reports: the tool of the image of the first executor (not
+    the commands, environment, inputs, outputs or other tags of the task),
+    and per attempt (task log) its times, if known, and the total size of its
+    outputs, if logged; not the URLs or paths of the outputs.
+    """
+    document = {
+        "user_id": "alice@example.org",
+        "task": {
+            "id": "TASK01",
+            "executors": [
+                {
+                    "image": "quay.io/biocontainers/bwa:0.7.18--he4a0461_1",
+                    "command": ["bwa", "mem", "/data/alice.fq"],
+                    "env": {"TOKEN": "secret"},
+                }
+            ],
+            "tags": {"biotools_id": "bwa", "owner": "alice"},
+        },
+    }
+    outputs = [
+        tes.OutputFileLog(url="s3://bucket/alice.bam", path="/out/a", size_bytes="100"),
+        tes.OutputFileLog(url="s3://bucket/alice.bai", path="/out/b", size_bytes="23"),
+    ]
+    usage = record(
+        [
+            tes.TaskLog(start_time=START),
+            tes.TaskLog(
+                start_time=START + timedelta(hours=1),
+                end_time=START + timedelta(hours=2),
+                outputs=outputs,
+            ),
+        ],
+        document=document,
+    )
+    assert usage["tool"] == {
+        "name": "bwa",
+        "version": "0.7.18",
+        "package_version": "0.7.18--he4a0461_1",
+        "identifiers": [
+            "https://bio.tools/bwa",
+            "docker://quay.io/biocontainers/bwa",
+        ],
+    }
+    assert usage["attempts"] == [
+        {"start_time": None, "end_time": None, "outputs_bytes": None},
+        {
+            "start_time": START + timedelta(hours=1),
+            "end_time": START + timedelta(hours=2),
+            "outputs_bytes": 123,
+        },
+    ]
+
+
+@pytest.mark.parametrize(
+    ("outputs", "total"),
+    [
+        (None, None),
+        ([], None),
+        ([tes.OutputFileLog(size_bytes=None)], None),
+        ([tes.OutputFileLog(size_bytes="-1"), SimpleNamespace(size_bytes="x")], None),
+        ([tes.OutputFileLog(size_bytes="5"), SimpleNamespace(size_bytes="1e3")], 5),
+        ([SimpleNamespace(size_bytes="7"), SimpleNamespace(size_bytes=True)], 7),
+        ([object(), tes.OutputFileLog(size_bytes=0)], 0),
+    ],
+)
+def test_record_outputs_size(outputs: Any, total: int | None) -> None:
+    """The output size of an attempt is the sum of the valid logged sizes.
+
+    Sizes (`size_bytes`, integers as py-tes converts them, or strings of
+    digits) that are negative or no numbers are left out; without any, the
+    size is unknown.
+    """
+    usage = record([SimpleNamespace(start_time=START, outputs=outputs)])
+    assert usage["attempts"][0]["outputs_bytes"] == total
 
 
 def test_record_from_executor_logs() -> None:
@@ -200,6 +290,39 @@ def test_record_usage(
     assert records[0]["user_id"] == "alice@example.org"
     assert records[0]["state"] == "COMPLETE"
     assert records[0]["wall_seconds"] == 3600.0
+
+
+def test_record_usage_tool(
+    collections: tuple[Collection[dict[str, Any]], Collection[dict[str, Any]]],
+) -> None:
+    """The stored record has the tool of the stored task."""
+    tasks, usage = collections
+    tasks.update_one(
+        {"worker_id": "worker-1"},
+        {
+            "$set": {
+                "task.executors": [{"image": "bwa:0.7.18", "command": ["bwa"]}],
+                "task.tags": {"rrid": "SCR_010910", "other": "x"},
+            }
+        },
+    )
+    record_usage(
+        tasks=tasks,
+        usage=usage,
+        worker_id="worker-1",
+        response=tes.Task(state="COMPLETE", logs=[tes.TaskLog(start_time=START)]),
+        backend="https://tes.example.org",
+    )
+    (stored,) = usage.find()
+    assert stored["tool"] == {
+        "name": "bwa",
+        "version": "0.7.18",
+        "package_version": None,
+        "identifiers": [
+            "https://identifiers.org/RRID/RRID:SCR_010910",
+            "docker://bwa",
+        ],
+    }
 
 
 def test_record_usage_without_task(

@@ -2,12 +2,15 @@
 
 from collections.abc import Iterable
 from datetime import UTC, datetime
+from importlib.metadata import version
 import logging
 import math
 from typing import Any
 
 from pymongo.collection import Collection
 from pymongo.errors import DuplicateKeyError
+
+from pro_tes.accounting.tool import TAG_KEYS, task_tool
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +78,40 @@ def _amount(value: Any) -> float | None:
     return amount if math.isfinite(amount) and amount >= 0 else None
 
 
+def _outputs_bytes(log: Any) -> int | None:
+    """Get the total size of the outputs of an attempt of a task.
+
+    Args:
+        log: Task log of the TES instance (`tes.TaskLog`).
+
+    Returns:
+        The sum of the sizes of its output logs (`outputs[].size_bytes`)
+        that are integers or strings of digits; `None` if there are none.
+    """
+    sizes = []
+    for output in getattr(log, "outputs", None) or []:
+        size = getattr(output, "size_bytes", None)
+        if isinstance(size, str) and size.isascii() and size.isdigit():
+            sizes.append(int(size))
+        elif isinstance(size, int) and not isinstance(size, bool) and size >= 0:
+            sizes.append(size)
+    return sum(sizes) if sizes else None
+
+
+def _attempt(log: Any) -> dict[str, Any]:
+    """Get the record of an attempt of a task at its TES instance.
+
+    Args:
+        log: Task log of the TES instance (`tes.TaskLog`).
+
+    Returns:
+        Its start and end (`None` if either is unknown, cf. :py:func:`_span`)
+        and the total size of its outputs (`outputs_bytes`), if logged.
+    """
+    start, end = _span(log) or (None, None)
+    return {"start_time": start, "end_time": end, "outputs_bytes": _outputs_bytes(log)}
+
+
 def usage_record(
     document: dict[str, Any],
     logs: Iterable[Any],
@@ -92,9 +129,18 @@ def usage_record(
     be finite, are not accounted (`None`, 0 resource-seconds), so that
     records stay valid JSON (totals too, cf. :py:func:`usage_totals`).
 
+    For execution reports (cf. :py:mod:`pro_tes.accounting.reports`), the
+    record also holds the tool of the task (`tool`, cf.
+    :py:func:`pro_tes.accounting.tool.task_tool`), the start, end and total
+    size of the outputs of each attempt (`attempts`, in the order of the task
+    logs), and the version of proTES (`protes_version`); nothing else of the
+    task.
+
     Args:
         document: Stored task, with its owner (`user_id`), identifier
-            (`task.id`) and requested resources (`task.resources`), if any.
+            (`task.id`), requested resources (`task.resources`), and the
+            images of its executors (`task.executors[].image`) and its tags
+            with tool identifiers (`task.tags`), if any.
         logs: Task logs of the TES instance (`tes.TaskLog`).
         backend: URL of the TES instance.
         state: Final state of the task at its TES instance.
@@ -103,6 +149,7 @@ def usage_record(
     Returns:
         The record, by task identifier (`_id`).
     """
+    logs = list(logs)
     task = document.get("task") or {}
     spans = [span for span in map(_span, logs) if span is not None]
     seconds = sum((end - start).total_seconds() for start, end in spans)
@@ -130,6 +177,10 @@ def usage_record(
             amount, product = None, 0.0
         record[name] = amount
         record[field] = product
+    # for execution reports (cf. :py:mod:`pro_tes.accounting.reports`)
+    record["tool"] = task_tool(task)
+    record["attempts"] = [_attempt(log) for log in logs]
+    record["protes_version"] = version("pro-tes")
     return record
 
 
@@ -162,6 +213,9 @@ def record_usage(
             "user_id": True,
             "task.id": True,
             "task.resources": True,
+            # for the tool of execution reports only
+            "task.executors.image": True,
+            **{f"task.tags.{key}": True for key in TAG_KEYS},
         },
     )
     if document is None or not isinstance((document.get("task") or {}).get("id"), str):
