@@ -239,7 +239,8 @@ def test_reports_without_personal_data(usage: Collection[dict[str, Any]]) -> Non
 def test_report_per_attempt(usage: Collection[dict[str, Any]]) -> None:
     """Each attempt of a task (task log) gives a report.
 
-    Attempts without known times or outputs give reports without them.
+    Attempts without known times or outputs give reports without them (a
+    known start is kept without end).
     """
     add(
         usage,
@@ -254,7 +255,8 @@ def test_report_per_attempt(usage: Collection[dict[str, Any]]) -> None:
     reports = execution_reports(usage, ExecutionReports())
     validate(reports)
     assert len(reports) == 2
-    for name in ("start_time", "end_time", "final_outputs_size"):
+    assert reports[0]["start_time"] == "2026-11-01T00:00:00Z"
+    for name in ("end_time", "final_outputs_size"):
         assert name not in reports[0]
     assert reports[1]["start_time"] == "2026-11-01T01:00:00Z"
     assert "final_outputs_size" not in reports[1]
@@ -396,12 +398,21 @@ def test_reports_in_time_range(usage: Collection[dict[str, Any]]) -> None:
     """
     for day in (2, 0, 1):
         add(usage, task_id=f"T{day}", day=day)
+    # started first, finished last
+    long_start = START - timedelta(days=1)
+    add(
+        usage,
+        task_id="T9",
+        logs=[tes.TaskLog(start_time=long_start, end_time=START + timedelta(days=5))],
+    )
     reports = execution_reports(usage, ExecutionReports())
-    assert [report["start_time"][:10] for report in reports] == [
+    assert [report["end_time"][:10] for report in reports] == [
         "2026-11-01",
         "2026-11-02",
         "2026-11-03",
+        "2026-11-06",
     ]
+    assert reports[-1]["start_time"][:10] == "2026-10-31"
     reports = execution_reports(
         usage,
         ExecutionReports(),
@@ -419,6 +430,18 @@ def test_too_many_records(usage: Collection[dict[str, Any]]) -> None:
     with pytest.raises(TooManyRecords):
         execution_reports(usage, config)
     assert len(execution_reports(usage, config, since=START + timedelta(days=1))) == 2
+
+
+def test_max_records_counts_tasks(usage: Collection[dict[str, Any]]) -> None:
+    """`max_records` counts tasks, not their attempts (reports)."""
+    add(
+        usage,
+        logs=[
+            tes.TaskLog(start_time=START, end_time=START + timedelta(hours=1)),
+            tes.TaskLog(start_time=START, end_time=START + timedelta(hours=2)),
+        ],
+    )
+    assert len(execution_reports(usage, ExecutionReports(max_records=1))) == 2
 
 
 def test_reports_configured(usage: Collection[dict[str, Any]]) -> None:

@@ -229,12 +229,14 @@ def execution_reports(
         until: Only tasks that finished before this time.
 
     Returns:
-        The reports, in the order in which the tasks finished (and of their
-        identifiers), and of their attempts.
+        The reports, in the order in which the tasks finished, and of their
+        attempts.
 
     Raises:
-        TooManyRecords: More than `config.max_records` records are in the
-            time range.
+        TooManyRecords: More than `config.max_records` records of
+            completed tasks with tool and attempts are in the time range,
+            counted before the trusted namespaces are applied (whatever the
+            number of their attempts).
     """
     match: dict[str, Any] = {
         "tool": {"$type": "object"},
@@ -249,7 +251,8 @@ def execution_reports(
         usage.find(
             match,
             projection={"_id": False, **dict.fromkeys(FIELDS, True)},
-            sort=[("finished_at", 1), ("_id", 1)],
+            # by the index on `finished_at`, without blocking sort
+            sort=[("finished_at", 1)],
             limit=config.max_records + 1,
         )
     )

@@ -66,6 +66,45 @@ def _span(log: Any) -> tuple[datetime, datetime] | None:
     return start, end
 
 
+def _endpoints(log: Any) -> tuple[datetime | None, datetime | None]:
+    """Get the start and the end of an attempt, each if known.
+
+    Those of :py:func:`_span` if both are known; else each of the task log,
+    or else of its executors (the earliest start, the latest end), so that
+    a known start is kept without end, and vice versa.
+
+    Args:
+        log: Task log of the TES instance (`tes.TaskLog`).
+
+    Returns:
+        Start and end, each `None` if unknown; both `None` if the end is
+        before the start.
+    """
+    span = _span(log)
+    if span is not None:
+        return span
+    executors = getattr(log, "logs", None) or []
+    start = _utc(getattr(log, "start_time", None)) or min(
+        (
+            time
+            for time in (_utc(getattr(item, "start_time", None)) for item in executors)
+            if time is not None
+        ),
+        default=None,
+    )
+    end = _utc(getattr(log, "end_time", None)) or max(
+        (
+            time
+            for time in (_utc(getattr(item, "end_time", None)) for item in executors)
+            if time is not None
+        ),
+        default=None,
+    )
+    if start is not None and end is not None:
+        return None, None
+    return start, end
+
+
 def _amount(value: Any) -> float | None:
     """Get the amount of a requested resource.
 
@@ -88,10 +127,10 @@ def _outputs_bytes(log: Any) -> int | None:
         log: Task log of the TES instance (`tes.TaskLog`).
 
     Returns:
-        The sum of the sizes of its output logs (`outputs[].size_bytes`)
-        that are integers or strings of digits; `None` if there are none,
-        or if a size or the sum exceeds what MongoDB stores (64-bit
-        integers).
+        The sum of the sizes of its output logs (`outputs[].size_bytes`,
+        integers or strings of digits); `None` if there are none, if any
+        size is missing or invalid (the sum would be partial), or if a size
+        or the sum exceeds what MongoDB stores (64-bit integers).
     """
     sizes = []
     for output in getattr(log, "outputs", None) or []:
@@ -102,8 +141,9 @@ def _outputs_bytes(log: Any) -> int | None:
             if len(size) > len(str(MAX_SIZE)):
                 return None
             size = int(size)
-        if isinstance(size, int) and not isinstance(size, bool) and size >= 0:
-            sizes.append(size)
+        if not isinstance(size, int) or isinstance(size, bool) or size < 0:
+            return None
+        sizes.append(size)
     total = sum(sizes)
     return total if sizes and total <= MAX_SIZE else None
 
@@ -115,10 +155,10 @@ def _attempt(log: Any) -> dict[str, Any]:
         log: Task log of the TES instance (`tes.TaskLog`).
 
     Returns:
-        Its start and end (`None` if either is unknown, cf. :py:func:`_span`)
-        and the total size of its outputs (`outputs_bytes`), if logged.
+        Its start and end, each if known (cf. :py:func:`_endpoints`), and
+        the total size of its outputs (`outputs_bytes`), if logged.
     """
-    start, end = _span(log) or (None, None)
+    start, end = _endpoints(log)
     return {"start_time": start, "end_time": end, "outputs_bytes": _outputs_bytes(log)}
 
 

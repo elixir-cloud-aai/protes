@@ -892,8 +892,9 @@ custom:
   exist; a TES instance that runs images built locally under names of a
   trusted namespace (e.g., a one-component name, which counts as `library`)
   would still report those names, so don't trust such namespaces there.
-- `max_records`: the most tasks that one request may cover; requests for
-  more get `400 Bad Request`.
+- `max_records`: the most tasks that one request may cover (completed
+  tasks with a recorded tool, also those of untrusted images, whatever their
+  number of attempts); requests for more get `400 Bad Request`.
 
 Settings apply to all reports when they are requested, also to those of
 tasks recorded before. Unknown keys and invalid values (e.g., an identifier

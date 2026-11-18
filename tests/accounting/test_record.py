@@ -136,8 +136,19 @@ def test_record_for_reports() -> None:
             "docker://quay.io/biocontainers/bwa",
         ],
     }
+    text = repr(usage)
+    for detail in (
+        "mem",
+        "/data/alice.fq",
+        "TOKEN",
+        "secret",
+        "s3://",
+        "/out/",
+        "owner",
+    ):
+        assert detail not in text
     assert usage["attempts"] == [
-        {"start_time": None, "end_time": None, "outputs_bytes": None},
+        {"start_time": START, "end_time": None, "outputs_bytes": None},
         {
             "start_time": START + timedelta(hours=1),
             "end_time": START + timedelta(hours=2),
@@ -147,15 +158,51 @@ def test_record_for_reports() -> None:
 
 
 @pytest.mark.parametrize(
+    ("log", "start", "end"),
+    [
+        (SimpleNamespace(start_time=START), START, None),
+        (SimpleNamespace(end_time=START), None, START),
+        (
+            SimpleNamespace(logs=[SimpleNamespace(start_time=START), object()]),
+            START,
+            None,
+        ),
+        (
+            SimpleNamespace(
+                start_time=START,
+                logs=[SimpleNamespace(end_time=START - timedelta(hours=1))],
+            ),
+            None,
+            None,
+        ),
+    ],
+)
+def test_record_attempt_endpoints(
+    log: Any, start: datetime | None, end: datetime | None
+) -> None:
+    """A known start or end of an attempt is kept without the other.
+
+    Of the task log, or else of its executors; neither if the end is before
+    the start. The run time counts only attempts with both.
+    """
+    usage = record([log])
+    assert usage["attempts"][0]["start_time"] == start
+    assert usage["attempts"][0]["end_time"] == end
+    assert usage["wall_seconds"] == 0
+
+
+@pytest.mark.parametrize(
     ("outputs", "total"),
     [
         (None, None),
         ([], None),
         ([tes.OutputFileLog(size_bytes=None)], None),
         ([tes.OutputFileLog(size_bytes="-1"), SimpleNamespace(size_bytes="x")], None),
-        ([tes.OutputFileLog(size_bytes="5"), SimpleNamespace(size_bytes="1e3")], 5),
-        ([SimpleNamespace(size_bytes="7"), SimpleNamespace(size_bytes=True)], 7),
-        ([object(), tes.OutputFileLog(size_bytes=0)], 0),
+        ([tes.OutputFileLog(size_bytes="5"), SimpleNamespace(size_bytes="1e3")], None),
+        ([SimpleNamespace(size_bytes="7"), SimpleNamespace(size_bytes=True)], None),
+        ([object(), tes.OutputFileLog(size_bytes=0)], None),
+        ([tes.OutputFileLog(size_bytes=0)], 0),
+        ([SimpleNamespace(size_bytes="7"), tes.OutputFileLog(size_bytes=5)], 12),
         ([SimpleNamespace(size_bytes=str(2**63 - 1))], 2**63 - 1),
         ([SimpleNamespace(size_bytes=str(2**63))], None),
         ([SimpleNamespace(size_bytes="9" * 5000)], None),
@@ -165,10 +212,10 @@ def test_record_for_reports() -> None:
 def test_record_outputs_size(outputs: Any, total: int | None) -> None:
     """The output size of an attempt is the sum of the valid logged sizes.
 
-    Sizes (`size_bytes`, integers as py-tes converts them, or strings of
-    digits) that are negative or no numbers are left out; without any, the
-    size is unknown, as it is if a size or the sum is too large for MongoDB
-    (64-bit integers).
+    Sizes (`size_bytes`) are integers, as py-tes converts them, or strings
+    of digits. The size is unknown without outputs, if any size is missing,
+    negative or no number (the sum would be partial), and if a size or the
+    sum is too large for MongoDB (64-bit integers).
     """
     usage = record([SimpleNamespace(start_time=START, outputs=outputs)])
     assert usage["attempts"][0]["outputs_bytes"] == total
