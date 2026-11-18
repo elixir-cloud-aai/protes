@@ -18,15 +18,36 @@ task. Records are kept apart from the tasks, so that the retention of
 finished tasks (:py:mod:`pro_tes.retention`) doesn't remove them; operators
 delete them (see `docs/operations.md`).
 
+Admins also get the records as execution reports of the Tool Execution
+Report format of ELIXIR Compute (`GET /usage/reports`, cf.
+:py:mod:`pro_tes.accounting.reports`): one per attempt of a task, with the
+tool that it ran, the providers, the requested CPU cores, the times and the
+rounded size of its outputs, but no user identifiers or other details of
+the task. For these, the records also hold the tool (from the image of the
+first executor and the tool identifiers in the tags of the task, cf.
+:py:mod:`pro_tes.accounting.tool`), the times and output sizes of each
+attempt, and the version of proTES.
+
 The module is self-contained: the Celery worker calls
 :py:func:`record_usage` once a task finished at its TES instance, before
-its final state is stored, and the controller of `GET /usage` calls
-:py:func:`usage_totals`. It uses no other part of proTES than the fields of
-stored tasks (`user_id`, `task.id`, `task.resources`).
+its final state is stored, and the controllers of `GET /usage` and `GET
+/usage/reports` call :py:func:`usage_totals` and
+:py:func:`execution_reports`. It uses no other part of proTES than the
+fields of stored tasks (`user_id`, `task.id`, `task.resources`,
+`task.executors[].image`, `task.tags`).
 """
 
-from pro_tes.accounting.config import Accounting
+from pro_tes.accounting.config import Accounting, ExecutionReports
 from pro_tes.accounting.record import record_usage, usage_record
 from pro_tes.accounting.report import usage_totals
+from pro_tes.accounting.reports import TooManyRecords, execution_reports
 
-__all__ = ["Accounting", "record_usage", "usage_record", "usage_totals"]
+__all__ = [
+    "Accounting",
+    "ExecutionReports",
+    "TooManyRecords",
+    "execution_reports",
+    "record_usage",
+    "usage_record",
+    "usage_totals",
+]

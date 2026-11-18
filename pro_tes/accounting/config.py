@@ -1,6 +1,154 @@
 """Configuration of the accounting of the resources that tasks used."""
 
-from pydantic import BaseModel, ConfigDict
+from typing import Annotated
+
+from foca.utils.urls import normalize_url
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
+
+# IRIs (RFC 3987): a scheme, then characters that IRIs may have (no spaces,
+# controls or delimiters such as `<` and `"`); not fully checked
+IRI_PATTERN = r"^[A-Za-z][A-Za-z0-9+.-]*:[^\s<>\"{}|\\^`\x00-\x1f\x7f]+$"
+IRI = Annotated[str, StringConstraints(pattern=IRI_PATTERN, max_length=2048)]
+# Non-empty texts
+Text = Annotated[str, StringConstraints(min_length=1, max_length=1024)]
+# Countries (ISO 3166-1 alpha-2)
+Country = Annotated[str, StringConstraints(pattern=r"^[A-Z]{2}$")]
+
+
+class ReportModel(BaseModel):
+    """Base of the models of execution reports: unknown keys are errors.
+
+    Keys are those of the Tool Execution Report format (cf.
+    :py:mod:`pro_tes.accounting.reports`), also its camelCase ones (aliases).
+    """
+
+    model_config = ConfigDict(extra="forbid", validate_by_name=True)
+
+
+class Address(ReportModel):
+    """Address of the physical location of computations (schema.org).
+
+    Args:
+        address_country: Country, as ISO 3166-1 alpha-2 code
+            (`addressCountry`).
+        postal_code: Postal code (`postalCode`).
+        address_region: Region in the country (`addressRegion`).
+        address_locality: Locality in the region (`addressLocality`).
+
+    Attributes:
+        address_country: Country, as ISO 3166-1 alpha-2 code.
+        postal_code: Postal code.
+        address_region: Region in the country.
+        address_locality: Locality in the region.
+    """
+
+    address_country: Country | None = Field(default=None, alias="addressCountry")
+    postal_code: Text | None = Field(default=None, alias="postalCode")
+    address_region: Text | None = Field(default=None, alias="addressRegion")
+    address_locality: Text | None = Field(default=None, alias="addressLocality")
+
+
+class Location(ReportModel):
+    """Physical location of computations (`location` of execution reports).
+
+    Args:
+        name: Name of the location (e.g., the data centre).
+        address: Address of the location.
+
+    Attributes:
+        name: Name of the location.
+        address: Address of the location.
+    """
+
+    name: Text | None = None
+    address: Address | None = None
+
+
+class Provider(ReportModel):
+    """Infrastructure provider (an item of `infra` of execution reports).
+
+    Args:
+        infra_name: Name of the infrastructure (who gets credit).
+        infra_identifier: Identifiers of the infrastructure (IRIs, e.g., of
+            ROR or an RRID); at least one.
+        infra_version: Version of software-based infrastructure.
+
+    Attributes:
+        infra_name: Name of the infrastructure.
+        infra_identifier: Identifiers of the infrastructure.
+        infra_version: Version of software-based infrastructure, if any.
+    """
+
+    infra_name: Text
+    infra_identifier: list[IRI] = Field(min_length=1)
+    infra_version: Text | None = None
+
+
+class ReportedBackend(Provider):
+    """A TES instance, as named in execution reports.
+
+    Args:
+        location: Physical location of the TES instance; by default, that
+            of `ExecutionReports.location`.
+        **data: Fields of :py:class:`Provider`.
+
+    Attributes:
+        location: Physical location of the TES instance, if set.
+    """
+
+    location: Location | None = None
+
+
+class ExecutionReports(ReportModel):
+    """Execution reports of the usage records (`custom.accounting.reports`).
+
+    Args:
+        max_records: Maximum number of records (tasks) that one request for
+            reports may cover; requests for more are rejected, so that their
+            time range must be narrowed.
+        infra: Providers named in each report, before the TES instance and
+            proTES (e.g., the operator of the deployment).
+        location: Physical location of the computations, unless set for
+            their TES instance.
+        backends: TES instances, by URL (normalized, as in
+            `custom.tes.backends`); others are named by their URL.
+
+    Attributes:
+        max_records: Maximum number of records of a request for reports.
+        infra: Providers named in each report.
+        location: Physical location of the computations, if set.
+        backends: TES instances, by normalized URL.
+    """
+
+    max_records: Annotated[int, Field(gt=0, le=1000000)] = 10000
+    infra: list[Provider] = []
+    location: Location | None = None
+    backends: dict[str, ReportedBackend] = {}
+
+    @field_validator("backends")
+    @classmethod
+    def normalize_backends(
+        cls, value: dict[str, ReportedBackend]
+    ) -> dict[str, ReportedBackend]:
+        """Normalize the URLs of the TES instances.
+
+        Args:
+            value: TES instances, by URL as given.
+
+        Returns:
+            The TES instances, by normalized URL.
+
+        Raises:
+            ValueError: A URL is invalid, or two URLs are the same once
+                normalized.
+        """
+        backends: dict[str, ReportedBackend] = {}
+        for url, backend in value.items():
+            normalized = normalize_url(url, name="URLs of `reports.backends`")
+            if normalized in backends:
+                raise ValueError(f"TES instance {normalized!r} is listed twice")
+            backends[normalized] = backend
+        return backends
 
 
 class Accounting(BaseModel):
@@ -12,11 +160,15 @@ class Accounting(BaseModel):
         enabled: Whether the Celery workers record the resources of each
             task that finished at its TES instance; stored records are
             served either way.
+        reports: What the execution reports of the records name (cf.
+            :py:mod:`pro_tes.accounting.reports`).
 
     Attributes:
         enabled: Whether the resources of finished tasks are recorded.
+        reports: What the execution reports of the records name.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = False
+    reports: ExecutionReports = ExecutionReports()

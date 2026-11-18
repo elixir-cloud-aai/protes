@@ -1,0 +1,8 @@
+SPDX-FileCopyrightText: Copyright (c) 2025 by the contributors of elixir-europe/compute_wp5
+SPDX-License-Identifier: MIT
+
+Tool Execution Report JSON Schema of ELIXIR Compute, report format version
+0.0.2, vendored unchanged from
+https://github.com/elixir-europe/compute_wp5/blob/76b2a13f371fa0cba3faa466bec2442f543ca7ea/execution_report.schema.json
+(SHA-256 f477351ff61ccd236057e63cc9d2cb12cc793f6146d752147b7e754fbfbf5359).
+The licence text is in LICENSES/MIT.txt.

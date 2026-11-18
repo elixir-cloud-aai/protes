@@ -207,6 +207,32 @@ MongoDB doesn't change the options of an existing index: drop the index
 proTES, which creates the indexes of the config. Records whose task
 finished at an unknown time are deleted by when they were recorded.
 
+### Execution reports
+
+To credit the infrastructures that ran tools (e.g., for the usage dashboard
+of ELIXIR Compute), export the records as [execution
+reports](api.md#execution-reports), which hold no personal data. Configure
+the providers and the location first (see [Execution
+reports](configuration.md#execution-reports)), then get the reports of a
+time range as an admin, e.g., per month, and check that the request
+succeeded (`--fail`):
+
+```bash
+curl --fail -o reports-2026-11.json \
+  -H "Authorization: Bearer <token>" \
+  "http://localhost:8080/ga4gh/tes/v1/usage/reports?since=2026-11-01T00:00:00Z&until=2026-12-01T00:00:00Z"
+```
+
+`400 Bad Request` with `max_records` in `detail` means that more tasks
+finished in the range than one request may cover: request shorter ranges
+(e.g., per day), or raise `custom.accounting.reports.max_records`. The
+start of a range is included and its end is not, so consecutive ranges cover
+each task once. Hand the file over as the receiving service asks; the
+reports are of format version 0.0.2, and each of them validates against
+its [JSON
+Schema](https://github.com/elixir-europe/compute_wp5/blob/main/execution_report.schema.json).
+Deleting records (above) also removes their reports: export them first.
+
 ## Task provenance
 
 Each new task has the provenance of its [plugin pipeline](plugins.md) in

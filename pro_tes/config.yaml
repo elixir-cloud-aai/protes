@@ -90,6 +90,8 @@ security:
       admins-get-provenance: [p, admin, "/ga4gh/tes/v1/tasks/:id/provenance", (GET)|(HEAD)]
       # the resources that tasks used, per user (`custom.accounting`)
       admins-get-usage: [p, admin, /ga4gh/tes/v1/usage, (GET)|(HEAD)]
+      # the same records as execution reports, without user identifiers
+      admins-get-usage-reports: [p, admin, /ga4gh/tes/v1/usage/reports, (GET)|(HEAD)]
       # what users may choose per task (FOCA's plugin listing)
       users-list-plugins: [p, user, /ga4gh/tes/v1/plugins, (GET)|(HEAD)]
       users-get-plugins: [p, user, "/ga4gh/tes/v1/plugins/:id", (GET)|(HEAD)]
@@ -412,8 +414,16 @@ custom:
   # the Celery workers record the run time of each task that finished at its
   # TES instance and the resources it requested, with its owner (`user_id`);
   # admins get the totals per user at `GET /usage` (see `docs/configuration.md`)
+  # and the records as execution reports at `GET /usage/reports`, which name
+  # the providers and locations of `reports` (see `docs/configuration.md`,
+  # Execution reports)
   accounting:
     enabled: false
+    reports:
+      max_records: 10000
+      infra: []
+      location: null
+      backends: {}
 
 # Plugins (FOCA's gateway plugins, `foca.plugins`) process each new task
 # (`POST /tasks`): they may change the task, choose and order the TES backends

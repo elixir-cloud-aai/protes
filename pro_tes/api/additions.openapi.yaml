@@ -140,6 +140,63 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
+  # proTES extension: the usage records as execution reports of ELIXIR
+  # Compute (see docs/api.md)
+  /usage/reports:
+    get:
+      tags:
+      - TaskService
+      summary: GetUsageReports
+      description: |-
+        proTES extension: get the usage records of the tasks that finished in
+        a time range as execution reports of the Tool Execution Report format
+        of ELIXIR Compute, version 0.0.2: one per attempt of a task at its TES
+        instance, without user identifiers or other details of the task. For
+        admins.
+      operationId: GetUsageReports
+      parameters:
+      - name: since
+        in: query
+        required: false
+        description: >-
+          Only tasks that finished at or after this time (date-time of RFC
+          3339, e.g., `2026-11-01T00:00:00Z`; UTC if without time zone).
+        schema:
+          type: string
+      - name: until
+        in: query
+        required: false
+        description: >-
+          Only tasks that finished before this time (date-time of RFC
+          3339, e.g., `2026-11-01T00:00:00Z`; UTC if without time zone).
+        schema:
+          type: string
+      responses:
+        200:
+          description: >-
+            The reports, in the order in which the tasks finished, and of
+            their attempts.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ExecutionReport'
+        400:
+          description: >-
+            `since` or `until` is no valid time, or more tasks finished in the
+            time range than one request may cover
+            (`custom.accounting.reports.max_records`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        403:
+          description: The caller is not an admin.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
 components:
   schemas:
     UsageReport:
@@ -201,6 +258,66 @@ components:
         disk_gb_seconds:
           type: number
           description: Requested disk (GB) times run time.
+    ExecutionReport:
+      description: >-
+        Report of an attempt of a task, in the Tool Execution Report format of
+        ELIXIR Compute, version 0.0.2
+        (https://github.com/elixir-europe/compute_wp5/blob/main/execution_report.schema.json);
+        the fields that proTES fills are listed here.
+      type: object
+      additionalProperties: true
+      required:
+      - report_format_version
+      - tool_identifier
+      - tool_name
+      - infra
+      properties:
+        report_format_version:
+          type: string
+          enum:
+          - 0.0.2
+        tool_identifier:
+          type: array
+          items:
+            type: string
+          description: >-
+            Identifiers of the tool (IRIs): of the tags `biotools_id` and
+            `rrid` of the task, and the repository of the image of its first
+            executor (`docker://<repository>`).
+        tool_name:
+          type: string
+          description: Last component of the image repository.
+        tool_version:
+          type: string
+          description: Tag of the image (not `latest`).
+        tool_package_version:
+          type: string
+          description: Tag of the image, if of the form `<version>--<build>`.
+        infra:
+          type: array
+          items:
+            type: object
+          description: >-
+            Providers: those configured, the TES instance and proTES.
+        location:
+          type: object
+          description: Physical location, as configured.
+        cpu_cores_assigned:
+          type: integer
+          description: CPU cores that the task requested.
+        start_time:
+          type: string
+          format: date-time
+          description: Start of the attempt, if known.
+        end_time:
+          type: string
+          format: date-time
+          description: End of the attempt, if known.
+        final_outputs_size:
+          type: integer
+          description: >-
+            Total size of the outputs of the attempt, in bytes, as logged by
+            the TES instance, rounded to two significant digits.
     TaskProvenance:
       description: >-
         Provenance of a task: the record of FOCA's plugin engine (see the

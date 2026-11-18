@@ -40,6 +40,21 @@ See [Tokens per TES
 instance](access-control.md#tokens-per-tes-instance) for what to check
 before relying on it.
 
+**Execution reports (with accounting):** admins can now get the usage
+records as execution reports of the Tool Execution Report format of ELIXIR
+Compute, version 0.0.2, without personal data (`GET /usage/reports`, see
+[Execution reports](api.md#execution-reports)). Nothing changes for
+deployments without accounting. With accounting, the records of tasks that
+finish from now on also hold the tool of the task (from the image of its
+first executor and its tags `biotools_id` and `rrid`), the times and total
+output size of each attempt, and the version of proTES; records of earlier
+tasks give no reports. To name your organization and the location of your
+TES instances in the reports, set `custom.accounting.reports` (see
+[Execution reports](configuration.md#execution-reports)). The endpoint needs
+the new rule `admins-get-usage-reports` of the base config: overlays whose
+policies are a list (which replaces all rules) must add it, or admins get
+`403`.
+
 ## To version 0.6.0
 
 **FOCA 0.22 (all deployments):** proTES now requires FOCA 0.22.0, on the FOCA
