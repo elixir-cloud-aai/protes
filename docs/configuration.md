@@ -807,11 +807,99 @@ Each record (collection `usage` of the database of the tasks) holds the
 owner of the task (`user_id`, as in the task document, see [Task
 owners](operations.md#task-owners)), the task identifier, the URL of the TES
 instance, the final state, the times, the requested resources and the
-products above; nothing else of the task. The records are kept when tasks
+products above, and, for [execution reports](#execution-reports), the tool
+(name, version and identifiers, from the image of the first executor and the
+tags `biotools_id` and `rrid` of the task), the start, end and total size of
+the outputs of each attempt (task log), and the version of proTES; nothing
+else of the task (no commands, environment variables, URLs or paths of inputs
+and outputs, or other tags). The records are kept when tasks
 are deleted by the [retention of finished
 tasks](#retention-of-finished-tasks), until operators delete them (see
 [Usage records](operations.md#usage-records)). Turning accounting off stops
 the recording; stored records are still served.
+
+### Execution reports
+
+Admins get the records as execution reports of the Tool Execution Report
+format of ELIXIR Compute, version 0.0.2 (`GET /usage/reports`, see
+[Execution reports](api.md#execution-reports)). Each report names the
+infrastructure providers that ran the task (`infra`) and where (`location`),
+which proTES can't learn from TES: configure them in
+`custom.accounting.reports`, with the keys of the report format:
+
+```yaml
+custom:
+  accounting:
+    enabled: true
+    reports:
+      # providers named in every report, before the TES instance and proTES
+      # (e.g., the operator, by its ROR identifier)
+      infra:
+        - infra_name: Example Organization
+          infra_identifier:
+            - https://ror.org/000000000
+      # location of the computations, unless set for their TES instance
+      location:
+        name: Example data centre
+        address:
+          addressCountry: FI
+          addressLocality: Espoo
+      # TES instances, by URL (as in `custom.tes.backends`; normalized)
+      backends:
+        https://tes.example.org:
+          infra_name: Example TES
+          infra_identifier:
+            - https://tes.example.org
+          infra_version: "1.1"
+          location:
+            address:
+              addressCountry: SE
+      # trusted namespaces of images, whose tasks are reported (default:
+      # Docker Hub's official images and BioContainers), here also those
+      # of the operator's registry
+      images:
+        - library
+        - biocontainers
+        - quay.io/biocontainers
+        - registry.example.org/tools
+      # most tasks that one request may cover (1 to 1000000)
+      max_records: 10000
+```
+
+- `infra`: providers (`infra_name`, at least one `infra_identifier`, an IRI
+  such as a ROR identifier or an RRID, and `infra_version` for software),
+  named in every report; none by default.
+- `location`: the physical location (`name`, and `address` with
+  `addressCountry` as ISO 3166-1 alpha-2 code, `postalCode`,
+  `addressRegion`, `addressLocality`), for the TES instances without one of
+  their own; none by default, then reports have no `location`.
+- `backends`: TES instances by URL, each a provider with an optional
+  `location`. TES instances that are not listed (e.g., discovered ones) are
+  named by the host of their URL, with the URL as identifier.
+- `images`: the namespaces of images whose tasks are reported: image
+  repositories or their prefixes (whole path components, e.g.,
+  `quay.io/biocontainers` for `quay.io/biocontainers/bwa`), with their
+  registry, or with or without `docker.io/` for Docker Hub, whose official
+  images (e.g., `ubuntu`) are `library`; a registry alone (e.g., `ghcr.io`)
+  is invalid, as it would trust all of its users' namespaces. Image names
+  and tags are reported as they are,
+  and in namespaces that anyone can push to under their own name (e.g.,
+  `ghcr.io/<user>`, `docker.io/<user>`), they may name users: list only
+  namespaces whose images are published tools (by default `library`,
+  `biocontainers` and `quay.io/biocontainers`). Tasks of other images are
+  not reported (their records are kept, and reported once their namespace
+  is listed). Only tasks that completed are reported, as their images
+  exist; a TES instance that runs images built locally under names of a
+  trusted namespace (e.g., a one-component name, which counts as `library`)
+  would still report those names, so don't trust such namespaces there.
+- `max_records`: the most tasks that one request may cover (completed
+  tasks with a recorded tool, also those of untrusted images, whatever their
+  number of attempts); requests for more get `400 Bad Request`.
+
+Settings apply to all reports when they are requested, also to those of
+tasks recorded before. Unknown keys and invalid values (e.g., an identifier
+without scheme, or a country that is no two-letter code) stop proTES on
+startup.
 
 ## Security
 

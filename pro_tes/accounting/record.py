@@ -2,6 +2,7 @@
 
 from collections.abc import Iterable
 from datetime import UTC, datetime
+from importlib.metadata import version
 import logging
 import math
 from typing import Any
@@ -9,7 +10,12 @@ from typing import Any
 from pymongo.collection import Collection
 from pymongo.errors import DuplicateKeyError
 
+from pro_tes.accounting.tool import TAG_KEYS, task_tool
+
 logger = logging.getLogger(__name__)
+
+# Largest size (in bytes) that records hold: MongoDB's 64-bit integers
+MAX_SIZE = 2**63 - 1
 
 # Requested resources of tasks (`task.resources`) that are accounted, by
 # the field of their resource-seconds in the records
@@ -60,6 +66,45 @@ def _span(log: Any) -> tuple[datetime, datetime] | None:
     return start, end
 
 
+def _endpoints(log: Any) -> tuple[datetime | None, datetime | None]:
+    """Get the start and the end of an attempt, each if known.
+
+    Those of :py:func:`_span` if both are known; else each of the task log,
+    or else of its executors (the earliest start, the latest end), so that
+    a known start is kept without end, and vice versa.
+
+    Args:
+        log: Task log of the TES instance (`tes.TaskLog`).
+
+    Returns:
+        Start and end, each `None` if unknown; both `None` if the end is
+        before the start.
+    """
+    span = _span(log)
+    if span is not None:
+        return span
+    executors = getattr(log, "logs", None) or []
+    start = _utc(getattr(log, "start_time", None)) or min(
+        (
+            time
+            for time in (_utc(getattr(item, "start_time", None)) for item in executors)
+            if time is not None
+        ),
+        default=None,
+    )
+    end = _utc(getattr(log, "end_time", None)) or max(
+        (
+            time
+            for time in (_utc(getattr(item, "end_time", None)) for item in executors)
+            if time is not None
+        ),
+        default=None,
+    )
+    if start is not None and end is not None:
+        return None, None
+    return start, end
+
+
 def _amount(value: Any) -> float | None:
     """Get the amount of a requested resource.
 
@@ -73,6 +118,48 @@ def _amount(value: Any) -> float | None:
         return None
     amount = float(value)
     return amount if math.isfinite(amount) and amount >= 0 else None
+
+
+def _outputs_bytes(log: Any) -> int | None:
+    """Get the total size of the outputs of an attempt of a task.
+
+    Args:
+        log: Task log of the TES instance (`tes.TaskLog`).
+
+    Returns:
+        The sum of the sizes of its output logs (`outputs[].size_bytes`,
+        integers or strings of digits); `None` if there are none, if any
+        size is missing or invalid (the sum would be partial), or if a size
+        or the sum exceeds what MongoDB stores (64-bit integers).
+    """
+    sizes = []
+    for output in getattr(log, "outputs", None) or []:
+        size = getattr(output, "size_bytes", None)
+        if isinstance(size, str) and size.isascii() and size.isdigit():
+            # longer strings can't be 64-bit integers (and `int()` refuses
+            # strings of more than 4300 digits, since Python 3.11)
+            if len(size) > len(str(MAX_SIZE)):
+                return None
+            size = int(size)
+        if not isinstance(size, int) or isinstance(size, bool) or size < 0:
+            return None
+        sizes.append(size)
+    total = sum(sizes)
+    return total if sizes and total <= MAX_SIZE else None
+
+
+def _attempt(log: Any) -> dict[str, Any]:
+    """Get the record of an attempt of a task at its TES instance.
+
+    Args:
+        log: Task log of the TES instance (`tes.TaskLog`).
+
+    Returns:
+        Its start and end, each if known (cf. :py:func:`_endpoints`), and
+        the total size of its outputs (`outputs_bytes`), if logged.
+    """
+    start, end = _endpoints(log)
+    return {"start_time": start, "end_time": end, "outputs_bytes": _outputs_bytes(log)}
 
 
 def usage_record(
@@ -92,9 +179,18 @@ def usage_record(
     be finite, are not accounted (`None`, 0 resource-seconds), so that
     records stay valid JSON (totals too, cf. :py:func:`usage_totals`).
 
+    For execution reports (cf. :py:mod:`pro_tes.accounting.reports`), the
+    record also holds the tool of the task (`tool`, cf.
+    :py:func:`pro_tes.accounting.tool.task_tool`), the start, end and total
+    size of the outputs of each attempt (`attempts`, in the order of the task
+    logs), and the version of proTES (`protes_version`); nothing else of the
+    task.
+
     Args:
         document: Stored task, with its owner (`user_id`), identifier
-            (`task.id`) and requested resources (`task.resources`), if any.
+            (`task.id`), requested resources (`task.resources`), and the
+            images of its executors (`task.executors[].image`) and its tags
+            with tool identifiers (`task.tags`), if any.
         logs: Task logs of the TES instance (`tes.TaskLog`).
         backend: URL of the TES instance.
         state: Final state of the task at its TES instance.
@@ -103,6 +199,7 @@ def usage_record(
     Returns:
         The record, by task identifier (`_id`).
     """
+    logs = list(logs)
     task = document.get("task") or {}
     spans = [span for span in map(_span, logs) if span is not None]
     seconds = sum((end - start).total_seconds() for start, end in spans)
@@ -130,6 +227,10 @@ def usage_record(
             amount, product = None, 0.0
         record[name] = amount
         record[field] = product
+    # for execution reports (cf. :py:mod:`pro_tes.accounting.reports`)
+    record["tool"] = task_tool(task)
+    record["attempts"] = [_attempt(log) for log in logs]
+    record["protes_version"] = version("pro-tes")
     return record
 
 
@@ -162,6 +263,9 @@ def record_usage(
             "user_id": True,
             "task.id": True,
             "task.resources": True,
+            # for the tool of execution reports only
+            "task.executors.image": True,
+            **{f"task.tags.{key}": True for key in TAG_KEYS},
         },
     )
     if document is None or not isinstance((document.get("task") or {}).get("id"), str):

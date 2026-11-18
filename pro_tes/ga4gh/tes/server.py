@@ -17,9 +17,9 @@ from foca.plugins.adapter import (
 )
 from foca.utils.logging import log_traffic
 
-from pro_tes.accounting import usage_totals
+from pro_tes.accounting import TooManyRecords, execution_reports, usage_totals
 from pro_tes.config_models import CustomConfig
-from pro_tes.exceptions import InvalidUsageTime
+from pro_tes.exceptions import InvalidUsageTime, TooManyUsageRecords
 from pro_tes.ga4gh.tes.task_runs import TaskRuns
 from pro_tes.utils.db import TASK_DB, USAGE_COLLECTION
 
@@ -150,6 +150,39 @@ def GetUsage(*args: Any, **kwargs: Any) -> dict[str, Any]:
         "recording": get_custom_config(CustomConfig).accounting.enabled,
         "users": totals,
     }
+
+
+# GET /usage/reports
+@log_traffic
+def GetUsageReports(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+    """Get the execution reports of the tasks (proTES extension).
+
+    For admins only (enforced by the policies).
+
+    Args:
+        *args: Variable length argument list.
+        **kwargs: Arbitrary keyword arguments: the time range (`since`,
+            `until`) of the tasks, if any.
+
+    Returns:
+        The reports of the Tool Execution Report format (cf.
+        :py:func:`pro_tes.accounting.execution_reports`).
+
+    Raises:
+        pro_tes.exceptions.TooManyUsageRecords: The time range has more
+            records than `custom.accounting.reports.max_records`.
+    """
+    since = _parse_time(kwargs.get("since"), "since")
+    until = _parse_time(kwargs.get("until"), "until")
+    try:
+        return execution_reports(
+            get_collection(TASK_DB, USAGE_COLLECTION),
+            get_custom_config(CustomConfig).accounting.reports,
+            since=since,
+            until=until,
+        )
+    except TooManyRecords as exc:
+        raise TooManyUsageRecords(str(exc)) from exc
 
 
 def _parse_time(value: str | None, name: str) -> datetime | None:

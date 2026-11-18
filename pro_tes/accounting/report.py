@@ -28,6 +28,27 @@ def _cap(value: Any) -> Any:
     return value
 
 
+def finished_range(
+    since: datetime | None = None, until: datetime | None = None
+) -> dict[str, Any]:
+    """Get the filter of the records of tasks that finished in a time range.
+
+    Args:
+        since: Only tasks that finished at or after this time (cf.
+            `finished_at` of the records).
+        until: Only tasks that finished before this time.
+
+    Returns:
+        The filter on `finished_at`; empty if neither time is set.
+    """
+    finished: dict[str, datetime] = {}
+    if since is not None:
+        finished["$gte"] = since
+    if until is not None:
+        finished["$lt"] = until
+    return {"finished_at": finished} if finished else {}
+
+
 def usage_totals(
     usage: Collection[dict[str, Any]],
     user_id: str | None = None,
@@ -51,16 +72,9 @@ def usage_totals(
         run times (`wall_seconds`) and resource-seconds; sums too large for a
         float are the largest float.
     """
-    match: dict[str, Any] = {}
+    match: dict[str, Any] = finished_range(since, until)
     if user_id is not None:
         match["user_id"] = user_id
-    finished: dict[str, datetime] = {}
-    if since is not None:
-        finished["$gte"] = since
-    if until is not None:
-        finished["$lt"] = until
-    if finished:
-        match["finished_at"] = finished
     group: dict[str, Any] = {
         "_id": "$user_id",
         "tasks": {"$sum": 1},

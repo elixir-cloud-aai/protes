@@ -162,6 +162,13 @@ class InvalidUsageTime(BadRequest):
     """
 
 
+class TooManyUsageRecords(BadRequest):
+    """Raised when a request for execution reports covers too many tasks.
+
+    Cf. `custom.accounting.reports.max_records` and `GET /usage/reports`.
+    """
+
+
 class TaskNotCancelable(Conflict):
     """Raised when a task has not finished, but can't be canceled.
 
@@ -230,6 +237,14 @@ exceptions = {
     InvalidUsageTime: {
         "title": "Bad request",
         "detail": "`since` or `until` is no valid time (RFC 3339).",
+        "status": 400,
+    },
+    TooManyUsageRecords: {
+        "title": "Bad request",
+        "detail": (
+            "More tasks finished in the time range than one request may cover"
+            " (`max_records`); narrow it (`since`, `until`)."
+        ),
         "status": 400,
     },
     TaskNotCancelable: {

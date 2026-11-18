@@ -207,6 +207,92 @@ Only admins may get it (rule `admins-get-usage`); everyone else gets `403
 Forbidden` (see [Access control](access-control.md#roles)). All users are
 listed in one response, in the order of their identifiers.
 
+### Execution reports
+
+`GET /usage/reports` (a proTES extension) returns the same records as
+execution reports of the [Tool Execution Report
+format](https://github.com/elixir-europe/compute_wp5) of ELIXIR Compute,
+which credits the infrastructures that ran tools; proTES supports **report
+format version 0.0.2** (`report_format_version`) only, as defined by [its
+JSON
+Schema](https://github.com/elixir-europe/compute_wp5/blob/76b2a13f371fa0cba3faa466bec2442f543ca7ea/execution_report.schema.json),
+against which the tests validate the reports. The response is a
+JSON array with one report per attempt of a task at its TES instance (task
+log; a task that its TES instance ran twice gives two reports), in the order
+in which the tasks finished:
+
+```json
+[
+  {
+    "report_format_version": "0.0.2",
+    "tool_identifier": ["https://bio.tools/bwa", "docker://quay.io/biocontainers/bwa"],
+    "tool_name": "bwa",
+    "tool_version": "0.7.18",
+    "tool_package_version": "0.7.18--he4a0461_1",
+    "infra": [
+      {"infra_name": "Example Organization", "infra_identifier": ["https://ror.org/000000000"]},
+      {"infra_name": "tes.example.org", "infra_identifier": ["https://tes.example.org"]},
+      {"infra_name": "proTES", "infra_identifier": ["https://github.com/elixir-cloud-aai/protes"],
+       "infra_version": "0.7.0"}
+    ],
+    "location": {"address": {"addressCountry": "FI"}},
+    "cpu_cores_assigned": 2,
+    "start_time": "2026-11-01T10:00:00Z",
+    "end_time": "2026-11-01T11:00:00Z",
+    "final_outputs_size": 120000
+  }
+]
+```
+
+The fields come from the record of the task:
+
+| Field | Source |
+| --- | --- |
+| `tool_name` | the last component of the image repository of the first executor (e.g., `bwa` of `quay.io/biocontainers/bwa:0.7.18--he4a0461_1`) |
+| `tool_version` | the tag of that image, unless it is `latest`; for tags of the form `<version>--<build>` (BioContainers), the part before `--` |
+| `tool_package_version` | the whole tag, if of the form `<version>--<build>` |
+| `tool_identifier` | `https://bio.tools/<id>` for a tag `biotools_id` of the task, `https://identifiers.org/RRID/RRID:SCR_<n>` for a tag `rrid` (`SCR_<n>` or `RRID:SCR_<n>`), if valid, then the image repository (`docker://<repository>`, without tag and digest) |
+| `infra` | the providers of `custom.accounting.reports.infra`, the TES instance (as configured in `reports.backends`, or else named by the host of its URL, with its URL as identifier), and proTES with the version that recorded the task |
+| `location` | that of the TES instance in `reports.backends`, or else `reports.location`; left out if neither is set |
+| `cpu_cores_assigned` | the CPU cores that the task requested (`resources.cpu_cores`): an allocation, not a measurement; left out if the task requested none |
+| `start_time`, `end_time` | the times of the attempt in the logs of the TES instance (as for the run time of [Usage](#usage)), each if known (e.g., a start without end); both left out if the end is before the start |
+| `final_outputs_size` | the sum of the sizes of the outputs of the attempt that the TES instance logged (`logs[].outputs[].size_bytes`), in bytes, rounded to two significant digits (e.g., 123456 to 120000); left out if none are logged, if any of them lacks a valid size (the sum would be partial), or if a size or the sum exceeds 2^63-1 |
+
+The fields that TES doesn't provide are left out: `affiliation` (proTES
+doesn't know the project of a task), `input_size` (TES logs no sizes of
+inputs), `cpu_identifier` and `cpu_mods` (the hardware of the TES instance),
+`memory_used`, `cpu_cores_used` and `gpu_cores_used` (TES instances don't
+report what tasks consumed; the format has no field for the RAM that a task
+requested), and `duration` (`start_time` and `end_time` are given instead).
+
+Reports hold no personal data and no details of tasks: no user identifiers
+(`user_id`, subject, e-mail, groups), no task identifiers or names, no
+commands, arguments or environment variables, no URLs or paths of inputs and
+outputs, and no tags but the two tool identifiers above; sizes are totals per
+attempt, rounded. Image names and tags are chosen by whoever pushed the
+image, and in personal namespaces (e.g., `ghcr.io/<user>/<tool>`) they may
+name users, so only tasks whose image is in a trusted namespace are reported
+(`custom.accounting.reports.images`; by default Docker Hub's official images
+and BioContainers, see [Execution
+reports](configuration.md#execution-reports)). The tool identifier tags
+(`biotools_id`, `rrid`) are reported as the task sets them, if valid; they
+are meant for tool identifiers only. Only tasks that completed (`COMPLETE`)
+are reported: their images exist, so names and tags of images that don't
+(e.g., `ubuntu:<user name>`, which fail) are never reported. Tasks in other
+final states, tasks of other images, tasks whose first
+executor has no valid image reference, tasks without task logs, and tasks
+recorded by proTES before 0.7.0 (whose records lack the tool and the
+attempts) give no reports.
+
+The query parameters `since` and `until` select the tasks by the time they
+finished, as for [Usage](#usage). One request covers at most
+`custom.accounting.reports.max_records` tasks (default 10000); requests for
+more get `400 Bad Request`, so narrow the time range (e.g., export per day).
+Only admins may get the reports (rule `admins-get-usage-reports`); everyone
+else gets `403 Forbidden`. See [Execution
+reports](operations.md#execution-reports) for exporting and handing them
+over.
+
 ## Errors
 
 Errors are [problem details](https://www.rfc-editor.org/rfc/rfc9457) (with
