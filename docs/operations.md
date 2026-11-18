@@ -230,8 +230,12 @@ start of a range is included and its end is not, so consecutive ranges cover
 each task once. Hand the file over as the receiving service asks; the
 reports are of format version 0.0.2, and each of them validates against
 its [JSON
-Schema](https://github.com/elixir-europe/compute_wp5/blob/main/execution_report.schema.json).
+Schema](https://github.com/elixir-europe/compute_wp5/blob/76b2a13f371fa0cba3faa466bec2442f543ca7ea/execution_report.schema.json)
+(the version that the tests vendor, in `tests/accounting/data`).
 Deleting records (above) also removes their reports: export them first.
+Before handing reports over, check that the trusted image namespaces
+(`custom.accounting.reports.images`) hold only published tools, whose names
+can't name users.
 
 ## Task provenance
 

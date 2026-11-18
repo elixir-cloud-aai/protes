@@ -48,8 +48,11 @@ deployments without accounting. With accounting, the records of tasks that
 finish from now on also hold the tool of the task (from the image of its
 first executor and its tags `biotools_id` and `rrid`), the times and total
 output size of each attempt, and the version of proTES; records of earlier
-tasks give no reports. To name your organization and the location of your
-TES instances in the reports, set `custom.accounting.reports` (see
+tasks give no reports. Only tasks of images in trusted namespaces are
+reported (by default Docker Hub's official images and BioContainers). To
+name your organization and the location of your TES instances in the
+reports, or to trust further image namespaces, set
+`custom.accounting.reports` (see
 [Execution reports](configuration.md#execution-reports)). The endpoint needs
 the new rule `admins-get-usage-reports` of the base config: overlays whose
 policies are a list (which replaces all rules) must add it, or admins get

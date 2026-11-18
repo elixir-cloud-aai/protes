@@ -29,6 +29,7 @@ from pro_tes.accounting.reports import (
     REPORT_FORMAT_VERSION,
     report_time,
     rounded_size,
+    trusted_image,
 )
 from pro_tes.config_models import CustomConfig
 from tests.conftest import ADMIN, ADMIN_USER, DB, OUTSIDER, USER, make_headers
@@ -267,6 +268,63 @@ def test_reports_without_tool_or_attempts(usage: Collection[dict[str, Any]]) -> 
     assert execution_reports(usage, ExecutionReports()) == []
 
 
+@pytest.mark.parametrize(
+    "image",
+    [
+        "ghcr.io/alice-smith/tool:run-alice",
+        "registry.example.org/alice/bwa:0.7.18",
+        "alice/bwa:0.7.18",
+        "quay.io/biocontainers-alice/bwa:1.0",
+        "quay.io/alice/biocontainers/bwa:1.0",
+    ],
+)
+def test_reports_of_untrusted_images(
+    usage: Collection[dict[str, Any]], image: str
+) -> None:
+    """Images outside the trusted namespaces give no reports.
+
+    Their names and tags may name users (e.g., personal namespaces).
+    """
+    add(usage, image=image)
+    assert execution_reports(usage, ExecutionReports()) == []
+
+
+@pytest.mark.parametrize(
+    ("repository", "trusted"),
+    [
+        ("ubuntu", True),
+        ("library/ubuntu", True),
+        ("docker.io/ubuntu", True),
+        ("docker.io/library/ubuntu", True),
+        ("biocontainers/bwa", True),
+        ("docker.io/biocontainers/bwa", True),
+        ("quay.io/biocontainers/bwa", True),
+        ("quay.io/biocontainers", True),
+        ("quay.io/biocontainersx/bwa", False),
+        ("quay.io/bwa", False),
+        ("alice/bwa", False),
+        ("registry.example.org/team/bwa", False),
+        (None, False),
+    ],
+)
+def test_trusted_image(repository: Any, trusted: bool) -> None:
+    """Repositories in (or equal to) a trusted namespace are trusted.
+
+    By whole path components; Docker Hub's official images are `library`.
+    """
+    images = ExecutionReports().images
+    assert trusted_image(repository, images) is trusted
+
+
+def test_trusted_images_configured(usage: Collection[dict[str, Any]]) -> None:
+    """Operators may trust further namespaces, e.g., their own registry."""
+    add(usage, image="registry.example.org/team/bwa:0.7.18")
+    config = ExecutionReports(images=["registry.example.org/team"])
+    (report,) = execution_reports(usage, config)
+    validate([report])
+    assert report["tool_identifier"][-1] == "docker://registry.example.org/team/bwa"
+
+
 def test_report_without_backend(usage: Collection[dict[str, Any]]) -> None:
     """Records without valid URL of their TES instance name only proTES."""
     add(usage, task_id="T1", backend="")
@@ -400,6 +458,10 @@ def test_reports_configured(usage: Collection[dict[str, Any]]) -> None:
         {"location": {"address": {"addressCountry": "Finland"}}},
         {"location": {"address": {"country": "FI"}}},
         {"backends": {"ftp://tes.example.org": {}}},
+        {"images": ["quay.io/biocontainers/"]},
+        {"images": ["Quay.io/BioContainers"]},
+        {"images": ["quay.io/biocontainers:latest"]},
+        {"images": [""]},
         {
             "backends": {
                 url: {"infra_name": "X", "infra_identifier": ["https://x.org"]}
@@ -412,6 +474,12 @@ def test_config_invalid(config: dict[str, Any]) -> None:
     """Invalid settings are errors."""
     with pytest.raises(ValueError):
         ExecutionReports.model_validate(config)
+
+
+def test_config_images() -> None:
+    """Namespaces of images may have a registry with port."""
+    config = ExecutionReports(images=["localhost:5000/tools", "ghcr.io/org"])
+    assert config.images == ["localhost:5000/tools", "ghcr.io/org"]
 
 
 def test_config_models() -> None:

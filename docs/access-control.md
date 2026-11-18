@@ -58,8 +58,8 @@ The roles and their permissions are the policies of
 [FOCA's access control](https://foca.readthedocs.io/en/latest/access-control/)),
 named rules (`users-create-list-tasks`, `owners-get-cancel-tasks`,
 `owners-get-provenance`, `admins-get-provenance`, `admins-get-usage`,
-`admins-get-usage-reports`, `users-list-plugins`, `users-get-plugins`, `admins-list-add-permissions`
-and `admins-manage-permissions`): a config
+`admins-get-usage-reports`, `users-list-plugins`, `users-get-plugins`,
+`admins-list-add-permissions` and `admins-manage-permissions`): a config
 overlay adds, changes or removes (`null`) single rules by name, e.g., rules
 that let users only list their tasks, and owners only read them:
 

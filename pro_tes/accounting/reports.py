@@ -13,7 +13,10 @@ rounded.
 Reports hold no personal data and no details of tasks: no user identifiers,
 task identifiers, commands, arguments, environment variables, URLs or paths
 of inputs and outputs, or other tags; the records hold none of these but the
-owner and the task identifier, which are not read.
+owner and the task identifier, which are not read. Only tasks of images in
+trusted namespaces (`custom.accounting.reports.images`, e.g., BioContainers)
+are reported, as image names and tags in other namespaces (e.g., personal
+ones) may name users.
 """
 
 from datetime import UTC, datetime
@@ -23,8 +26,11 @@ from urllib.parse import urlsplit
 from pymongo.collection import Collection
 
 from pro_tes.accounting.config import ExecutionReports
+from pro_tes.accounting.report import finished_range
 
-# Version of the report format (`report_format_version`)
+# Version of the report format (`report_format_version`); the schema in
+# `tests/accounting/data` must be of the same version (cf. its `.license`
+# file for its source)
 REPORT_FORMAT_VERSION = "0.0.2"
 # proTES, as infrastructure provider (with the version that recorded the task)
 PROTES = {
@@ -56,7 +62,9 @@ def rounded_size(size: int) -> int:
     """
     factor = 10 ** max(len(str(size)) - SIZE_DIGITS, 0)
     quotient, remainder = divmod(size, factor)
-    if 2 * remainder >= factor > 1:
+    # half up (`round()` rounds half to even); sizes of up to two digits
+    # have no remainder
+    if 2 * remainder >= factor and remainder:
         quotient += 1
     return quotient * factor
 
@@ -125,6 +133,33 @@ def _backend(
     return provider, location_fields
 
 
+def trusted_image(repository: Any, images: list[str]) -> bool:
+    """Check whether an image is in a trusted namespace.
+
+    Image names and tags are chosen by whoever pushed the image: in a
+    personal namespace (e.g., `ghcr.io/<user>/<tool>`), they may name the
+    user, so only images of trusted namespaces are reported.
+
+    Args:
+        repository: Image repository, without tag and digest.
+        images: Trusted namespaces (cf. `custom.accounting.reports.images`):
+            repositories or their prefixes (whole path components), with
+            the registry; without registry for Docker Hub, whose official
+            images are `library` (e.g., `ubuntu`, also `docker.io/ubuntu`).
+
+    Returns:
+        Whether the repository is one of the namespaces, or in one.
+    """
+    if not isinstance(repository, str):
+        return False
+    repository = repository.removeprefix("docker.io/")
+    if "/" not in repository:
+        repository = f"library/{repository}"
+    return any(
+        repository == image or repository.startswith(f"{image}/") for image in images
+    )
+
+
 def _reports(record: dict[str, Any], config: ExecutionReports) -> list[dict[str, Any]]:
     """Get the reports of a record, one per attempt.
 
@@ -136,6 +171,8 @@ def _reports(record: dict[str, Any], config: ExecutionReports) -> list[dict[str,
         The reports, in the order of the attempts.
     """
     tool = record["tool"]
+    if not trusted_image(tool.get("repository"), config.images):
+        return []
     common: dict[str, Any] = {
         "report_format_version": REPORT_FORMAT_VERSION,
         "tool_identifier": list(tool["identifiers"]),
@@ -148,7 +185,7 @@ def _reports(record: dict[str, Any], config: ExecutionReports) -> list[dict[str,
     provider, location = _backend(record, config)
     if provider is not None:
         infra.append(provider)
-    protes = dict(PROTES)
+    protes = {**PROTES, "infra_identifier": list(PROTES["infra_identifier"])}
     if isinstance(record.get("protes_version"), str):
         protes["infra_version"] = record["protes_version"]
     common["infra"] = [*infra, protes]
@@ -180,7 +217,8 @@ def execution_reports(
     """Get the execution reports of the tasks that finished in a time range.
 
     Records without tool or attempts (e.g., of earlier versions of proTES,
-    or of tasks whose first executor has no valid image) give no reports.
+    or of tasks whose first executor has no valid image), and records of
+    images outside the trusted namespaces (`config.images`) give no reports.
 
     Args:
         usage: Database collection of the records (cf.
@@ -201,14 +239,8 @@ def execution_reports(
     match: dict[str, Any] = {
         "tool": {"$type": "object"},
         "attempts.0": {"$exists": True},
+        **finished_range(since, until),
     }
-    finished: dict[str, datetime] = {}
-    if since is not None:
-        finished["$gte"] = since
-    if until is not None:
-        finished["$lt"] = until
-    if finished:
-        match["finished_at"] = finished
     records = list(
         usage.find(
             match,

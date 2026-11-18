@@ -854,6 +854,14 @@ custom:
           location:
             address:
               addressCountry: SE
+      # trusted namespaces of images, whose tasks are reported (default:
+      # Docker Hub's official images and BioContainers), here also those
+      # of the operator's registry
+      images:
+        - library
+        - biocontainers
+        - quay.io/biocontainers
+        - registry.example.org/tools
       # most tasks that one request may cover (1 to 1000000)
       max_records: 10000
 ```
@@ -868,6 +876,17 @@ custom:
 - `backends`: TES instances by URL, each a provider with an optional
   `location`. TES instances that are not listed (e.g., discovered ones) are
   named by the host of their URL, with the URL as identifier.
+- `images`: the namespaces of images whose tasks are reported: image
+  repositories or their prefixes (whole path components, e.g.,
+  `quay.io/biocontainers` for `quay.io/biocontainers/bwa`), with their
+  registry; without registry for Docker Hub, whose official images (e.g.,
+  `ubuntu`) are `library`. Image names and tags are reported as they are,
+  and in namespaces that anyone can push to under their own name (e.g.,
+  `ghcr.io/<user>`, `docker.io/<user>`), they may name users: list only
+  namespaces whose images are published tools (by default `library`,
+  `biocontainers` and `quay.io/biocontainers`). Tasks of other images are
+  not reported (their records are kept, and reported once their namespace
+  is listed).
 - `max_records`: the most tasks that one request may cover; requests for
   more get `400 Bad Request`.
 

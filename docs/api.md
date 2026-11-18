@@ -213,7 +213,10 @@ listed in one response, in the order of their identifiers.
 execution reports of the [Tool Execution Report
 format](https://github.com/elixir-europe/compute_wp5) of ELIXIR Compute,
 which credits the infrastructures that ran tools; proTES supports **report
-format version 0.0.2** (`report_format_version`) only. The response is a
+format version 0.0.2** (`report_format_version`) only, as defined by [its
+JSON
+Schema](https://github.com/elixir-europe/compute_wp5/blob/76b2a13f371fa0cba3faa466bec2442f543ca7ea/execution_report.schema.json),
+against which the tests validate the reports. The response is a
 JSON array with one report per attempt of a task at its TES instance (task
 log; a task that its TES instance ran twice gives two reports), in the order
 in which the tasks finished:
@@ -266,9 +269,17 @@ Reports hold no personal data and no details of tasks: no user identifiers
 (`user_id`, subject, e-mail, groups), no task identifiers or names, no
 commands, arguments or environment variables, no URLs or paths of inputs and
 outputs, and no tags but the two tool identifiers above; sizes are totals per
-attempt, rounded. Tasks whose first executor has no valid image reference,
-tasks without task logs, and tasks recorded by proTES before 0.7.0 (whose
-records lack the tool and the attempts) give no reports.
+attempt, rounded. Image names and tags are chosen by whoever pushed the
+image, and in personal namespaces (e.g., `ghcr.io/<user>/<tool>`) they may
+name users, so only tasks whose image is in a trusted namespace are reported
+(`custom.accounting.reports.images`; by default Docker Hub's official images
+and BioContainers, see [Execution
+reports](configuration.md#execution-reports)). The tool identifier tags
+(`biotools_id`, `rrid`) are reported as the task sets them, if valid; they
+are meant for tool identifiers only. Tasks of other images, tasks whose first
+executor has no valid image reference, tasks without task logs, and tasks
+recorded by proTES before 0.7.0 (whose records lack the tool and the
+attempts) give no reports.
 
 The query parameters `since` and `until` select the tasks by the time they
 finished, as for [Usage](#usage). One request covers at most

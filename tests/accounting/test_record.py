@@ -128,6 +128,7 @@ def test_record_for_reports() -> None:
     )
     assert usage["tool"] == {
         "name": "bwa",
+        "repository": "quay.io/biocontainers/bwa",
         "version": "0.7.18",
         "package_version": "0.7.18--he4a0461_1",
         "identifiers": [
@@ -155,6 +156,10 @@ def test_record_for_reports() -> None:
         ([tes.OutputFileLog(size_bytes="5"), SimpleNamespace(size_bytes="1e3")], 5),
         ([SimpleNamespace(size_bytes="7"), SimpleNamespace(size_bytes=True)], 7),
         ([object(), tes.OutputFileLog(size_bytes=0)], 0),
+        ([SimpleNamespace(size_bytes=str(2**63 - 1))], 2**63 - 1),
+        ([SimpleNamespace(size_bytes=str(2**63))], None),
+        ([SimpleNamespace(size_bytes="9" * 5000)], None),
+        ([SimpleNamespace(size_bytes=2**63 - 1), SimpleNamespace(size_bytes=1)], None),
     ],
 )
 def test_record_outputs_size(outputs: Any, total: int | None) -> None:
@@ -162,7 +167,8 @@ def test_record_outputs_size(outputs: Any, total: int | None) -> None:
 
     Sizes (`size_bytes`, integers as py-tes converts them, or strings of
     digits) that are negative or no numbers are left out; without any, the
-    size is unknown.
+    size is unknown, as it is if a size or the sum is too large for MongoDB
+    (64-bit integers).
     """
     usage = record([SimpleNamespace(start_time=START, outputs=outputs)])
     assert usage["attempts"][0]["outputs_bytes"] == total
@@ -316,6 +322,7 @@ def test_record_usage_tool(
     (stored,) = usage.find()
     assert stored["tool"] == {
         "name": "bwa",
+        "repository": "bwa",
         "version": "0.7.18",
         "package_version": None,
         "identifiers": [

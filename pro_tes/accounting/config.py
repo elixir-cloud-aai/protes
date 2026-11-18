@@ -11,6 +11,15 @@ IRI_PATTERN = r"^[A-Za-z][A-Za-z0-9+.-]*:[^\s<>\"{}|\\^`\x00-\x1f\x7f]+$"
 IRI = Annotated[str, StringConstraints(pattern=IRI_PATTERN, max_length=2048)]
 # Non-empty texts
 Text = Annotated[str, StringConstraints(min_length=1, max_length=1024)]
+# Namespaces of images: repositories or their prefixes, with an optional
+# registry (host and port) first, without tag, digest or trailing slash
+ImageNamespace = Annotated[
+    str,
+    StringConstraints(
+        pattern=r"^([A-Za-z0-9.-]+(:[0-9]+)?/)?[a-z0-9._-]+(/[a-z0-9._-]+)*$",
+        max_length=255,
+    ),
+]
 # Countries (ISO 3166-1 alpha-2)
 Country = Annotated[str, StringConstraints(pattern=r"^[A-Z]{2}$")]
 
@@ -112,18 +121,25 @@ class ExecutionReports(ReportModel):
             their TES instance.
         backends: TES instances, by URL (normalized, as in
             `custom.tes.backends`); others are named by their URL.
+        images: Trusted namespaces of images, whose tasks are reported:
+            repositories or their prefixes (whole path components), with
+            their registry; without registry for Docker Hub, whose official
+            images are `library`. By default, Docker Hub's official images
+            and BioContainers (on Docker Hub and Quay).
 
     Attributes:
         max_records: Maximum number of records of a request for reports.
         infra: Providers named in each report.
         location: Physical location of the computations, if set.
         backends: TES instances, by normalized URL.
+        images: Trusted namespaces of images.
     """
 
     max_records: Annotated[int, Field(gt=0, le=1000000)] = 10000
     infra: list[Provider] = []
     location: Location | None = None
     backends: dict[str, ReportedBackend] = {}
+    images: list[ImageNamespace] = ["library", "biocontainers", "quay.io/biocontainers"]
 
     @field_validator("backends")
     @classmethod

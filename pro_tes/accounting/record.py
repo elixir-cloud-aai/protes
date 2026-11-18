@@ -14,6 +14,9 @@ from pro_tes.accounting.tool import TAG_KEYS, task_tool
 
 logger = logging.getLogger(__name__)
 
+# Largest size (in bytes) that records hold: MongoDB's 64-bit integers
+MAX_SIZE = 2**63 - 1
+
 # Requested resources of tasks (`task.resources`) that are accounted, by
 # the field of their resource-seconds in the records
 RESOURCES = {
@@ -86,16 +89,23 @@ def _outputs_bytes(log: Any) -> int | None:
 
     Returns:
         The sum of the sizes of its output logs (`outputs[].size_bytes`)
-        that are integers or strings of digits; `None` if there are none.
+        that are integers or strings of digits; `None` if there are none,
+        or if a size or the sum exceeds what MongoDB stores (64-bit
+        integers).
     """
     sizes = []
     for output in getattr(log, "outputs", None) or []:
         size = getattr(output, "size_bytes", None)
         if isinstance(size, str) and size.isascii() and size.isdigit():
-            sizes.append(int(size))
-        elif isinstance(size, int) and not isinstance(size, bool) and size >= 0:
+            # longer strings can't be 64-bit integers (and `int()` refuses
+            # very long ones)
+            if len(size) > len(str(MAX_SIZE)):
+                return None
+            size = int(size)
+        if isinstance(size, int) and not isinstance(size, bool) and size >= 0:
             sizes.append(size)
-    return sum(sizes) if sizes else None
+    total = sum(sizes)
+    return total if sizes and total <= MAX_SIZE else None
 
 
 def _attempt(log: Any) -> dict[str, Any]:

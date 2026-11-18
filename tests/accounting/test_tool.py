@@ -48,6 +48,7 @@ def test_tool_of_image(
     """
     assert task_tool(_task(image)) == {
         "name": repository.rsplit("/", 1)[-1],
+        "repository": repository,
         "version": version,
         "package_version": package_version,
         "identifiers": [f"docker://{repository}"],

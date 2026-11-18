@@ -45,8 +45,8 @@ def _image_tool(image: Any) -> dict[str, Any] | None:
         image: Image of an executor, as stored.
 
     Returns:
-        Name, version, package version and identifier of the tool; `None`
-        if the image is no valid image reference.
+        Name, image repository, version, package version and identifier
+        of the tool; `None` if the image is no valid image reference.
     """
     if not isinstance(image, str):
         return None
@@ -62,6 +62,7 @@ def _image_tool(image: Any) -> dict[str, Any] | None:
         version = version.split("--", 1)[0]
     return {
         "name": match["repository"].rsplit("/", 1)[-1],
+        "repository": match["repository"],
         "version": version,
         "package_version": package_version,
         "identifiers": [f"docker://{match['repository']}"],
@@ -97,7 +98,8 @@ def task_tool(task: dict[str, Any]) -> dict[str, Any] | None:
         task: The task, as stored (`task` of its document).
 
     Returns:
-        Name (`name`), version (`version`) and package version
+        Name (`name`), image repository (`repository`, without tag and
+        digest), version (`version`) and package version
         (`package_version`) of the tool, if known, and its identifiers
         (`identifiers`, IRIs); `None` if the first executor has no valid
         image.
