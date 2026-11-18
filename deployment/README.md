@@ -719,10 +719,29 @@ in FOCA's docs for the caveats.
   start. `protes.startupProbe`, `protes.readinessProbe` and
   `protes.livenessProbe` (Kubernetes probe specs) each replace a default
   entirely.
-- **Worker:** no probes by default (`worker.readinessProbe`,
-  `worker.livenessProbe`), e.g., an `exec` probe with `celery --app
-  pro_tes.celery_worker inspect ping`, with long periods and timeouts, as it
-  starts Python.
+- **Worker:** ready once its Celery worker answers a ping through the broker
+  (an `exec` probe, `celery inspect ping --destination "celery@${HOSTNAME}"`,
+  with the broker URL of `CELERY_BROKER_URL`), checked every 30 seconds, so
+  that a rolling update keeps the old worker pod until the new worker runs
+  (an image or setting with which the worker doesn't start leaves the new
+  pod unready, and the rollout stalls instead of stopping the tracking of
+  tasks). The worker is restarted if it doesn't answer for 10 minutes (every
+  2 minutes, 5 times; e.g., while it can't reach the broker). Each check
+  starts Python, which takes about 0.4 CPU seconds and 50 MiB of the
+  worker's resources (about 1 CPU second per minute and pod, 2.5 checks),
+  and opens a connection to the broker, which RabbitMQ logs. While the
+  broker is down, the worker pods are unready, so `helm upgrade --wait`
+  then times out. `worker.readinessProbe` and `worker.livenessProbe`
+  (Kubernetes probe specs) are merged into these defaults by Helm (unlike
+  the app's probes, which replace them): set one
+  to `null` for none, and its `exec` to `null` for a probe of another type
+  (e.g., `tcpSocket`); rendering fails if a probe has two handlers. The
+  probes ping Celery's default node name of the worker (`celery@<hostname>`,
+  the pod's name): if `worker.command` sets another one (`--hostname`),
+  change their command too. They need `sh` and `celery` in the image, as
+  the app's image has, and a broker whose Celery transport supports remote
+  control (e.g., RabbitMQ, the bundled broker, or Redis; not Amazon SQS):
+  with others, set both probes to `null` or replace them.
 - **MongoDB** and **RabbitMQ:** ready once they accept connections.
 - **Flower:** ready once it accepts connections.
 

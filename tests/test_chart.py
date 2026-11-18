@@ -412,6 +412,110 @@ def test_worker() -> None:
     assert _env(worker)["FOCA_CONFIG_OVERLAY"] == _env(app)["FOCA_CONFIG_OVERLAY"]
 
 
+@pytest.mark.parametrize("probe", ["readinessProbe", "livenessProbe"])
+def test_worker_probes(probe: str) -> None:
+    """The worker is probed by default: it must answer a ping of Celery.
+
+    The probes ping the pod's own worker (Celery's default node name is
+    `celery@<hostname>`, the pod's name) through the broker of the worker's
+    `CELERY_BROKER_URL`, without creating the app (which would connect to
+    MongoDB), and give the check, which starts Python, more time than Celery
+    waits for the answer.
+    """
+    worker = _container(_render(), WORKER)
+    spec = worker[probe]
+    shell, flag, script = spec["exec"]["command"]
+    assert (shell, flag) == ("sh", "-c")
+    assert script == (
+        'exec celery inspect ping --destination "celery@${HOSTNAME}" --timeout 10'
+    )
+    assert "CELERY_BROKER_URL" in _env(worker)
+    assert spec["timeoutSeconds"] > 10
+    assert spec["periodSeconds"] >= 30
+
+
+def test_worker_liveness_tolerates_outages() -> None:
+    """The worker is restarted only after it didn't answer for 10 minutes.
+
+    So that a short outage of the broker, through which the probes ping the
+    worker, doesn't restart it, and it gets time to start before the first
+    check.
+    """
+    worker = _container(_render(), WORKER)
+    liveness = worker["livenessProbe"]
+    assert liveness["periodSeconds"] * liveness["failureThreshold"] >= 600
+    assert liveness["initialDelaySeconds"] >= 60
+
+
+@pytest.mark.parametrize("probe", ["readinessProbe", "livenessProbe"])
+def test_worker_probe_disabled(probe: str) -> None:
+    """A worker probe can be turned off with `null`."""
+    docs = _render("--set", f"worker.{probe}=null")
+    assert probe not in _container(docs, WORKER)
+
+
+@pytest.mark.parametrize("probe", ["readinessProbe", "livenessProbe"])
+def test_worker_probe_override(probe: str) -> None:
+    """A worker probe of another type replaces the default once `exec` is null.
+
+    Helm merges the values into the default probe, so its other settings
+    (e.g., `periodSeconds`) are kept unless set too.
+    """
+    docs = _render(
+        "--set",
+        f"worker.{probe}.exec=null",
+        "--set-json",
+        f'worker.{probe}.tcpSocket={{"port": 5672}}',
+        "--set",
+        f"worker.{probe}.periodSeconds=7",
+    )
+    spec = _container(docs, WORKER)[probe]
+    assert "exec" not in spec
+    assert spec["tcpSocket"] == {"port": 5672}
+    assert spec["periodSeconds"] == 7
+
+
+@pytest.mark.parametrize("probe", ["readinessProbe", "livenessProbe"])
+def test_worker_probe_empty_is_default(probe: str) -> None:
+    """An empty worker probe (the former default value) renders the default."""
+    default = _container(_render(), WORKER)[probe]
+    docs = _render("--set-json", f"worker.{probe}={{}}")
+    assert _container(docs, WORKER)[probe] == default
+
+
+@pytest.mark.parametrize("probe", ["readinessProbe", "livenessProbe"])
+def test_worker_probe_command_override(probe: str) -> None:
+    """An `exec` command of the values replaces the default's, keeping its timings."""
+    default = _container(_render(), WORKER)[probe]
+    docs = _render("--set-json", f'worker.{probe}.exec.command=["true"]')
+    spec = _container(docs, WORKER)[probe]
+    assert spec["exec"] == {"command": ["true"]}
+    assert {k: v for k, v in spec.items() if k != "exec"} == {
+        k: v for k, v in default.items() if k != "exec"
+    }
+
+
+@pytest.mark.parametrize("probe", ["readinessProbe", "livenessProbe"])
+def test_worker_probe_no_handler(probe: str) -> None:
+    """A worker probe left without a handler (only `exec: null`) fails."""
+    error = _render_error("--set", f"worker.{probe}.exec=null")
+    assert f"worker.{probe} has no handler" in error
+    assert f"set worker.{probe} to null for no probe" in error
+
+
+@pytest.mark.parametrize("handler", ["httpGet", "tcpSocket", "grpc"])
+@pytest.mark.parametrize("probe", ["readinessProbe", "livenessProbe"])
+def test_worker_probe_two_handlers(probe: str, handler: str) -> None:
+    """A worker probe with a second handler besides the default `exec` fails.
+
+    Kubernetes accepts one handler per probe; Helm merges the values into
+    the default probe, so another handler needs `exec: null`.
+    """
+    error = _render_error("--set-json", f'worker.{probe}.{handler}={{"port": 8080}}')
+    assert f"worker.{probe} has more than one handler (exec, {handler})" in error
+    assert f"worker.{probe}.exec to null" in error
+
+
 def test_worker_disabled() -> None:
     """The worker can be disabled, e.g., for one run elsewhere."""
     docs = _render("--set", "worker.enabled=false")
