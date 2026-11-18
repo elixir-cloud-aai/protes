@@ -213,6 +213,32 @@ consequences (e.g., a missing `hostName` for `applicationDomain`).
 {{- include "protes.checkSecurity" . -}}
 {{- include "protes.checkExtraEnv" . -}}
 {{- include "protes.checkFlower" . -}}
+{{- include "protes.checkWorkerProbes" . -}}
+{{- end -}}
+
+{{/*
+Fails if a probe of the worker (`worker.readinessProbe`,
+`worker.livenessProbe`) has more than one handler, which Kubernetes refuses:
+Helm merges the values into the default probes, so a handler of another type
+(e.g., `tcpSocket`) is added to their `exec` unless that is set to `null`;
+renders nothing.
+*/}}
+{{- define "protes.checkWorkerProbes" -}}
+{{- $worker := .Values.worker | default dict -}}
+{{- range $probe := list "readinessProbe" "livenessProbe" -}}
+{{- $spec := get $worker $probe -}}
+{{- if kindIs "map" $spec -}}
+{{- $handlers := list -}}
+{{- range $handler := list "exec" "httpGet" "tcpSocket" "grpc" -}}
+{{- if get $spec $handler -}}
+{{- $handlers = append $handlers $handler -}}
+{{- end -}}
+{{- end -}}
+{{- if gt (len $handlers) 1 -}}
+{{- fail (printf "worker.%s has more than one handler (%s): Helm merges the values into the default probe, so set worker.%s.exec to null for another type of probe" $probe (join ", " $handlers) $probe) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- end -}}
 
 {{/*

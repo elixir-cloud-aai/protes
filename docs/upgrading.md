@@ -58,6 +58,25 @@ the new rule `admins-get-usage-reports` of the base config: overlays whose
 policies are a list (which replaces all rules) must add it, or admins get
 `403`.
 
+**Worker probes (Helm chart):** the worker's container now has a readiness
+and a liveness probe by default: the worker must answer `celery inspect
+ping` through the broker (see the chart's README, Probes). Upgrades of the
+chart then wait until the new worker answers (up to about 30 seconds more),
+a worker that doesn't start keeps the rollout from replacing the old one,
+and a worker that doesn't answer for 10 minutes is restarted. Each check
+takes about 0.4 CPU seconds of the worker's resources. What to check in
+your values:
+
+- `worker.readinessProbe: {}` or `worker.livenessProbe: {}` (the former
+  defaults) now get the new probes, as Helm merges values into the
+  defaults: set them to `null` to keep a worker without probes.
+- Probes of your own are merged into the new ones: one with an `exec`
+  command replaces the command and keeps the defaults' timings unless it
+  sets them; one of another type (e.g., `tcpSocket`) also needs `exec:
+  null`, or rendering fails.
+- If `worker.command` sets the worker's node name (`--hostname`), change the
+  probes' command to ping that name.
+
 ## To version 0.6.0
 
 **FOCA 0.22 (all deployments):** proTES now requires FOCA 0.22.0, on the FOCA

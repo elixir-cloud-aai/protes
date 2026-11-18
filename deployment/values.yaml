@@ -489,14 +489,38 @@ worker:
   - --task-events
   - --loglevel=INFO
   replicas: 1
-  # Probes of the worker's container (Kubernetes probe specs; none by
-  # default, so its pods are ready once started, also while Celery retries
-  # to connect to the broker), e.g., an `exec` probe that runs
-  # `celery --app pro_tes.celery_worker inspect ping` for the pod's worker;
-  # such a check starts Python and creates the app, so give it long periods
-  # and timeouts
-  readinessProbe: {}
-  livenessProbe: {}
+  # Probes of the worker's container (Kubernetes probe specs): by default,
+  # the pod's worker must answer a ping of Celery through the broker
+  # (`celery inspect ping`, with the broker URL of `CELERY_BROKER_URL`, to
+  # Celery's default node name `celery@<hostname>`; change the probes if
+  # `command` sets another node name with `--hostname`). The pod is ready
+  # once its worker answers, so that a rolling update keeps the old pod
+  # until the new worker runs, and its worker is restarted if it doesn't
+  # answer for 10 minutes (e.g., while it can't reach the broker). Each
+  # check starts Python (about 0.4 CPU seconds and 50 MiB), hence the long
+  # periods and timeouts. Helm merges values into these: set a probe to
+  # `null` for none, and its `exec` to `null` for another type of probe
+  # (e.g., `tcpSocket`)
+  readinessProbe:
+    exec:
+      command:
+      - sh
+      - -c
+      - exec celery inspect ping --destination "celery@${HOSTNAME}" --timeout 10
+    initialDelaySeconds: 10
+    periodSeconds: 30
+    timeoutSeconds: 30
+    failureThreshold: 3
+  livenessProbe:
+    exec:
+      command:
+      - sh
+      - -c
+      - exec celery inspect ping --destination "celery@${HOSTNAME}" --timeout 10
+    initialDelaySeconds: 60
+    periodSeconds: 120
+    timeoutSeconds: 30
+    failureThreshold: 5
   # Seconds that the worker gets to finish running polls after its pod is
   # deleted (Celery's warm shutdown), before it is killed; polls are
   # acknowledged after they ran, so the broker delivers those of a killed
