@@ -13,10 +13,11 @@ rounded.
 Reports hold no personal data and no details of tasks: no user identifiers,
 task identifiers, commands, arguments, environment variables, URLs or paths
 of inputs and outputs, or other tags; the records hold none of these but the
-owner and the task identifier, which are not read. Only tasks of images in
-trusted namespaces (`custom.accounting.reports.images`, e.g., BioContainers)
-are reported, as image names and tags in other namespaces (e.g., personal
-ones) may name users.
+owner and the task identifier, which are not read. Only tasks that
+completed, of images in trusted namespaces
+(`custom.accounting.reports.images`, e.g., BioContainers), are reported, as
+image names and tags in other namespaces (e.g., personal ones), or of images
+that don't exist, may name users.
 """
 
 from datetime import UTC, datetime
@@ -25,7 +26,7 @@ from urllib.parse import urlsplit
 
 from pymongo.collection import Collection
 
-from pro_tes.accounting.config import ExecutionReports
+from pro_tes.accounting.config import ExecutionReports, canonical_image
 from pro_tes.accounting.report import finished_range
 
 # Version of the report format (`report_format_version`); the schema in
@@ -40,6 +41,8 @@ PROTES = {
 # Fields of the records that reports are made of; not the owner (`user_id`)
 # or the task identifier
 FIELDS = ("backend", "cpu_cores", "tool", "attempts", "protes_version")
+# Final state of the tasks that are reported
+COMPLETE = "COMPLETE"
 # Significant digits of sizes
 SIZE_DIGITS = 2
 
@@ -62,9 +65,8 @@ def rounded_size(size: int) -> int:
     """
     factor = 10 ** max(len(str(size)) - SIZE_DIGITS, 0)
     quotient, remainder = divmod(size, factor)
-    # half up (`round()` rounds half to even); sizes of up to two digits
-    # have no remainder
-    if 2 * remainder >= factor and remainder:
+    # half up (`round()` rounds half to even)
+    if 2 * remainder >= factor:
         quotient += 1
     return quotient * factor
 
@@ -142,19 +144,16 @@ def trusted_image(repository: Any, images: list[str]) -> bool:
 
     Args:
         repository: Image repository, without tag and digest.
-        images: Trusted namespaces (cf. `custom.accounting.reports.images`):
-            repositories or their prefixes (whole path components), with
-            the registry; without registry for Docker Hub, whose official
-            images are `library` (e.g., `ubuntu`, also `docker.io/ubuntu`).
+        images: Trusted namespaces (cf. `custom.accounting.reports.images`),
+            in canonical form (cf. :py:func:`canonical_image`): repositories
+            or their prefixes (whole path components).
 
     Returns:
         Whether the repository is one of the namespaces, or in one.
     """
     if not isinstance(repository, str):
         return False
-    repository = repository.removeprefix("docker.io/")
-    if "/" not in repository:
-        repository = f"library/{repository}"
+    repository = canonical_image(repository)
     return any(
         repository == image or repository.startswith(f"{image}/") for image in images
     )
@@ -216,9 +215,10 @@ def execution_reports(
 ) -> list[dict[str, Any]]:
     """Get the execution reports of the tasks that finished in a time range.
 
-    Records without tool or attempts (e.g., of earlier versions of proTES,
-    or of tasks whose first executor has no valid image), and records of
-    images outside the trusted namespaces (`config.images`) give no reports.
+    Only tasks that completed (`COMPLETE`) are reported. Records without
+    tool or attempts (e.g., of earlier versions of proTES, or of tasks whose
+    first executor has no valid image), and records of images outside the
+    trusted namespaces (`config.images`) give no reports.
 
     Args:
         usage: Database collection of the records (cf.
@@ -239,6 +239,10 @@ def execution_reports(
     match: dict[str, Any] = {
         "tool": {"$type": "object"},
         "attempts.0": {"$exists": True},
+        # tasks that completed ran their image, which therefore exists (in
+        # the trusted namespace): names and tags of images that don't exist
+        # (e.g., `ubuntu:<name of a user>`) are not reported
+        "state": COMPLETE,
         **finished_range(since, until),
     }
     records = list(

@@ -98,7 +98,7 @@ def _outputs_bytes(log: Any) -> int | None:
         size = getattr(output, "size_bytes", None)
         if isinstance(size, str) and size.isascii() and size.isdigit():
             # longer strings can't be 64-bit integers (and `int()` refuses
-            # very long ones)
+            # strings of more than 4300 digits, since Python 3.11)
             if len(size) > len(str(MAX_SIZE)):
                 return None
             size = int(size)

@@ -879,14 +879,19 @@ custom:
 - `images`: the namespaces of images whose tasks are reported: image
   repositories or their prefixes (whole path components, e.g.,
   `quay.io/biocontainers` for `quay.io/biocontainers/bwa`), with their
-  registry; without registry for Docker Hub, whose official images (e.g.,
-  `ubuntu`) are `library`. Image names and tags are reported as they are,
+  registry, or with or without `docker.io/` for Docker Hub, whose official
+  images (e.g., `ubuntu`) are `library`; a registry alone (e.g., `ghcr.io`)
+  is invalid, as it would trust all of its users' namespaces. Image names
+  and tags are reported as they are,
   and in namespaces that anyone can push to under their own name (e.g.,
   `ghcr.io/<user>`, `docker.io/<user>`), they may name users: list only
   namespaces whose images are published tools (by default `library`,
   `biocontainers` and `quay.io/biocontainers`). Tasks of other images are
   not reported (their records are kept, and reported once their namespace
-  is listed).
+  is listed). Only tasks that completed are reported, as their images
+  exist; a TES instance that runs images built locally under names of a
+  trusted namespace (e.g., a one-component name, which counts as `library`)
+  would still report those names, so don't trust such namespaces there.
 - `max_records`: the most tasks that one request may cover; requests for
   more get `400 Bad Request`.
 

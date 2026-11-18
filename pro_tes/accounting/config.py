@@ -20,6 +20,52 @@ ImageNamespace = Annotated[
         max_length=255,
     ),
 ]
+# Names of Docker Hub as registry of image references
+DOCKER_HUB = "docker.io"
+DOCKER_HUB_ALIASES = frozenset({"docker.io", "index.docker.io", "registry-1.docker.io"})
+
+
+def _is_registry(component: str) -> bool:
+    """Check whether the first component of an image name is a registry.
+
+    As Docker reads image references: hosts with a dot or a port, and
+    `localhost`.
+
+    Args:
+        component: First path component of the image name.
+
+    Returns:
+        Whether it names a registry.
+    """
+    return "." in component or ":" in component or component == "localhost"
+
+
+def canonical_image(name: str, official: bool = True) -> str:
+    """Get the canonical form of an image repository or namespace.
+
+    With its registry, lowercase (Docker Hub as `docker.io`, also for its
+    aliases); Docker Hub's official images (one component, e.g., `ubuntu`)
+    in `library`. A path after Docker Hub is always one of Docker Hub, also
+    if its first component looks like a host (`docker.io/quay.io/x`).
+
+    Args:
+        name: Image repository (without tag and digest) or namespace.
+        official: Whether names of one component are official images of
+            Docker Hub (`library/<name>`); false for namespaces.
+
+    Returns:
+        The canonical name, e.g., `docker.io/library/ubuntu` for `ubuntu`.
+    """
+    first, _, rest = name.partition("/")
+    if rest and _is_registry(first) and first.lower() not in DOCKER_HUB_ALIASES:
+        return f"{first.lower()}/{rest}"
+    if rest and first.lower() in DOCKER_HUB_ALIASES:
+        name = rest
+    if official and "/" not in name:
+        name = f"library/{name}"
+    return f"{DOCKER_HUB}/{name}"
+
+
 # Countries (ISO 3166-1 alpha-2)
 Country = Annotated[str, StringConstraints(pattern=r"^[A-Z]{2}$")]
 
@@ -123,23 +169,53 @@ class ExecutionReports(ReportModel):
             `custom.tes.backends`); others are named by their URL.
         images: Trusted namespaces of images, whose tasks are reported:
             repositories or their prefixes (whole path components), with
-            their registry; without registry for Docker Hub, whose official
-            images are `library`. By default, Docker Hub's official images
-            and BioContainers (on Docker Hub and Quay).
+            their registry, or without for Docker Hub, whose official
+            images are `library`; not a registry alone. By default, Docker
+            Hub's official images and BioContainers (on Docker Hub and
+            Quay).
 
     Attributes:
         max_records: Maximum number of records of a request for reports.
         infra: Providers named in each report.
         location: Physical location of the computations, if set.
         backends: TES instances, by normalized URL.
-        images: Trusted namespaces of images.
+        images: Trusted namespaces of images, in canonical form (cf.
+            :py:func:`canonical_image`, e.g., `docker.io/library`).
     """
 
     max_records: Annotated[int, Field(gt=0, le=1000000)] = 10000
     infra: list[Provider] = []
     location: Location | None = None
     backends: dict[str, ReportedBackend] = {}
-    images: list[ImageNamespace] = ["library", "biocontainers", "quay.io/biocontainers"]
+    images: list[ImageNamespace] = Field(
+        default=["library", "biocontainers", "quay.io/biocontainers"],
+        validate_default=True,
+    )
+
+    @field_validator("images")
+    @classmethod
+    def canonical_images(cls, value: list[str]) -> list[str]:
+        """Get the canonical form of the trusted namespaces of images.
+
+        Args:
+            value: Namespaces, as given.
+
+        Returns:
+            The namespaces, with their registry (cf.
+            :py:func:`canonical_image`).
+
+        Raises:
+            ValueError: A namespace is a registry only (e.g., `ghcr.io`),
+                which would trust the namespaces of all its users.
+        """
+        for image in value:
+            if "/" not in image and (
+                _is_registry(image) or image.lower() in DOCKER_HUB_ALIASES
+            ):
+                raise ValueError(
+                    f"Image namespace {image!r} is a registry: name a namespace in it"
+                )
+        return [canonical_image(image, official=False) for image in value]
 
     @field_validator("backends")
     @classmethod

@@ -256,7 +256,7 @@ The fields come from the record of the task:
 | `location` | that of the TES instance in `reports.backends`, or else `reports.location`; left out if neither is set |
 | `cpu_cores_assigned` | the CPU cores that the task requested (`resources.cpu_cores`): an allocation, not a measurement; left out if the task requested none |
 | `start_time`, `end_time` | the times of the attempt in the logs of the TES instance (as for the run time of [Usage](#usage)); left out if unknown |
-| `final_outputs_size` | the sum of the sizes of the outputs of the attempt that the TES instance logged (`logs[].outputs[].size_bytes`), in bytes, rounded to two significant digits (e.g., 123456 to 120000); left out if none are logged |
+| `final_outputs_size` | the sum of the sizes of the outputs of the attempt that the TES instance logged (`logs[].outputs[].size_bytes`), in bytes, rounded to two significant digits (e.g., 123456 to 120000); left out if none are logged, or if a size or the sum exceeds 2^63-1 |
 
 The fields that TES doesn't provide are left out: `affiliation` (proTES
 doesn't know the project of a task), `input_size` (TES logs no sizes of
@@ -276,7 +276,10 @@ name users, so only tasks whose image is in a trusted namespace are reported
 and BioContainers, see [Execution
 reports](configuration.md#execution-reports)). The tool identifier tags
 (`biotools_id`, `rrid`) are reported as the task sets them, if valid; they
-are meant for tool identifiers only. Tasks of other images, tasks whose first
+are meant for tool identifiers only. Only tasks that completed (`COMPLETE`)
+are reported: their images exist, so names and tags of images that don't
+(e.g., `ubuntu:<user name>`, which fail) are never reported. Tasks in other
+final states, tasks of other images, tasks whose first
 executor has no valid image reference, tasks without task logs, and tasks
 recorded by proTES before 0.7.0 (whose records lack the tool and the
 attempts) give no reports.

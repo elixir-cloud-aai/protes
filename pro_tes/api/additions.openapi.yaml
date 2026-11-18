@@ -263,8 +263,9 @@ components:
         Report of an attempt of a task, in the Tool Execution Report format of
         ELIXIR Compute, version 0.0.2
         (https://github.com/elixir-europe/compute_wp5/blob/76b2a13f371fa0cba3faa466bec2442f543ca7ea/execution_report.schema.json);
-        the fields that proTES fills are listed here. Only tasks of images in
-        trusted namespaces (`custom.accounting.reports.images`) are reported.
+        the fields that proTES fills are listed here. Only tasks that
+        completed, of images in trusted namespaces
+        (`custom.accounting.reports.images`), are reported.
       type: object
       additionalProperties: true
       required:

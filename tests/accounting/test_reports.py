@@ -23,6 +23,7 @@ from pro_tes.accounting import (
     TooManyRecords,
     execution_reports,
     usage_record,
+    usage_totals,
 )
 from pro_tes.accounting.config import IRI_PATTERN, Location, Provider, ReportedBackend
 from pro_tes.accounting.reports import (
@@ -116,6 +117,7 @@ def add(
     day: int = 0,
     cpu_cores: Any = 2,
     backend: str = BACKEND,
+    state: str = "COMPLETE",
 ) -> dict[str, Any]:
     """Store the record of a task with personal data and details.
 
@@ -128,6 +130,7 @@ def add(
         day: Day after `START` on which the task ran.
         cpu_cores: Requested CPU cores.
         backend: URL of its TES instance.
+        state: Final state of the task.
 
     Returns:
         The record.
@@ -170,7 +173,7 @@ def add(
         document=document,
         logs=logs,
         backend=backend,
-        state="COMPLETE",
+        state=state,
         now=start + timedelta(days=1),
     )
     usage.insert_one(record)
@@ -287,6 +290,23 @@ def test_reports_of_untrusted_images(
     """
     add(usage, image=image)
     assert execution_reports(usage, ExecutionReports()) == []
+    # still accounted
+    assert usage_totals(usage)[0]["tasks"] == 1
+
+
+@pytest.mark.parametrize(
+    "state", ["EXECUTOR_ERROR", "SYSTEM_ERROR", "CANCELED", "PREEMPTED"]
+)
+def test_reports_of_completed_tasks_only(
+    usage: Collection[dict[str, Any]], state: str
+) -> None:
+    """Only tasks that completed are reported.
+
+    Their images exist, so names and tags of images that don't (e.g.,
+    `ubuntu:<name of a user>`, which fail) are not reported.
+    """
+    add(usage, image="ubuntu:alice-smith", state=state)
+    assert execution_reports(usage, ExecutionReports()) == []
 
 
 @pytest.mark.parametrize(
@@ -300,6 +320,9 @@ def test_reports_of_untrusted_images(
         ("docker.io/biocontainers/bwa", True),
         ("quay.io/biocontainers/bwa", True),
         ("quay.io/biocontainers", True),
+        ("index.docker.io/library/ubuntu", True),
+        ("Quay.io/biocontainers/bwa", True),
+        ("docker.io/quay.io/biocontainers/bwa", False),
         ("quay.io/biocontainersx/bwa", False),
         ("quay.io/bwa", False),
         ("alice/bwa", False),
@@ -462,6 +485,9 @@ def test_reports_configured(usage: Collection[dict[str, Any]]) -> None:
         {"images": ["Quay.io/BioContainers"]},
         {"images": ["quay.io/biocontainers:latest"]},
         {"images": [""]},
+        {"images": ["ghcr.io"]},
+        {"images": ["localhost:5000"]},
+        {"images": ["docker.io"]},
         {
             "backends": {
                 url: {"infra_name": "X", "infra_identifier": ["https://x.org"]}
@@ -477,9 +503,32 @@ def test_config_invalid(config: dict[str, Any]) -> None:
 
 
 def test_config_images() -> None:
-    """Namespaces of images may have a registry with port."""
-    config = ExecutionReports(images=["localhost:5000/tools", "ghcr.io/org"])
-    assert config.images == ["localhost:5000/tools", "ghcr.io/org"]
+    """Namespaces of images are canonical: with registry, Docker Hub's too.
+
+    Registries may have ports; Docker Hub's namespaces may be given with or
+    without registry.
+    """
+    config = ExecutionReports(
+        images=[
+            "localhost:5000/tools",
+            "GHCR.io/org",
+            "biocontainers",
+            "docker.io/biocontainers",
+            "index.docker.io/library",
+        ]
+    )
+    assert config.images == [
+        "localhost:5000/tools",
+        "ghcr.io/org",
+        "docker.io/biocontainers",
+        "docker.io/biocontainers",
+        "docker.io/library",
+    ]
+    assert ExecutionReports().images == [
+        "docker.io/library",
+        "docker.io/biocontainers",
+        "quay.io/biocontainers",
+    ]
 
 
 def test_config_models() -> None:
