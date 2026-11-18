@@ -476,14 +476,43 @@ def test_worker_probe_override(probe: str) -> None:
 
 
 @pytest.mark.parametrize("probe", ["readinessProbe", "livenessProbe"])
-def test_worker_probe_two_handlers(probe: str) -> None:
+def test_worker_probe_empty_is_default(probe: str) -> None:
+    """An empty worker probe (the former default value) renders the default."""
+    default = _container(_render(), WORKER)[probe]
+    docs = _render("--set-json", f"worker.{probe}={{}}")
+    assert _container(docs, WORKER)[probe] == default
+
+
+@pytest.mark.parametrize("probe", ["readinessProbe", "livenessProbe"])
+def test_worker_probe_command_override(probe: str) -> None:
+    """An `exec` command of the values replaces the default's, keeping its timings."""
+    default = _container(_render(), WORKER)[probe]
+    docs = _render("--set-json", f'worker.{probe}.exec.command=["true"]')
+    spec = _container(docs, WORKER)[probe]
+    assert spec["exec"] == {"command": ["true"]}
+    assert {k: v for k, v in spec.items() if k != "exec"} == {
+        k: v for k, v in default.items() if k != "exec"
+    }
+
+
+@pytest.mark.parametrize("probe", ["readinessProbe", "livenessProbe"])
+def test_worker_probe_no_handler(probe: str) -> None:
+    """A worker probe left without a handler (only `exec: null`) fails."""
+    error = _render_error("--set", f"worker.{probe}.exec=null")
+    assert f"worker.{probe} has no handler" in error
+    assert f"set worker.{probe} to null for no probe" in error
+
+
+@pytest.mark.parametrize("handler", ["httpGet", "tcpSocket", "grpc"])
+@pytest.mark.parametrize("probe", ["readinessProbe", "livenessProbe"])
+def test_worker_probe_two_handlers(probe: str, handler: str) -> None:
     """A worker probe with a second handler besides the default `exec` fails.
 
     Kubernetes accepts one handler per probe; Helm merges the values into
     the default probe, so another handler needs `exec: null`.
     """
-    error = _render_error("--set-json", f'worker.{probe}.httpGet={{"port": 8080}}')
-    assert f"worker.{probe} has more than one handler (exec, httpGet)" in error
+    error = _render_error("--set-json", f'worker.{probe}.{handler}={{"port": 8080}}')
+    assert f"worker.{probe} has more than one handler (exec, {handler})" in error
     assert f"worker.{probe}.exec to null" in error
 
 

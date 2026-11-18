@@ -728,13 +728,18 @@ in FOCA's docs for the caveats.
   tasks). The worker is restarted if it doesn't answer for 10 minutes (every
   2 minutes, 5 times; e.g., while it can't reach the broker). Each check
   starts Python, which takes about 0.4 CPU seconds and 50 MiB of the
-  worker's resources. `worker.readinessProbe` and `worker.livenessProbe`
-  (Kubernetes probe specs) are merged into these defaults by Helm: set one
+  worker's resources (about 1 CPU second per minute and pod, 2.5 checks),
+  and opens a connection to the broker, which RabbitMQ logs. While the
+  broker is down, the worker pods are unready, so `helm upgrade --wait`
+  then times out. `worker.readinessProbe` and `worker.livenessProbe`
+  (Kubernetes probe specs) are merged into these defaults by Helm (unlike
+  the app's probes, which replace them): set one
   to `null` for none, and its `exec` to `null` for a probe of another type
   (e.g., `tcpSocket`); rendering fails if a probe has two handlers. The
   probes ping Celery's default node name of the worker (`celery@<hostname>`,
   the pod's name): if `worker.command` sets another one (`--hostname`),
-  change their command too.
+  change their command too. They need `sh` and `celery` in the image, as
+  the app's image has.
 - **MongoDB** and **RabbitMQ:** ready once they accept connections.
 - **Flower:** ready once it accepts connections.
 

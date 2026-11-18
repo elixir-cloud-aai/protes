@@ -218,7 +218,9 @@ consequences (e.g., a missing `hostName` for `applicationDomain`).
 
 {{/*
 Fails if a probe of the worker (`worker.readinessProbe`,
-`worker.livenessProbe`) has more than one handler, which Kubernetes refuses:
+`worker.livenessProbe`) has more than one handler, or none (e.g., only
+`exec: null`), which Kubernetes refuses; checked also if the worker is
+disabled, so that its values stay valid:
 Helm merges the values into the default probes, so a handler of another type
 (e.g., `tcpSocket`) is added to their `exec` unless that is set to `null`;
 renders nothing.
@@ -236,6 +238,8 @@ renders nothing.
 {{- end -}}
 {{- if gt (len $handlers) 1 -}}
 {{- fail (printf "worker.%s has more than one handler (%s): Helm merges the values into the default probe, so set worker.%s.exec to null for another type of probe" $probe (join ", " $handlers) $probe) -}}
+{{- else if not $handlers -}}
+{{- fail (printf "worker.%s has no handler (exec, httpGet, tcpSocket or grpc): set worker.%s to null for no probe" $probe $probe) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}

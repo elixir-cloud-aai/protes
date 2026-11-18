@@ -63,7 +63,9 @@ and a liveness probe by default: the worker must answer `celery inspect
 ping` through the broker (see the chart's README, Probes). Upgrades of the
 chart then wait until the new worker answers (up to about 30 seconds more),
 a worker that doesn't start keeps the rollout from replacing the old one,
-and a worker that doesn't answer for 10 minutes is restarted. Each check
+and a worker that doesn't answer for 10 minutes is restarted. While the
+broker is down, the worker pods are unready, so upgrades with `--wait`
+time out then. Each check
 takes about 0.4 CPU seconds of the worker's resources. What to check in
 your values:
 
