@@ -493,7 +493,9 @@ worker:
   # the pod's worker must answer a ping of Celery through the broker
   # (`celery inspect ping`, with the broker URL of `CELERY_BROKER_URL`, to
   # Celery's default node name `celery@<hostname>`; change the probes if
-  # `command` sets another node name with `--hostname`). The pod is ready
+  # `command` sets another node name with `--hostname`; brokers without
+  # remote control, e.g., Amazon SQS, can't answer: set both probes to
+  # `null` or replace them). The pod is ready
   # once its worker answers, so that a rolling update keeps the old pod
   # until the new worker runs, and its worker is restarted if it doesn't
   # answer for 10 minutes (e.g., while it can't reach the broker). Each

@@ -739,7 +739,9 @@ in FOCA's docs for the caveats.
   probes ping Celery's default node name of the worker (`celery@<hostname>`,
   the pod's name): if `worker.command` sets another one (`--hostname`),
   change their command too. They need `sh` and `celery` in the image, as
-  the app's image has.
+  the app's image has, and a broker whose Celery transport supports remote
+  control (e.g., RabbitMQ, the bundled broker, or Redis; not Amazon SQS):
+  with others, set both probes to `null` or replace them.
 - **MongoDB** and **RabbitMQ:** ready once they accept connections.
 - **Flower:** ready once it accepts connections.
 

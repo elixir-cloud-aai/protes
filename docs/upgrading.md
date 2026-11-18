@@ -78,6 +78,9 @@ your values:
   null`, or rendering fails.
 - If `worker.command` sets the worker's node name (`--hostname`), change the
   probes' command to ping that name.
+- With an external broker whose Celery transport has no remote control
+  (e.g., Amazon SQS), the ping gets no answer: set both probes to `null`
+  or replace them.
 
 ## To version 0.6.0
 
