@@ -581,7 +581,10 @@ workflow therefore creates the release as a draft, uploads the assets and
 publishes it last. A re-run finishes a draft left by an earlier attempt; if
 the release is already published (e.g., by hand), it uploads nothing and
 fails unless the release has exactly the assets that the run built
-(only the Sigstore bundles may differ, as every attempt signs anew). The
+(only the Sigstore bundles may differ, as every attempt signs anew). It
+checks this twice: right after the chart, before it attests, signs or tags
+anything (for a published release, the image tag `X.Y.Z` must also point to
+the run's digest already), and again before it creates the release. The
 error says what to do: a new patch version, or, if releases are not
 immutable, deleting the release and re-running. Add curated notes to the
 [changelog](changelog.md) in `mkdocs.yml` (`nav`; the docs build fails
@@ -601,7 +604,8 @@ and the previous release (for the generated notes) from the tag with
 (`tests/test_release_version.py`) and checked like the app (ruff, mypy,
 coverage); change these rules there, not in the workflow. It finds the
 GitHub release of the tag, if any, and checks the assets of a published one
-with `scripts/release_assets.py` (tested in `tests/test_release_assets.py`).
+with `scripts/release_assets.py` (`precheck` before signing, `state` before
+creating the release; tested in `tests/test_release_assets.py`).
 
 To test unreleased changes of FOCA, `pyproject.toml` may pin a FOCA commit
 (`foca @ git+https://github.com/elixir-cloud-aai/foca@<sha>`), with FOCA's
@@ -617,13 +621,20 @@ locked). Meanwhile, have Dependabot ignore the base image
 Such pins are temporary: the release workflow fails while a requirement
 (also an optional one, a dependency group or a build requirement) is a
 direct reference or names a pre-release or a local version
-(e.g., `+g<commit>`), a FOCA image (in any stage) has no release tag, or a
+(e.g., `+g<commit>`), a FOCA image (in any stage) has no release tag, a
 chart dependency has no version, another version than a release or no chart
 repository (`oci://`, `https://`; e.g., a `file://` path to a checkout of
-the library chart) (`scripts/check_release_pins.py`,
-tested in `tests/test_check_release_pins.py`, whose tests also fail for
-checkouts of release tags with such pins), so replace them by the released
-versions before tagging. It also fails unless `deployment/Chart.yaml` and
+the library chart), or a package comes from elsewhere than PyPI
+(`https://pypi.org/simple`, the only package index allowed): a source of
+`[tool.uv.sources]` (`git`, `url`, `path`, `workspace`, or an `index` other
+than PyPI), a package index other than PyPI (`[[tool.uv.index]]`,
+`index-url`, `extra-index-url`, `find-links`), or a package of `uv.lock`
+(from which the image is installed; it must exist) whose source is not
+PyPI, the app itself excepted (`scripts/check_release_pins.py`, tested in
+`tests/test_check_release_pins.py`, whose tests also fail for checkouts of
+release tags with such pins). So replace them by the released versions
+before tagging (a FOCA commit is reported twice, in `pyproject.toml` and in
+`uv.lock`). It also fails unless `deployment/Chart.yaml` and
 `Chart.lock` pin the version of the library chart that the `$comment` of
 `deployment/values.schema.json` names (`foca-common X.Y.Z`): the version
 that the release requires, whose values schema the chart copies. When moving
@@ -757,6 +768,13 @@ of the release workflow builds, scans, signs and tags a new image digest
 stays signed. Re-running only the failed jobs reuses the digest already
 pushed. Re-running all jobs also packages the chart again and replaces the
 chart artifact; the release checks the new chart against its new SHA-256.
+Once the GitHub release is published, re-running all jobs fails in
+`publish` (step "Check release state") before it attests, signs or tags the
+new digest, so that `X.Y.Z` and `latest` keep pointing to the published
+image; re-running the failed jobs of a published release still passes, as
+it reuses the digest and the chart. Re-runs use the workflow of the tagged
+commit, so releases tagged before this step was added don't have it (check
+the step's name in the run): never re-run all jobs of their runs.
 
 The release workflow installs a fixed Helm version (`version:` of
 `azure/setup-helm` in `release.yml`). Dependabot updates the action, but not
