@@ -89,7 +89,9 @@ slashes) and must use one of the schemes of the entry's `url_schemes`
 (default: `https` only; add `http` for local tests only, as credentials are
 sent unencrypted), without user info. Each entry has an identifier (`id`, by
 default its normalized URL); entries with the same identifier are rejected,
-and a URL listed twice is used once, at its first place.
+and a URL listed twice is used once, at its first place. Clients may pin
+tasks to an entry by its identifier (see
+[Pinning tasks to a TES instance](plugins.md#pinning-tasks-to-a-tes-instance)).
 `custom.tes.url_schemes` applies to the identity provider of
 `custom.tes.client_credentials` only. The [plugins](plugins.md)
 decide which of the TES instances are tried, and in which order (see

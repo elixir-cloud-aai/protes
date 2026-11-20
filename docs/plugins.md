@@ -266,8 +266,8 @@ token in `TOKEN` (in Bash), for a preset `fast` of the admin and a TES
 instance of the deployment:
 
 ```bash
-curl -H "Authorization: Bearer $TOKEN" https://protes.example.org/ga4gh/tes/v1/plugins
-curl -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+curl -H @<(printf 'Authorization: Bearer %s\n' "$TOKEN") https://protes.example.org/ga4gh/tes/v1/plugins
+curl -H @<(printf 'Authorization: Bearer %s\n' "$TOKEN") -H "Content-Type: application/json" \
   -d '{"executors": [{"image": "alpine", "command": ["echo", "hello"]}],
        "tags": {"gateway.pipeline": "fast",
                 "gateway.backends": "{\"type\": \"allow\", \"backends\": [\"https://tes.example.org\"]}"}}' \
@@ -324,10 +324,12 @@ custom:
 
 A client then pins a task to the second one with
 `{"type": "allow", "backends": ["site-2"]}` (or its URL), e.g., with `curl`
-and an access token in `TOKEN` (in Bash):
+and an access token in `TOKEN` (in Bash; the header comes from a file
+descriptor, so that the token isn't among the arguments of `curl`, which
+other users of the host may see):
 
 ```bash
-curl -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+curl -H @<(printf 'Authorization: Bearer %s\n' "$TOKEN") -H "Content-Type: application/json" \
   -d '{"executors": [{"image": "alpine", "command": ["echo", "hello"]}],
        "tags": {"gateway.backends": "{\"type\": \"allow\", \"backends\": [\"site-2\"]}"}}' \
   https://protes.example.org/ga4gh/tes/v1/tasks
@@ -339,8 +341,7 @@ tag. What clients can rely on:
 
 - Items with `://` are URLs, compared normalized (e.g., case of the host,
   trailing slash), and match the URLs of TES instances only; other items
-  match their identifiers only. TES instances discovered in a registry have
-  their URL as identifier, so clients pin them by URL.
+  match their identifiers only.
 - A pinned task never goes to another TES instance. If the pinned one is
   unknown, or certainly didn't accept the task (e.g., it refused the
   connection, or answered with a `4xx` status), `POST /tasks` fails with

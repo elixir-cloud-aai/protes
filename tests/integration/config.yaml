@@ -22,18 +22,18 @@ custom:
       # Funnel 0.12.3 reports TES 1.1.0 itself; the label, which versions
       # before 0.12.3 need, keeps that path of the config tested (the CI
       # job's entry `label`; `config-service-info.yaml` is this file without
-      # it, for the entry `service info`). Clients may pin tasks to it by its
-      # identifier, too (`BACKEND_ID` of `check.sh`)
+      # it, for the entry `service info`)
       - type: ga4gh-tes
-        id: funnel
         url: http://funnel:8000
         url_schemes:
           - http
         auth: none
         labels:
           tes.version: "1.1"
-      # Serves the TES API at `/v1` only
+      # Serves the TES API at `/v1` only; second, so that a task pinned to it
+      # by its identifier shows the pin (`BACKEND_ID` of `check.sh`)
       - type: ga4gh-tes
+        id: tesp-api
         url: http://tesp-api:8080
         api_path: /v1
         url_schemes:
