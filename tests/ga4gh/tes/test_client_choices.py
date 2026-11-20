@@ -11,10 +11,13 @@ import json
 from typing import Any
 
 from flask.testing import FlaskClient
+from foca import get_custom_config
+from foca.plugins.backends import BackendListConfig
 from pymongo import MongoClient
 import pytest
 
-from tests.conftest import ADMIN, OUTSIDER, make_headers
+from pro_tes.config_models import CustomConfig
+from tests.conftest import ADMIN, DB, OUTSIDER, make_headers
 from tests.ga4gh.tes.conftest import (
     BACKENDS,
     BASE_PATH,
@@ -163,6 +166,72 @@ def test_backends(
     assert response.status_code == 200
     ((url, _),) = relayed(backend)
     assert url == used
+
+
+def named(client: FlaskClient) -> None:
+    """Name the TES instances of an app `site-1` and `site-2` (`id`).
+
+    Args:
+        client: Test client of the app.
+    """
+    with client.application.app_context():
+        get_custom_config(CustomConfig).tes.backends = BackendListConfig.model_validate(
+            [
+                {"type": "ga4gh-tes", "url": url, "auth": "none", "id": f"site-{n}"}
+                for n, url in enumerate(BACKENDS, start=1)
+            ]
+        )
+
+
+@pytest.mark.parametrize("pin", ["site-2", BACKENDS[1], f"{BACKENDS[1].upper()}/"])
+def test_pin_to_one_tes_instance(
+    with_plugins: PluginClient, backend: type[FakeBackend], pin: str
+) -> None:
+    """Clients pin tasks to a TES instance by its `id` or its URL.
+
+    URLs are compared normalized. The default pipeline routes in random
+    order, so all tasks landing at the pinned TES instance shows the pin.
+    """
+    client = with_plugins({})
+    named(client)
+    selection = json.dumps({"type": "allow", "backends": [pin]})
+    for _ in range(4):
+        assert submit(client, gateway__backends=selection).status_code == 200
+    assert [url for url, _ in relayed(backend)] == [BACKENDS[1]] * 4
+
+
+@pytest.mark.parametrize("pin", ["site-3", "https://tes3.example.org"])
+def test_pin_to_unknown_tes_instance(
+    with_plugins: PluginClient,
+    backend: type[FakeBackend],
+    mongo_client: MongoClient[dict[str, Any]],
+    pin: str,
+) -> None:
+    """A pin to an unknown TES instance fails (`503`): no task, no fallback."""
+    client = with_plugins({})
+    named(client)
+    selection = json.dumps({"type": "allow", "backends": [pin]})
+    assert submit(client, gateway__backends=selection).status_code == 503
+    assert not relayed(backend)
+    assert mongo_client[DB]["tasks"].count_documents({}) == 0
+
+
+def test_pin_to_refusing_tes_instance(
+    with_plugins: PluginClient,
+    backend: type[FakeBackend],
+    mongo_client: MongoClient[dict[str, Any]],
+) -> None:
+    """A pin to a TES instance that doesn't accept the task fails (`503`).
+
+    The other TES instance gets no request, and no task is stored.
+    """
+    client = with_plugins({})
+    named(client)
+    backend.failing.add(BACKENDS[1])
+    selection = json.dumps({"type": "allow", "backends": ["site-2"]})
+    assert submit(client, gateway__backends=selection).status_code == 503
+    assert not relayed(backend)
+    assert mongo_client[DB]["tasks"].count_documents({}) == 0
 
 
 def test_backends_unknown(

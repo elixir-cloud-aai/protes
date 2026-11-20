@@ -20,8 +20,10 @@ custom:
   tes:
     backends:
       # Funnel 0.12.3 reports TES 1.1.0 in its service info, which proTES
-      # reads, as there is no label `tes.version`
+      # reads, as there is no label `tes.version`. Clients may pin tasks to it
+      # by its identifier, too (`BACKEND_ID` of `check.sh`)
       - type: ga4gh-tes
+        id: funnel
         url: http://funnel:8000
         url_schemes:
           - http

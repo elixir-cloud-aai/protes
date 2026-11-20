@@ -461,6 +461,9 @@ jobs:
         run: tests/integration/versions.sh "${API}" http://funnel:8000 "" 1.1
       - name: Check Funnel
         if: ${{ !cancelled() }}
+        # Also pinned by its identifier (`id` in the config)
+        env:
+          BACKEND_ID: funnel
         run: tests/integration/check.sh "${API}" http://funnel:8000 ""
       # Also if Funnel failed, to see whether the failure is specific to it
       - name: Check TES 1.0 on TESP-API
