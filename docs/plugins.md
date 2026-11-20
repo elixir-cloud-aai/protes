@@ -341,7 +341,8 @@ tag. What clients can rely on:
 
 - Items with `://` are URLs, compared normalized (e.g., case of the host,
   trailing slash), and match the URLs of TES instances only; other items
-  match their identifiers only.
+  match their identifiers only. TES instances discovered in a registry have
+  their URL as identifier, so clients can pin them by URL only.
 - A pinned task never goes to another TES instance. If the pinned one is
   unknown, or certainly didn't accept the task (e.g., it refused the
   connection, or answered with a `4xx` status), `POST /tasks` fails with

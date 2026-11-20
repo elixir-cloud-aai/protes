@@ -2261,7 +2261,10 @@ def test_task_only_ineligible_backend_selected(
     backend: type[FakeBackend],
     mongo_client: MongoClient[dict[str, Any]],
 ) -> None:
-    """Clients that choose only backends that can't run a task get `400`."""
+    """Clients that choose only backends that can't run a task get `400`.
+
+    The task isn't stored, as for any pin that fails before it is relayed.
+    """
     backend.versions[BACKENDS[0]] = "1.0"
     selection = '{"type": "allow", "backends": ["' + BACKENDS[0] + '"]}'
     response = client.post(
@@ -2271,6 +2274,7 @@ def test_task_only_ineligible_backend_selected(
     assert response.status_code == 400
     assert "ignore_error" in response.get_json()["detail"]
     assert not relayed(backend)
+    assert mongo_client[DB]["tasks"].count_documents({}) == 0
 
 
 def test_task_incompatible_after_forward_phase(

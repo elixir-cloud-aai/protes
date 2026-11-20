@@ -196,6 +196,8 @@ def test_get_backends(discovering: FakeRegistry) -> None:
     assert [backend.url for backend in found] == [STATIC, "https://tes1.example.org"]
     assert [backend.source for backend in found] == ["configured", "discovered"]
     assert found[1].group == "registry"
+    # Discovered TES instances have their URL as identifier: clients pin them by URL
+    assert found[1].id == "https://tes1.example.org"
 
 
 def test_get_backends_public_url(
