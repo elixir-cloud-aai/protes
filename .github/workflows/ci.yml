@@ -468,6 +468,11 @@ jobs:
         run: tests/integration/versions.sh "${API}" http://tesp-api:8080 /v1 1.0
       - name: Check TESP-API
         if: ${{ !cancelled() }}
+        # Also pinned by its identifier (`id` in the config): it comes second
+        # in the order of routing, so without the pin, the task would go to
+        # Funnel
+        env:
+          BACKEND_ID: tesp-api
         run: tests/integration/check.sh "${API}" http://tesp-api:8080 /v1
       - name: Show logs
         if: failure()

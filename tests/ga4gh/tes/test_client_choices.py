@@ -11,10 +11,15 @@ import json
 from typing import Any
 
 from flask.testing import FlaskClient
+from foca import get_custom_config
+from foca.plugins.backends import BackendListConfig
 from pymongo import MongoClient
 import pytest
+import requests
+import tes
 
-from tests.conftest import ADMIN, OUTSIDER, make_headers
+from pro_tes.config_models import CustomConfig
+from tests.conftest import ADMIN, DB, OUTSIDER, make_headers
 from tests.ga4gh.tes.conftest import (
     BACKENDS,
     BASE_PATH,
@@ -163,6 +168,94 @@ def test_backends(
     assert response.status_code == 200
     ((url, _),) = relayed(backend)
     assert url == used
+
+
+# Routes in the order of the TES instances, so that pins show
+ORDERED = [{"id": "route", "alternatives": [{"plugin": "foca.routing.ordered"}]}]
+
+
+def named(client: FlaskClient) -> None:
+    """Name the TES instances of an app `site-1` and `site-2` (`id`).
+
+    Args:
+        client: Test client of the app.
+    """
+    with client.application.app_context():
+        get_custom_config(CustomConfig).tes.backends = BackendListConfig.model_validate(
+            [
+                {"type": "ga4gh-tes", "url": url, "auth": "none", "id": f"site-{n}"}
+                for n, url in enumerate(BACKENDS, start=1)
+            ]
+        )
+
+
+@pytest.mark.parametrize("pin", ["site-2", BACKENDS[1], f"{BACKENDS[1].upper()}/"])
+def test_pin_to_one_tes_instance(
+    with_plugins: PluginClient, backend: type[FakeBackend], pin: str
+) -> None:
+    """Clients pin tasks to a TES instance by its `id` or its URL.
+
+    URLs are compared normalized. The pipeline routes in order, so that an
+    unpinned task goes to the first TES instance, and a pinned one to the
+    second shows the pin.
+    """
+    client = with_plugins({}, pipeline=ORDERED)
+    named(client)
+    assert submit(client).status_code == 200
+    selection = json.dumps({"type": "allow", "backends": [pin]})
+    assert submit(client, gateway__backends=selection).status_code == 200
+    assert [url for url, _ in relayed(backend)] == [BACKENDS[0], BACKENDS[1]]
+
+
+@pytest.mark.parametrize("pin", ["site-3", "https://tes3.example.org"])
+def test_pin_to_unknown_tes_instance(
+    with_plugins: PluginClient,
+    backend: type[FakeBackend],
+    mongo_client: MongoClient[dict[str, Any]],
+    pin: str,
+) -> None:
+    """A pin to an unknown TES instance fails (`503`): no task, no fallback."""
+    client = with_plugins({})
+    named(client)
+    selection = json.dumps({"type": "allow", "backends": [pin]})
+    assert submit(client, gateway__backends=selection).status_code == 503
+    assert not relayed(backend)
+    assert mongo_client[DB]["tasks"].count_documents({}) == 0
+
+
+@pytest.mark.parametrize("status", [None, 400])
+def test_pin_to_refusing_tes_instance(
+    with_plugins: PluginClient,
+    backend: type[FakeBackend],
+    mongo_client: MongoClient[dict[str, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+    status: int | None,
+) -> None:
+    """A pin to a TES instance that doesn't accept the task fails (`503`).
+
+    Whether it refuses with a status (`400`) or without a response, the
+    other TES instance gets no request, and no task is stored.
+    """
+    client = with_plugins({}, pipeline=ORDERED)
+    named(client)
+    if status is None:
+        backend.failing.add(BACKENDS[1])
+    else:
+        create_task = backend.create_task
+
+        def refuse(self: FakeBackend, task: tes.Task) -> str:
+            """Refuse tasks at the second TES instance with `status`."""
+            if self.url == BACKENDS[1]:
+                response = requests.Response()
+                response.status_code = status
+                raise requests.HTTPError(str(status), response=response)
+            return create_task(self, task)
+
+        monkeypatch.setattr(backend, "create_task", refuse)
+    selection = json.dumps({"type": "allow", "backends": ["site-2"]})
+    assert submit(client, gateway__backends=selection).status_code == 503
+    assert not relayed(backend)
+    assert mongo_client[DB]["tasks"].count_documents({}) == 0
 
 
 def test_backends_unknown(

@@ -21,7 +21,8 @@
 # compose isn't needed, and the states of tasks at the backend are those that
 # proTES reports, as the backend may not accept the user's token. Tokens are
 # read from the environment only, so that they don't show up in the process
-# list.
+# list. With `BACKEND_ID` set to the identifier (`id`) of the backend in the
+# config, one more task is pinned to it by that identifier instead of its URL.
 set -euo pipefail
 
 api="$1"
@@ -54,11 +55,11 @@ if [ -z "${auth}" ]; then
   auth="$(fake_token)"
 fi
 
-# Create a task on this backend; the command is a shell script. The identifier
-# is in `${id}`
+# Create a task on this backend, pinned to it by its URL (or by `$2`, e.g., its
+# identifier); the command is a shell script. The identifier is in `${id}`
 create() {
   local task
-  task="$(jq -n --arg backend "${backend}" --arg image "${image}" \
+  task="$(jq -n --arg backend "${2:-${backend}}" --arg image "${image}" \
     --arg script "$1" '{
       name: "integration",
       tags: {"gateway.backends":
@@ -102,6 +103,13 @@ check GET "/tasks/${done}?view=FULL" 200 'has("author") | not'
 # Finished tasks are left as they are
 check POST "/tasks/${done}:cancel" 200 '. == {}'
 check GET "/tasks/${done}?view=MINIMAL" 200 '.state == "COMPLETE"'
+
+if [ -n "${BACKEND_ID:-}" ]; then
+  echo "${backend}: a task pinned by the identifier of its backend"
+  create 'echo integration-pinned' "${BACKEND_ID}"
+  await_state "${id}" COMPLETE
+  check GET "/tasks/${id}?view=BASIC" 200 ".tags[\"gateway.backend\"] == \"${backend}\""
+fi
 
 echo "${backend}: a task that fails"
 create 'echo integration-failure >&2; exit 3'

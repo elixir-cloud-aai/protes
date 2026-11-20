@@ -266,8 +266,8 @@ token in `TOKEN` (in Bash), for a preset `fast` of the admin and a TES
 instance of the deployment:
 
 ```bash
-curl -H "Authorization: Bearer $TOKEN" https://protes.example.org/ga4gh/tes/v1/plugins
-curl -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+curl -H @<(printf 'Authorization: Bearer %s\n' "$TOKEN") https://protes.example.org/ga4gh/tes/v1/plugins
+curl -H @<(printf 'Authorization: Bearer %s\n' "$TOKEN") -H "Content-Type: application/json" \
   -d '{"executors": [{"image": "alpine", "command": ["echo", "hello"]}],
        "tags": {"gateway.pipeline": "fast",
                 "gateway.backends": "{\"type\": \"allow\", \"backends\": [\"https://tes.example.org\"]}"}}' \
@@ -298,6 +298,73 @@ To run a fetched task again, drop the tags that proTES wrote (all under
 `gateway.` except `gateway.pipeline` and `gateway.backends`, see [Gateway
 tags](api.md#gateway-tags)) and the fields that TES servers set (e.g.,
 `id`, `state`, `logs`, `creation_time`); otherwise, the task is rejected.
+
+### Pinning tasks to a TES instance
+
+Some tasks must run at one TES instance and nowhere else, e.g., the tasks
+of a federated job, one per site, whose data never leaves its site. Clients
+pin such a task with `gateway.backends` of type `allow` and one TES
+instance. Give the TES instances identifiers (`id`) in
+`custom.tes.backends`, so that clients can name them instead of knowing
+their URLs (see [TES instances](configuration.md#tes-instances)):
+
+```yaml
+custom:
+  tes:
+    backends:
+      - type: ga4gh-tes
+        id: site-1
+        url: https://tes.site-1.example.org
+      - type: ga4gh-tes
+        id: site-2
+        url: https://tes.site-2.example.org
+    client_credentials:
+      issuer: https://login.example.org/oidc/
+```
+
+A client then pins a task to the second one with
+`{"type": "allow", "backends": ["site-2"]}` (or its URL), e.g., with `curl`
+and an access token in `TOKEN` (in Bash; the header comes from a file
+descriptor, so that the token isn't among the arguments of `curl`, which
+other users of the host may see):
+
+```bash
+curl -H @<(printf 'Authorization: Bearer %s\n' "$TOKEN") -H "Content-Type: application/json" \
+  -d '{"executors": [{"image": "alpine", "command": ["echo", "hello"]}],
+       "tags": {"gateway.backends": "{\"type\": \"allow\", \"backends\": [\"site-2\"]}"}}' \
+  https://protes.example.org/ga4gh/tes/v1/tasks
+```
+
+With py-tes, as in the example above, with
+`json.dumps({"type": "allow", "backends": ["site-2"]})` as the value of the
+tag. What clients can rely on:
+
+- Items with `://` are URLs, compared normalized (e.g., case of the host,
+  trailing slash), and match the URLs of TES instances only; other items
+  match their identifiers only. TES instances discovered in a registry have
+  their URL as identifier, so clients can pin them by URL only.
+- A pinned task never goes to another TES instance. If the pinned one is
+  unknown, or certainly didn't accept the task (e.g., it refused the
+  connection, or answered with a `4xx` status), `POST /tasks` fails with
+  `503 Service Unavailable`, and no task is kept, so clients can submit it
+  again. If it may have accepted the task without confirming it (e.g., the
+  response timed out, or a `5xx` status), the request fails with
+  `502 Bad Gateway` and the task is kept as `SYSTEM_ERROR`, as for any task
+  (see [Tasks](api.md#tasks)): don't submit it again blindly. If the pinned
+  TES instance can't run the task unchanged (e.g., a TES 1.0 instance and a
+  task with TES 1.1 fields), the answer is `400 Bad Request`.
+- The pin applies after the routing plugins, so it works with any of them.
+  A routing plugin that drops TES instances can make a pin fail; the ones
+  in the image (`generic.routing.random`, `tes.routing.distance`) drop none.
+- The stored task records the TES instance it went to (tag
+  `gateway.backend`, see [Gateway tags](api.md#gateway-tags)).
+
+Pinning only narrows the TES instances that proTES uses anyway; whether a
+TES instance runs a task is still up to the TES instance (e.g., which
+clients' tokens it accepts, see [Access control](access-control.md)).
+The client tags are experimental in FOCA: their shape may change with
+FOCA's design of federated backend selection
+([foca#528](https://github.com/elixir-cloud-aai/foca/issues/528)).
 
 All settings of the section `plugins` (e.g., `defaults`, `presets`,
 `client_pipelines`, `client_backends`, `tags` and `gateway_id`) are

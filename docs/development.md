@@ -138,7 +138,7 @@ API=http://localhost:8080/ga4gh/tes/v1
 tests/integration/versions.sh "${API}" http://funnel:8000 "" 1.1
 tests/integration/check.sh "${API}" http://funnel:8000 ""
 tests/integration/versions.sh "${API}" http://tesp-api:8080 /v1 1.0
-tests/integration/check.sh "${API}" http://tesp-api:8080 /v1
+BACKEND_ID=tesp-api tests/integration/check.sh "${API}" http://tesp-api:8080 /v1
 docker compose down
 ```
 

@@ -20,14 +20,17 @@ custom:
   tes:
     backends:
       # Funnel 0.12.3 reports TES 1.1.0 in its service info, which proTES
-      # reads, as there is no label `tes.version`
+      # reads, as there is no label `tes.version`. Clients may pin tasks to it
+      # by its identifier, too (`BACKEND_ID` of `check.sh`)
       - type: ga4gh-tes
         url: http://funnel:8000
         url_schemes:
           - http
         auth: none
-      # Serves the TES API at `/v1` only
+      # Serves the TES API at `/v1` only; second, so that a task pinned to it
+      # by its identifier shows the pin (`BACKEND_ID` of `check.sh`)
       - type: ga4gh-tes
+        id: tesp-api
         url: http://tesp-api:8080
         api_path: /v1
         url_schemes:
