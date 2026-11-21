@@ -82,6 +82,13 @@ your values:
   (e.g., Amazon SQS), the ping gets no answer: set both probes to `null`
   or replace them.
 
+**Tested TES implementations:** CI tested this release against Funnel
+0.12.3 (TES 1.1, by the label `tes.version` and from its service info),
+TESP-API 0.2.0 with Pulsar 0.14.16 (TES 1.0) and tesk-api 1.1.0 with the
+taskmaster and filer v0.10.6 (TES 1.0), as in [Notes on TES
+implementations](configuration.md#notes-on-tes-implementations). Not tested:
+tesk-api 2.0.0 (TES 1.1).
+
 ## To version 0.6.0
 
 **FOCA 0.22 (all deployments):** proTES now requires FOCA 0.22.0, on the FOCA
