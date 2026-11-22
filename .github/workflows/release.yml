@@ -33,10 +33,11 @@
 # Dry run: every other event (`workflow_dispatch`, and pull requests from
 # branches of this repository that change the release) runs the same jobs
 # and commands without publishing anything, for the version in
-# `CITATION.cff` (which the release checks require anyway), so that changes of the release
-# can be tested before a tag is pushed (see "Dry runs of the release" in
-# `docs/development.md`). Whether a run is a dry run follows from the event
-# alone (`github.event_name != 'push'`), never from an input. A dry run
+# `CITATION.cff` (which the release checks require anyway), so that changes
+# of the release can be tested before a tag is pushed (see "Dry runs of the
+# release" in `docs/development.md`). Whether a run is a dry run follows
+# from the event alone (`github.event_name != 'push'`), never from an
+# input. A dry run
 # never enters the `release` environment and never logs in to Docker Hub:
 # the image is pushed by digest to a registry on the runner (`IMAGE_REF`,
 # whose storage is passed on to `scan` and `publish` as an artifact, so
@@ -90,9 +91,9 @@ env:
       http = true
 
 # One run per ref (a tag; for dry runs a branch or pull request, where a new
-# pending run replaces an older pending one), so that a run waiting for approval is not cancelled by the run of
-# another tag; `latest` is decided at the end of each run, from
-# freshly fetched tags on `main`
+# pending run replaces an older pending one), so that a run waiting for
+# approval is not cancelled by the run of another tag; `latest` is decided
+# at the end of each run, from freshly fetched tags on `main`
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
