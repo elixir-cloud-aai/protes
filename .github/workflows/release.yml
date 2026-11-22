@@ -1,5 +1,6 @@
 # Release when a version tag (`vX.Y.Z`, or `vX.Y.ZaN`, `vX.Y.ZbN`,
-# `vX.Y.ZrcN` for pre-releases) is pushed: check the tag and that CI passed
+# `vX.Y.ZrcN` for pre-releases) is pushed (other events are dry runs, see
+# "Dry run" below): check the tag and that CI passed
 # for its commit, package the Helm chart and record its file name and
 # SHA-256 (`prepare`), build and push the Docker image (with SBOM and
 # provenance attestations) by digest, untagged, and check it (`push`), scan
@@ -9,7 +10,8 @@
 # provenance, sign it (Sigstore keyless signing) and tag it, and create the
 # GitHub release with the chart attached, also attested and signed
 # (`publish`; see "Verifying images and charts" in `docs/operations.md`).
-# `push` and `publish` each need approval in the `release` environment.
+# `push` and `publish` each need approval in the `release` environment (in
+# releases; dry runs never enter it).
 # Re-running all jobs builds, scans, signs and tags a new digest (and
 # packages the chart again), unless the GitHub release is published
 # already: then `publish` fails before it attests, signs or tags anything
@@ -31,7 +33,7 @@
 # Dry run: every other event (`workflow_dispatch`, and pull requests from
 # branches of this repository that change the release) runs the same jobs
 # and commands without publishing anything, for the version in
-# `CITATION.cff` (or the input `version`), so that changes of the release
+# `CITATION.cff` (which the release checks require anyway), so that changes of the release
 # can be tested before a tag is pushed (see "Dry runs of the release" in
 # `docs/development.md`). Whether a run is a dry run follows from the event
 # alone (`github.event_name != 'push'`), never from an input. A dry run
@@ -51,11 +53,6 @@ on:
     tags: ["v*"]
   # Dry runs (see above)
   workflow_dispatch:
-    inputs:
-      version:
-        description: Version to dry-run (default the version in CITATION.cff)
-        required: false
-        default: ""
   pull_request:
     paths:
       - .github/workflows/release.yml
@@ -69,10 +66,11 @@ on:
 permissions:
   contents: read
 
-# Fully qualified (`docker.io/`), as the attestation needs it. The Docker Hub
-# organization is the repository variable `DOCKERHUB_ORG` (by default
-# `elixircloud`), as in `scan.yml`, so that the scan job, which has no
-# secrets, scans the image that is published
+# The published image (`IMAGE_NAME`: the chart's default image and the
+# image labels), fully qualified (`docker.io/`), as the attestation needs
+# it. The Docker Hub organization is the repository variable `DOCKERHUB_ORG`
+# (by default `elixircloud`), as in `scan.yml`, so that the scan job, which
+# has no secrets, scans the image that is published
 env:
   IMAGE_NAME: docker.io/${{ vars.DOCKERHUB_ORG || 'elixircloud' }}/protes
   # Whether this is a dry run (see above), for scripts; conditions of steps
@@ -80,7 +78,8 @@ env:
   DRY_RUN: ${{ github.event_name != 'push' }}
   # Where the image is pushed, scanned, signed and tagged: the published
   # image, or in dry runs the registry on the runner. The chart names
-  # `IMAGE_NAME` in both cases, so that dry runs package the released chart
+  # `IMAGE_NAME` in both cases, so that dry runs package the released chart.
+  # It repeats the expression of `IMAGE_NAME`, as `env` can't refer to itself
   IMAGE_REF: ${{ github.event_name == 'push' && format('docker.io/{0}/protes', vars.DOCKERHUB_ORG || 'elixircloud') || 'localhost:5000/protes' }}
   # The registry of dry runs (Distribution 3.0.0), pinned by digest
   REGISTRY_IMAGE: docker.io/library/registry@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e
@@ -90,8 +89,9 @@ env:
     [registry."localhost:5000"]
       http = true
 
-# One run per tag, so that a run waiting for approval is not cancelled by
-# the run of another tag; `latest` is decided at the end of each run, from
+# One run per ref (a tag; for dry runs a branch or pull request, where a new
+# pending run replaces an older pending one), so that a run waiting for approval is not cancelled by the run of
+# another tag; `latest` is decided at the end of each run, from
 # freshly fetched tags on `main`
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -138,24 +138,29 @@ jobs:
       # what actually control publishing. Runs no code of the tagged commit,
       # so that its scripts (below) only run once the tag is verified and the
       # commit is on `main`, and never next to this step's token
-      # Dry runs have no tag: the version is the input or the one in
-      # `CITATION.cff` (read, not run), and the tag checks are skipped
+      # Dry runs have no tag: the version is the one in `CITATION.cff`
+      # (read, not run), and the tag checks are skipped. If its tag exists
+      # already, GitHub generates the notes of that release, not of the
+      # commit
       - name: Check release tag and commit
         id: commit
         env:
           TAG: ${{ github.ref_name }}
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
-          INPUT_VERSION: ${{ inputs.version }}
           RUN_ID: ${{ github.run_id }}
         run: |
           if [[ "${DRY_RUN}" == "true" ]]; then
-              version="${INPUT_VERSION:-$(yq .version CITATION.cff)}"
+              version="$(yq .version CITATION.cff)"
+              # Not echoed, so that it can't inject workflow commands
               if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+((a|b|rc)[0-9]+)?$ ]]; then
-                  echo "::error::Invalid version '${version}' for the dry run"
+                  echo "::error::No release version (X.Y.Z, X.Y.ZaN, X.Y.ZbN or X.Y.ZrcN) in CITATION.cff for the dry run"
                   exit 1
               fi
               echo "::notice::Dry run of v${version}: the tag checks (annotated, signed, on 'main') are skipped"
+              if git rev-parse --quiet --verify "refs/tags/v${version}" > /dev/null; then
+                  echo "::notice::v${version} is tagged already: the generated notes are those of that release"
+              fi
               {
                   echo "tag=v${version}"
                   echo "release_tag=dry-run-v${version}-${RUN_ID}"

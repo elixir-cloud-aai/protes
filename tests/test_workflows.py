@@ -42,6 +42,20 @@ DIGEST = "sha256:" + "a" * 64
 OTHER_DIGEST = "sha256:" + "b" * 64
 
 
+def _events(workflow: dict[str, Any]) -> dict[str, Any]:
+    """Get the events that trigger a workflow.
+
+    Args:
+        workflow: The workflow.
+
+    Returns:
+        The value of its key `on` (which PyYAML parses as `True`).
+    """
+    events = {str(key): value for key, value in workflow.items()}.get("True")
+    result: dict[str, Any] = events or workflow["on"]
+    return result
+
+
 def _load(path: Path) -> dict[str, Any]:
     """Load a workflow file.
 
@@ -358,9 +372,7 @@ def test_title_job() -> None:
     runs when a pull request is edited.
     """
     workflow = _load(WORKFLOWS / "ci.yml")
-    # PyYAML parses the key `on` as `True`
-    events = {str(key): value for key, value in workflow.items()}.get("True")
-    events = events or workflow["on"]
+    events = _events(workflow)
     assert "edited" in events["pull_request"]["types"]
     job = workflow["jobs"]["title"]
     assert job["name"] == "PR title"
@@ -772,13 +784,11 @@ def test_release_triggers() -> None:
     input.
     """
     workflow = _load(WORKFLOWS / "release.yml")
-    # PyYAML parses the key `on` as `True`
-    events = {str(key): value for key, value in workflow.items()}["True"]
+    events = _events(workflow)
     assert set(events) == {"push", "workflow_dispatch", "pull_request"}
     assert events["push"] == {"tags": ["v*"]}
-    inputs = events["workflow_dispatch"]["inputs"]
-    assert set(inputs) == {"version"}
-    assert inputs["version"]["required"] is False
+    # No inputs: the version is the one in `CITATION.cff`
+    assert not events["workflow_dispatch"]
     paths = events["pull_request"]["paths"]
     assert ".github/workflows/release.yml" in paths
     assert "scripts/release_*.py" in paths
@@ -813,10 +823,12 @@ def test_dry_run_environment() -> None:
 def test_dry_run_skips_release_steps() -> None:
     """Dry runs don't log in to Docker Hub, attest or sign.
 
-    These steps run for tag pushes only, and no other step uses a secret or
-    attests or signs.
+    These steps run for tag pushes only, and no other step of any job uses
+    a secret or attests or signs.
     """
-    for job_id, names in RELEASE_ONLY.items():
+    jobs = _load(WORKFLOWS / "release.yml")["jobs"]
+    for job_id in jobs:
+        names = RELEASE_ONLY.get(job_id, [])
         steps = _release_steps(job_id)
         for name in names:
             assert steps[name]["if"] == RELEASE, (job_id, name)
@@ -827,6 +839,48 @@ def test_dry_run_skips_release_steps() -> None:
             assert "secrets." not in text, (job_id, name)
             assert "attest-build-provenance" not in text, (job_id, name)
             assert "cosign sign" not in text, (job_id, name)
+
+
+@pytest.mark.parametrize(
+    ("dry_run", "passes"),
+    [
+        pytest.param("true", True, id="dry-run"),
+        pytest.param("false", False, id="release"),
+    ],
+)
+def test_ci_check_dry_run(tmp_path: Path, dry_run: str, passes: bool) -> None:
+    """Without a CI run for a push of the commit, only dry runs go on.
+
+    Args:
+        tmp_path: The working directory of the step.
+        dry_run: The value of `DRY_RUN`.
+        passes: Whether the step passes.
+    """
+    bash = shutil.which("bash")
+    assert bash
+    step = _release_steps("prepare")["Check that CI passed for the release commit"]
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    stub = bin_dir / "gh"
+    stub.write_text("#!/usr/bin/env bash\necho 0\n")
+    stub.chmod(0o755)
+    result = subprocess.run(  # noqa: S603 (fixed arguments, no shell)
+        [bash, "--noprofile", "--norc", "-e", "-c", step["run"]],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+            "DRY_RUN": dry_run,
+            "REPOSITORY": "elixir-cloud-aai/protes",
+            "SHA": SHA,
+        },
+        check=False,
+    )
+    assert (result.returncode == 0) == passes, result.stdout + result.stderr
+    level = "::warning::" if passes else "::error::"
+    assert level in result.stdout
 
 
 def test_dry_run_image_ref() -> None:
@@ -883,14 +937,14 @@ def test_dry_run_image_ref() -> None:
 
 
 def _run_tag_check(
-    tmp_path: Path, version: str, citation: str
+    tmp_path: Path, citation: str, *, tagged: bool = False
 ) -> subprocess.CompletedProcess[str]:
     """Run the tag check of `prepare` as in a dry run.
 
     Args:
         tmp_path: The working directory of the step (a Git repository).
-        version: The input `version`.
         citation: The version in `CITATION.cff`.
+        tagged: Whether the commit has the tag of that version.
 
     Returns:
         The completed process; `GITHUB_OUTPUT` is `tmp_path / "output"`.
@@ -900,9 +954,11 @@ def _run_tag_check(
     script = _release_steps("prepare")["Check release tag and commit"]["run"]
     (tmp_path / "CITATION.cff").write_text(f"cff-version: 1.2.0\nversion: {citation}\n")
     git = ["git", "-C", str(tmp_path), "-c", "user.name=t", "-c", "user.email=t@t"]
-    git += ["-c", "commit.gpgsign=false"]
+    git += ["-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"]
     subprocess.run([*git, "init", "-q"], check=True)  # noqa: S603
     subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "c"], check=True)  # noqa: S603
+    if tagged:
+        subprocess.run([*git, "tag", f"v{citation}"], check=True)  # noqa: S603
     return subprocess.run(  # noqa: S603 (fixed arguments, no shell)
         [bash, "--noprofile", "--norc", "-e", "-c", script],
         capture_output=True,
@@ -912,7 +968,6 @@ def _run_tag_check(
             **os.environ,
             "DRY_RUN": "true",
             "TAG": "dev",
-            "INPUT_VERSION": version,
             "RUN_ID": "42",
             "GITHUB_OUTPUT": str(tmp_path / "output"),
         },
@@ -921,32 +976,36 @@ def _run_tag_check(
 
 
 @pytest.mark.parametrize(
-    ("version", "citation", "tag"),
+    ("citation", "tagged", "tag"),
     [
-        pytest.param("", "1.2.3", "v1.2.3", id="citation"),
-        pytest.param("2.0.0rc1", "1.2.3", "v2.0.0rc1", id="input"),
-        pytest.param("", "X.Y.Z", None, id="no-version"),
-        pytest.param("1.2.3; echo", "1.2.3", None, id="bad-input"),
-        pytest.param("v1.2.3", "1.2.3", None, id="prefixed"),
+        pytest.param("1.2.3", False, "v1.2.3", id="release"),
+        pytest.param("2.0.0rc1", False, "v2.0.0rc1", id="pre-release"),
+        pytest.param("1.2.3", True, "v1.2.3", id="tagged"),
+        pytest.param("X.Y.Z", False, None, id="no-version"),
+        pytest.param("'1.2.3\n::warning::x'", False, None, id="injected"),
+        pytest.param("v1.2.3", False, None, id="prefixed"),
     ],
 )
 def test_dry_run_tag(
-    tmp_path: Path, version: str, citation: str, tag: str | None
+    tmp_path: Path, citation: str, tagged: bool, tag: str | None
 ) -> None:
-    """Dry runs take the version of the input or `CITATION.cff`.
+    """Dry runs take the version of `CITATION.cff`.
 
     The version tag is `v<version>`, the release tag a throwaway one with the
-    run ID; invalid versions fail. The tag checks are skipped, so the step
-    needs no token or tag here.
+    run ID; invalid versions fail and aren't echoed, and an existing tag is
+    noted (its release's notes are generated). The tag checks are skipped,
+    so the step needs no token here.
 
     Args:
         tmp_path: The working directory of the step.
-        version: The input `version`.
-        citation: The version in `CITATION.cff`.
+        citation: The version in `CITATION.cff` (YAML).
+        tagged: Whether the commit has the tag of that version.
         tag: The expected version tag, or None if the step fails.
     """
-    result = _run_tag_check(tmp_path, version, citation)
+    result = _run_tag_check(tmp_path, citation, tagged=tagged)
     assert (result.returncode == 0) == (tag is not None), result.stdout + result.stderr
+    assert "::warning::x" not in result.stdout + result.stderr
+    assert ("is tagged already" in result.stdout) == tagged
     if tag is None:
         return
     output = dict(
@@ -958,7 +1017,7 @@ def test_dry_run_tag(
 
 
 def _run_create_release(
-    tmp_path: Path, dry_run: bool, release_tag: str
+    tmp_path: Path, *, dry_run: bool, release_tag: str
 ) -> tuple[subprocess.CompletedProcess[str], list[str]]:
     """Run the "Create release" step of `publish` with a stand-in for `gh`.
 
@@ -1019,7 +1078,9 @@ def _run_create_release(
 
 def test_create_release_runs(tmp_path: Path) -> None:
     """Releases create a draft of the tag, upload the assets and publish it."""
-    result, commands = _run_create_release(tmp_path, False, "v1.2.3")
+    result, commands = _run_create_release(
+        tmp_path, dry_run=False, release_tag="v1.2.3"
+    )
     assert result.returncode == 0, result.stdout + result.stderr
     (notes,) = [command for command in commands if "generate-notes" in command]
     assert "tag_name=v1.2.3" in notes
@@ -1038,7 +1099,7 @@ def test_dry_run_release_never_published(tmp_path: Path) -> None:
     exist; the draft is updated, but neither published nor marked latest.
     """
     tag = "dry-run-v1.2.3-42"
-    result, commands = _run_create_release(tmp_path, True, tag)
+    result, commands = _run_create_release(tmp_path, dry_run=True, release_tag=tag)
     assert result.returncode == 0, result.stdout + result.stderr
     (notes,) = [command for command in commands if "generate-notes" in command]
     assert "tag_name=v1.2.3" in notes
@@ -1055,7 +1116,7 @@ def test_dry_run_release_never_published(tmp_path: Path) -> None:
 
 def test_dry_run_release_tag_checked(tmp_path: Path) -> None:
     """Dry runs refuse to create a release of a version tag."""
-    result, commands = _run_create_release(tmp_path, True, "v1.2.3")
+    result, commands = _run_create_release(tmp_path, dry_run=True, release_tag="v1.2.3")
     assert result.returncode != 0
     assert not [c for c in commands if c.startswith("release ")]
 

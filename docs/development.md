@@ -791,14 +791,13 @@ branches of this repository that change the release workflow, its scripts,
 
 ```bash
 gh workflow run release.yml --repo elixir-cloud-aai/protes --ref <branch>
-# Another version than the one in CITATION.cff
-gh workflow run release.yml --repo elixir-cloud-aai/protes --ref <branch> -f version=X.Y.Z
 ```
 
 A dry run is any run that wasn't triggered by a pushed tag; no input can
 turn it into a release. It runs the jobs and commands of a release for
-version `X.Y.Z` (the input `version`, else the version in `CITATION.cff`),
-with these differences:
+the version `X.Y.Z` in `CITATION.cff` (which the release checks require
+anyway; if `vX.Y.Z` is tagged already, as on `dev` between releases, the
+generated notes are those of that release), with these differences:
 
 - the checks that need a tag (annotated, signed, on `main`) are skipped, and
   a missing CI run for a push of the commit is a warning;
@@ -820,3 +819,9 @@ So a dry run tests the release workflow end to end except for the tag
 checks, the approvals, the Docker Hub login, the attestations and the
 signatures. Run one after every change to the release workflow and before
 tagging a release.
+
+Runs for pull requests appear as checks of the pull request (they don't
+block merging) and run on its merge commit. The result is the run itself:
+its annotations name the version, the skipped checks and the draft (which
+is gone from the releases page once the run ends); the artifact `registry`
+is kept for one day.
