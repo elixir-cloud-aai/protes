@@ -807,8 +807,9 @@ generated notes are those of that release), with these differences:
   artifact `registry`), checked, scanned and tagged there;
 - the chart is packaged and checked as for the release (with the published
   image as its default);
-- nothing is attested or signed (both would add entries to the public
-  Sigstore transparency log);
+- nothing is attested by GitHub or signed (both would add entries to the
+  public Sigstore transparency log); the build still adds its SBOM and
+  provenance attestations to the image in the registry on the runner;
 - the GitHub release is created as a draft of the tag
   `dry-run-vX.Y.Z-<run ID>` at the commit (no Git tag is created for
   drafts), with the release notes and the chart, but never published or

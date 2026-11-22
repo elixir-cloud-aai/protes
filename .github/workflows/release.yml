@@ -801,6 +801,8 @@ jobs:
               echo "::error::Not a dry-run release tag: '${RELEASE_TAG}'"
               exit 1
           fi
+          # A failed request fails the step
+          set -o pipefail
           gh api --paginate --slurp "repos/${GH_REPO}/releases?per_page=100" \
               | jq -r --arg tag "${RELEASE_TAG}" \
                   '.[][] | select(.draft and .tag_name == $tag) | .id' \

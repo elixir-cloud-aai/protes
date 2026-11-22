@@ -793,6 +793,7 @@ def test_release_triggers() -> None:
     assert ".github/workflows/release.yml" in paths
     assert "scripts/release_*.py" in paths
     assert "CITATION.cff" in paths
+    assert "docs/releases/**" in paths
     for path in paths:
         if "*" not in path:
             assert (ROOT / path).exists(), path
@@ -862,7 +863,8 @@ def test_ci_check_dry_run(tmp_path: Path, dry_run: str, passes: bool) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     stub = bin_dir / "gh"
-    stub.write_text("#!/usr/bin/env bash\necho 0\n")
+    log = tmp_path / "gh.log"
+    stub.write_text(f'#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "{log}"\necho 0\n')
     stub.chmod(0o755)
     result = subprocess.run(  # noqa: S603 (fixed arguments, no shell)
         [bash, "--noprofile", "--norc", "-e", "-c", step["run"]],
@@ -881,6 +883,12 @@ def test_ci_check_dry_run(tmp_path: Path, dry_run: str, passes: bool) -> None:
     assert (result.returncode == 0) == passes, result.stdout + result.stderr
     level = "::warning::" if passes else "::error::"
     assert level in result.stdout
+    # The CI runs of the commit were queried
+    (query,) = log.read_text().splitlines()
+    assert query.startswith(
+        "api repos/elixir-cloud-aai/protes/actions/workflows/ci.yml/runs?"
+    )
+    assert f"head_sha={SHA}" in query
 
 
 def test_dry_run_image_ref() -> None:
@@ -922,6 +930,7 @@ def test_dry_run_image_ref() -> None:
         download = steps["Download local registry"]
         assert download["if"] == DRY_RUN
         assert download["with"]["name"] == "registry"
+        assert download["with"]["path"] == "${{ runner.temp }}/registry"
         names = list(steps)
         assert names.index("Download local registry") < names.index(
             "Start local registry"
@@ -929,6 +938,9 @@ def test_dry_run_image_ref() -> None:
     upload = push["Upload local registry"]
     assert upload["if"] == DRY_RUN
     assert upload["with"]["name"] == "registry"
+    assert upload["with"]["path"] == "${{ runner.temp }}/registry"
+    # The directory that the registry stores its data in
+    assert '"${RUNNER_TEMP}/registry:/var/lib/registry"' in start["run"]
     names = list(push)
     assert names.index("Check app version of image") < names.index(
         "Stop local registry"
@@ -1013,7 +1025,13 @@ def test_dry_run_tag(
     )
     assert output["tag"] == tag
     assert output["release_tag"] == f"dry-run-{tag}-42"
-    assert re.fullmatch(r"[0-9a-f]{40}", output["sha"])
+    head = subprocess.run(  # noqa: S603 (fixed arguments, no shell)
+        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"],  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert output["sha"] == head.stdout.strip()
 
 
 def _run_create_release(
