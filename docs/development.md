@@ -544,7 +544,8 @@ errors, which fail the CI run that the release workflow requires for the
 release commit. The image scan of the release workflow can
 still fail after the tag, e.g., on a vulnerability published since CI last
 scanned the image of the commit; check the code scanning alerts before
-tagging.
+tagging. A [dry run](#dry-runs-of-the-release) of the release workflow on the
+commit runs the rest of the release without publishing anything.
 
 The tag must be annotated and signed (`git tag -s`), with a key that GitHub can
 verify (added to the tagger's GitHub account). The [release
@@ -779,3 +780,43 @@ the step's name in the run): never re-run all jobs of their runs.
 The release workflow installs a fixed Helm version (`version:` of
 `azure/setup-helm` in `release.yml`). Dependabot updates the action, but not
 that version: bump it by hand.
+
+### Dry runs of the release
+
+The release workflow also runs as a dry run, without a tag and without
+publishing anything: on demand (`workflow_dispatch`, e.g., on the branch
+that prepares the release, right before tagging) and for pull requests from
+branches of this repository that change the release workflow, its scripts,
+`CITATION.cff` or `docs/releases/` (pull requests from forks skip it):
+
+```bash
+gh workflow run release.yml --repo elixir-cloud-aai/protes --ref <branch>
+# Another version than the one in CITATION.cff
+gh workflow run release.yml --repo elixir-cloud-aai/protes --ref <branch> -f version=X.Y.Z
+```
+
+A dry run is any run that wasn't triggered by a pushed tag; no input can
+turn it into a release. It runs the jobs and commands of a release for
+version `X.Y.Z` (the input `version`, else the version in `CITATION.cff`),
+with these differences:
+
+- the checks that need a tag (annotated, signed, on `main`) are skipped, and
+  a missing CI run for a push of the commit is a warning;
+- it never enters the `release` environment (no approvals) and never logs
+  in to Docker Hub: the image is pushed by digest to a registry on the
+  runner (`localhost:5000/protes`, whose storage the jobs pass on as the
+  artifact `registry`), checked, scanned and tagged there;
+- the chart is packaged and checked as for the release (with the published
+  image as its default);
+- nothing is attested or signed (both would add entries to the public
+  Sigstore transparency log);
+- the GitHub release is created as a draft of the tag
+  `dry-run-vX.Y.Z-<run ID>` at the commit (no Git tag is created for
+  drafts), with the release notes and the chart, but never published or
+  marked as the latest release, and is deleted at the end of the run, also
+  if it fails.
+
+So a dry run tests the release workflow end to end except for the tag
+checks, the approvals, the Docker Hub login, the attestations and the
+signatures. Run one after every change to the release workflow and before
+tagging a release.

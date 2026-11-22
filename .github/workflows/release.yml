@@ -27,12 +27,44 @@
 # Hub secrets). Release tags are immutable (tag ruleset). See "Versioning
 # and releases" in `docs/development.md`. Until 1.0.0, all releases are GitHub
 # pre-releases (but stable ones still update the `latest` image).
+#
+# Dry run: every other event (`workflow_dispatch`, and pull requests from
+# branches of this repository that change the release) runs the same jobs
+# and commands without publishing anything, for the version in
+# `CITATION.cff` (or the input `version`), so that changes of the release
+# can be tested before a tag is pushed (see "Dry runs of the release" in
+# `docs/development.md`). Whether a run is a dry run follows from the event
+# alone (`github.event_name != 'push'`), never from an input. A dry run
+# never enters the `release` environment and never logs in to Docker Hub:
+# the image is pushed by digest to a registry on the runner (`IMAGE_REF`,
+# whose storage is passed on to `scan` and `publish` as an artifact, so
+# that all jobs see the same digest), scanned and tagged there; nothing is
+# attested or signed; the tag checks that need a tag are skipped; and the
+# GitHub release is created as a draft of the tag `dry-run-v<version>-<run
+# ID>` (no Git tag is created for drafts), gets its assets and notes, is
+# never published and is deleted at the end, also if the run fails.
 
 name: Release
 
 on:
   push:
     tags: ["v*"]
+  # Dry runs (see above)
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to dry-run (default the version in CITATION.cff)
+        required: false
+        default: ""
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - scripts/release_*.py
+      - scripts/chart_readme.py
+      - scripts/check_release_pins.py
+      - scripts/citation.py
+      - CITATION.cff
+      - docs/releases/**
 
 permissions:
   contents: read
@@ -43,6 +75,20 @@ permissions:
 # secrets, scans the image that is published
 env:
   IMAGE_NAME: docker.io/${{ vars.DOCKERHUB_ORG || 'elixircloud' }}/protes
+  # Whether this is a dry run (see above), for scripts; conditions of steps
+  # test the event directly
+  DRY_RUN: ${{ github.event_name != 'push' }}
+  # Where the image is pushed, scanned, signed and tagged: the published
+  # image, or in dry runs the registry on the runner. The chart names
+  # `IMAGE_NAME` in both cases, so that dry runs package the released chart
+  IMAGE_REF: ${{ github.event_name == 'push' && format('docker.io/{0}/protes', vars.DOCKERHUB_ORG || 'elixircloud') || 'localhost:5000/protes' }}
+  # The registry of dry runs (Distribution 3.0.0), pinned by digest
+  REGISTRY_IMAGE: docker.io/library/registry@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e
+  # BuildKit configuration of dry runs: the registry on the runner speaks
+  # plain HTTP (the builder runs on the host network to reach it)
+  BUILDKITD_DRY_RUN: |
+    [registry."localhost:5000"]
+      http = true
 
 # One run per tag, so that a run waiting for approval is not cancelled by
 # the run of another tag; `latest` is decided at the end of each run, from
@@ -54,12 +100,19 @@ concurrency:
 jobs:
   prepare:
     name: Prepare release
+    # Dry runs of pull requests from forks are skipped: their token can't
+    # create the draft release (and so are all jobs, which need this one)
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
       actions: read # read the CI runs of the release commit
     outputs:
+      # The version tag (`vX.Y.Z`; in dry runs not pushed), and the tag of
+      # the GitHub release (in dry runs a throwaway one, see above)
+      tag: ${{ steps.commit.outputs.tag }}
+      release_tag: ${{ steps.commit.outputs.release_tag }}
       version: ${{ steps.version.outputs.version }}
       prerelease: ${{ steps.version.outputs.prerelease }}
       sha: ${{ steps.commit.outputs.sha }}
@@ -85,13 +138,31 @@ jobs:
       # what actually control publishing. Runs no code of the tagged commit,
       # so that its scripts (below) only run once the tag is verified and the
       # commit is on `main`, and never next to this step's token
+      # Dry runs have no tag: the version is the input or the one in
+      # `CITATION.cff` (read, not run), and the tag checks are skipped
       - name: Check release tag and commit
         id: commit
         env:
           TAG: ${{ github.ref_name }}
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
+          INPUT_VERSION: ${{ inputs.version }}
+          RUN_ID: ${{ github.run_id }}
         run: |
+          if [[ "${DRY_RUN}" == "true" ]]; then
+              version="${INPUT_VERSION:-$(yq .version CITATION.cff)}"
+              if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+((a|b|rc)[0-9]+)?$ ]]; then
+                  echo "::error::Invalid version '${version}' for the dry run"
+                  exit 1
+              fi
+              echo "::notice::Dry run of v${version}: the tag checks (annotated, signed, on 'main') are skipped"
+              {
+                  echo "tag=v${version}"
+                  echo "release_tag=dry-run-v${version}-${RUN_ID}"
+                  echo "sha=$(git rev-parse HEAD)"
+              } >> "${GITHUB_OUTPUT}"
+              exit 0
+          fi
           # Annotated, with a signature that GitHub verified
           if [[ "$(git cat-file -t "refs/tags/${TAG}")" != "tag" ]]; then
               echo "::error::Tag '${TAG}' is not annotated (git tag -s)"
@@ -107,13 +178,17 @@ jobs:
               echo "::error::Release commit is not on 'main'"
               exit 1
           fi
-          echo "sha=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
+          {
+              echo "tag=${TAG}"
+              echo "release_tag=${TAG}"
+              echo "sha=$(git rev-parse HEAD)"
+          } >> "${GITHUB_OUTPUT}"
       # Fails unless the tag is a release version; version, chart version
       # and kind of release (see `scripts/release_version.py`)
       - name: Derive release version
         id: version
         env:
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ steps.commit.outputs.tag }}
         run: python scripts/release_version.py outputs "${TAG}" >> "${GITHUB_OUTPUT}"
       # Zenodo archives the release with the citation metadata of the tagged
       # commit, so they must have the release version (see "Versioning and
@@ -147,7 +222,8 @@ jobs:
       # The checks above don't run the tests: require a successful run of
       # the CI workflow for a push of the release commit (to `dev`, before it
       # moved to `main`); runs for pull requests test merge commits, not the
-      # commit itself. Re-runs that succeeded count
+      # commit itself. Re-runs that succeeded count. In dry runs, whose
+      # commit is rarely pushed to `dev`, a missing run is a warning
       - name: Check that CI passed for the release commit
         env:
           GH_TOKEN: ${{ github.token }}
@@ -157,6 +233,10 @@ jobs:
           runs="$(gh api "repos/${REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${SHA}&event=push&status=success&per_page=1" \
               --jq .total_count)"
           if [[ ! "${runs}" =~ ^[0-9]+$ || "${runs}" -lt 1 ]]; then
+              if [[ "${DRY_RUN}" == "true" ]]; then
+                  echo "::warning::No successful run of the CI workflow (ci.yml) for a push of ${SHA} (dry run: not checked)"
+                  exit 0
+              fi
               echo "::error::No successful run of the CI workflow (ci.yml) for a push of ${SHA}; once CI passed for it (re-run it if it failed or was cancelled), re-run this workflow"
               exit 1
           fi
@@ -226,8 +306,8 @@ jobs:
     needs: prepare
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # Docker Hub secrets (required reviewer)
-    environment: release
+    # Docker Hub secrets (required reviewer); none for dry runs
+    environment: ${{ github.event_name == 'push' && 'release' || '' }}
     permissions:
       contents: read
     outputs:
@@ -242,8 +322,26 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ needs.prepare.outputs.sha }}
+      # Dry runs: the registry on the runner, with the storage of `push`
+      # (in `push`, empty)
+      - name: Start local registry
+        if: github.event_name != 'push'
+        run: |
+          mkdir -p "${RUNNER_TEMP}/registry"
+          docker run --detach --name registry --publish 127.0.0.1:5000:5000 \
+              --volume "${RUNNER_TEMP}/registry:/var/lib/registry" "${REGISTRY_IMAGE}"
+          for _ in $(seq 30); do
+              curl --silent --fail http://localhost:5000/v2/ > /dev/null && exit 0
+              sleep 1
+          done
+          echo "::error::The local registry didn't start"
+          exit 1
+      # Dry runs: on the host network, to reach the registry on the runner
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver-opts: ${{ github.event_name != 'push' && 'network=host' || '' }}
+          buildkitd-config-inline: ${{ github.event_name != 'push' && env.BUILDKITD_DRY_RUN || '' }}
       # OCI labels with the version, commit and source; `tags` only sets the
       # version label (the image is tagged by digest in `publish`, after the
       # scan)
@@ -255,6 +353,7 @@ jobs:
           flavor: latest=false
           tags: type=raw,value=${{ needs.prepare.outputs.version }}
       - name: Log in to Docker Hub
+        if: github.event_name == 'push'
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           username: ${{ secrets.DOCKERHUB_LOGIN }}
@@ -264,14 +363,14 @@ jobs:
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
-          outputs: type=image,name=${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+          outputs: type=image,name=${{ env.IMAGE_REF }},push-by-digest=true,name-canonical=true,push=true
           sbom: true
           provenance: mode=max
           labels: ${{ steps.meta.outputs.labels }}
           build-args: SETUPTOOLS_SCM_PRETEND_VERSION=${{ needs.prepare.outputs.version }}
       - name: Check app version of image
         env:
-          IMAGE: ${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
+          IMAGE: ${{ env.IMAGE_REF }}@${{ steps.push.outputs.digest }}
         run: |
           actual="$(docker run --rm --entrypoint python "${IMAGE}" \
               -c "from importlib.metadata import version; print(version('pro-tes'))")"
@@ -279,6 +378,19 @@ jobs:
               echo "::error::Image reports version '${actual}', expected '${VERSION}'"
               exit 1
           fi
+      # Dry runs: the registry's storage, for `scan` and `publish`
+      - name: Stop local registry
+        if: github.event_name != 'push'
+        run: docker stop registry
+      - name: Upload local registry
+        if: github.event_name != 'push'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: registry
+          path: ${{ runner.temp }}/registry
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 1
 
   # Scans exactly the pushed digest (`<image>@<digest>`; public, so pulling
   # it needs no login) with Trivy (the shared action
@@ -310,10 +422,30 @@ jobs:
               echo "::error::Invalid image digest '${DIGEST}'"
               exit 1
           fi
+      - name: Download local registry
+        if: github.event_name != 'push'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: registry
+          path: ${{ runner.temp }}/registry
+      # Dry runs: the registry on the runner, with the storage of `push`
+      # (in `push`, empty)
+      - name: Start local registry
+        if: github.event_name != 'push'
+        run: |
+          mkdir -p "${RUNNER_TEMP}/registry"
+          docker run --detach --name registry --publish 127.0.0.1:5000:5000 \
+              --volume "${RUNNER_TEMP}/registry:/var/lib/registry" "${REGISTRY_IMAGE}"
+          for _ in $(seq 30); do
+              curl --silent --fail http://localhost:5000/v2/ > /dev/null && exit 0
+              sleep 1
+          done
+          echo "::error::The local registry didn't start"
+          exit 1
       - name: Scan image
         uses: elixir-cloud-aai/.github/actions/scan-image@31f22fccc1f3c597ed7c1d1f75b2f85522155348 # v1.1.0
         with:
-          image: ${{ env.IMAGE_NAME }}@${{ needs.push.outputs.digest }}
+          image: ${{ env.IMAGE_REF }}@${{ needs.push.outputs.digest }}
           category: release
           upload: "false"
 
@@ -322,8 +454,9 @@ jobs:
     needs: [prepare, push, scan]
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # None for dry runs
     environment:
-      name: release
+      name: ${{ github.event_name == 'push' && 'release' || '' }}
       url: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ github.ref_name }}
     permissions:
       contents: write # create the GitHub release
@@ -333,6 +466,10 @@ jobs:
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
       DIGEST: ${{ needs.push.outputs.digest }}
+      # The version tag, and the tag of the GitHub release (see `prepare`)
+      TAG: ${{ needs.prepare.outputs.tag }}
+      RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+      SHA: ${{ needs.prepare.outputs.sha }}
     steps:
       # The commit checked by `prepare`; release tags cannot be moved (tag
       # ruleset)
@@ -389,8 +526,32 @@ jobs:
               exit 1
           fi
           echo "${SHA256}  ${files[0]}" | sha256sum --check --strict
+      - name: Download local registry
+        if: github.event_name != 'push'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: registry
+          path: ${{ runner.temp }}/registry
+      # Dry runs: the registry on the runner, with the storage of `push`
+      # (in `push`, empty)
+      - name: Start local registry
+        if: github.event_name != 'push'
+        run: |
+          mkdir -p "${RUNNER_TEMP}/registry"
+          docker run --detach --name registry --publish 127.0.0.1:5000:5000 \
+              --volume "${RUNNER_TEMP}/registry:/var/lib/registry" "${REGISTRY_IMAGE}"
+          for _ in $(seq 30); do
+              curl --silent --fail http://localhost:5000/v2/ > /dev/null && exit 0
+              sleep 1
+          done
+          echo "::error::The local registry didn't start"
+          exit 1
+      # Dry runs: on the host network, to reach the registry on the runner
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver-opts: ${{ github.event_name != 'push' && 'network=host' || '' }}
+          buildkitd-config-inline: ${{ github.event_name != 'push' && env.BUILDKITD_DRY_RUN || '' }}
       # Assets of a published immutable release can't be replaced, and a
       # re-run of all jobs builds a new image digest and packages the chart
       # again, so such a run fails here, before anything is attested, signed
@@ -406,39 +567,41 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.ref_name }}
         run: |
           releases="$(mktemp)"
           gh api --paginate --slurp "repos/${GH_REPO}/releases?per_page=100" \
               > "${releases}"
-          state="$(python scripts/release_assets.py precheck "${TAG}" \
+          state="$(python scripts/release_assets.py precheck "${RELEASE_TAG}" \
               --releases "${releases}" dist/*)"
           state="${state#state=}"
-          echo "Release ${TAG}: ${state}"
+          echo "Release ${RELEASE_TAG}: ${state}"
           if [[ "${state}" == "published" ]]; then
               # A missing tag and a failed request (e.g., a rate limit) both
               # fail here, apart from a tag on another digest
               if ! manifest="$(docker buildx imagetools inspect \
-                  "${IMAGE_NAME}:${VERSION}" --format '{{ json .Manifest }}')"; then
-                  echo "::error::Release ${TAG} is published, but ${IMAGE_NAME}:${VERSION} can't be inspected: if the registry failed, re-run this job; if the tag doesn't exist, release a new patch version (tags can't be reused)"
+                  "${IMAGE_REF}:${VERSION}" --format '{{ json .Manifest }}')"; then
+                  echo "::error::Release ${RELEASE_TAG} is published, but ${IMAGE_REF}:${VERSION} can't be inspected: if the registry failed, re-run this job; if the tag doesn't exist, release a new patch version (tags can't be reused)"
                   exit 1
               fi
               actual="$(jq -r .digest <<< "${manifest}")"
               if [[ "${actual}" != "${DIGEST}" ]]; then
-                  echo "::error::Release ${TAG} is published, but ${IMAGE_NAME}:${VERSION} points to ${actual}, not to this run's digest ${DIGEST} (a re-run of all jobs builds a new image): release a new patch version (tags can't be reused)"
+                  echo "::error::Release ${RELEASE_TAG} is published, but ${IMAGE_REF}:${VERSION} points to ${actual}, not to this run's digest ${DIGEST} (a re-run of all jobs builds a new image): release a new patch version (tags can't be reused)"
                   exit 1
               fi
           fi
+      # Not in dry runs, which attest and sign nothing
       - name: Log in to Docker Hub
+        if: github.event_name == 'push'
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           username: ${{ secrets.DOCKERHUB_LOGIN }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       # Of the scanned digest
       - name: Attest build provenance
+        if: github.event_name == 'push'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          subject-name: ${{ env.IMAGE_NAME }}
+          subject-name: ${{ env.IMAGE_REF }}
           subject-digest: ${{ env.DIGEST }}
           push-to-registry: true
           # No artifact metadata storage record (needs another permission)
@@ -447,14 +610,13 @@ jobs:
         uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
       # The signature covers the digest, and so every tag of it
       - name: Sign image
-        run: cosign sign --yes "${IMAGE_NAME}@${DIGEST}"
+        if: github.event_name == 'push'
+        run: cosign sign --yes "${IMAGE_REF}@${DIGEST}"
       # Decided last, from freshly fetched tags (the repository is public, so
       # no credentials are needed), so that neither a re-run of an older
       # release nor a concurrent release moves `latest` back
       - name: Check whether this is the highest release
         id: latest
-        env:
-          TAG: ${{ github.ref_name }}
         run: |
           git fetch --quiet --force --tags origin \
               "+refs/heads/main:refs/remotes/origin/main"
@@ -468,12 +630,12 @@ jobs:
         env:
           LATEST: ${{ steps.latest.outputs.latest }}
         run: |
-          tags=("${IMAGE_NAME}:${VERSION}")
+          tags=("${IMAGE_REF}:${VERSION}")
           if [[ "${LATEST}" == "true" ]]; then
-              tags+=("${IMAGE_NAME}:latest")
+              tags+=("${IMAGE_REF}:latest")
           fi
           for tag in "${tags[@]}"; do
-              docker buildx imagetools create --tag "${tag}" "${IMAGE_NAME}@${DIGEST}"
+              docker buildx imagetools create --tag "${tag}" "${IMAGE_REF}@${DIGEST}"
               actual="$(docker buildx imagetools inspect "${tag}" \
                   --format '{{ json .Manifest }}' | jq -r .digest)"
               if [[ "${actual}" != "${DIGEST}" ]]; then
@@ -484,10 +646,12 @@ jobs:
       # Provenance attestation (stored by GitHub) and a Sigstore bundle
       # (`<chart>.tgz.sigstore.json`, attached to the release) for the chart
       - name: Attest chart provenance
+        if: github.event_name == 'push'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/${{ needs.prepare.outputs.chart_file }}
       - name: Sign chart
+        if: github.event_name == 'push'
         env:
           CHART: dist/${{ needs.prepare.outputs.chart_file }}
         run: cosign sign-blob --yes --bundle "${CHART}.sigstore.json" "${CHART}"
@@ -505,7 +669,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.ref_name }}
         run: |
           set -o pipefail
           published="$(mktemp)"
@@ -522,12 +685,16 @@ jobs:
       # assets, or the step fails, saying what to do (see
       # `scripts/release_assets.py`); only its title, flags and (curated)
       # notes are updated, which stay editable. The final edit is the only
-      # one that sets `latest`
+      # one that sets `latest`. Dry runs create the draft under their own
+      # tag (`RELEASE_TAG`) at the release commit (the version tag doesn't
+      # exist, so the generated notes are for that commit too), upload the
+      # assets and update the draft, but never publish it (which would
+      # create the tag) and set no `latest`; "Delete dry-run release"
+      # deletes it
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.ref_name }}
           LATEST: ${{ steps.latest.outputs.latest }}
           PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
           PREVIOUS: ${{ steps.previous.outputs.previous_tag }}
@@ -544,10 +711,14 @@ jobs:
           # GitHub's format (`scripts/release_notes.py first`)
           curated="docs/releases/${VERSION}.md"
           notes_file="$(mktemp)"
+          target=()
+          if [[ "${DRY_RUN}" == "true" ]]; then
+              target=(-f "target_commitish=${SHA}")
+          fi
           if [[ -n "${PREVIOUS}" ]]; then
               gh api "repos/${GH_REPO}/releases/generate-notes" \
                   -f "tag_name=${TAG}" -f "previous_tag_name=${PREVIOUS}" \
-                  --jq .body > "${notes_file}"
+                  "${target[@]}" --jq .body > "${notes_file}"
           else
               pulls="$(mktemp)"
               commits="$(mktemp)"
@@ -574,26 +745,60 @@ jobs:
           releases="$(mktemp)"
           gh api --paginate --slurp "repos/${GH_REPO}/releases?per_page=100" \
               > "${releases}"
-          state="$(python scripts/release_assets.py state "${TAG}" \
+          state="$(python scripts/release_assets.py state "${RELEASE_TAG}" \
               --releases "${releases}" dist/*)"
           state="${state#state=}"
+          if [[ "${DRY_RUN}" == "true" ]]; then
+              if [[ "${RELEASE_TAG}" != dry-run-* || "${state}" == "published" ]]; then
+                  echo "::error::Dry run with release tag '${RELEASE_TAG}' (state ${state})"
+                  exit 1
+              fi
+              tag=(--target "${SHA}")
+              edit=(--title "${RELEASE_TAG}" --prerelease="${PRERELEASE}")
+          else
+              tag=(--verify-tag)
+              edit=(--title "${RELEASE_TAG}" --prerelease="${PRERELEASE}" --latest="${LATEST}")
+          fi
           if [[ "${state}" == "none" ]]; then
-              gh release create "${TAG}" \
+              gh release create "${RELEASE_TAG}" \
                   --draft \
-                  --verify-tag \
-                  --title "${TAG}" \
+                  "${tag[@]}" \
+                  --title "${RELEASE_TAG}" \
                   --notes-file "${notes_file}" \
                   --prerelease="${PRERELEASE}"
           fi
-          edit=(--title "${TAG}" --prerelease="${PRERELEASE}" --latest="${LATEST}")
           # Uploads to drafts may replace the assets of an earlier attempt.
           # The notes of a published release are replaced only by curated
           # ones (generated ones are left as they are)
           if [[ "${state}" != "published" ]]; then
-              gh release upload "${TAG}" dist/* --clobber
+              gh release upload "${RELEASE_TAG}" dist/* --clobber
               edit+=(--notes-file "${notes_file}")
           elif [[ -f "${curated}" ]]; then
               edit+=(--notes-file "${notes_file}")
           fi
+          if [[ "${DRY_RUN}" == "true" ]]; then
+              gh release edit "${RELEASE_TAG}" "${edit[@]}"
+              echo "::notice::Dry run: draft release ${RELEASE_TAG} created, not published; skipped: Docker Hub, attestations, signatures, the release environment"
+              exit 0
+          fi
           # Publishes a draft
-          gh release edit "${TAG}" "${edit[@]}" --draft=false
+          gh release edit "${RELEASE_TAG}" "${edit[@]}" --draft=false
+      # Dry runs: the draft release (only drafts, only of the dry-run tag),
+      # also if an earlier step failed
+      - name: Delete dry-run release
+        if: always() && github.event_name != 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if [[ "${RELEASE_TAG}" != dry-run-* ]]; then
+              echo "::error::Not a dry-run release tag: '${RELEASE_TAG}'"
+              exit 1
+          fi
+          gh api --paginate --slurp "repos/${GH_REPO}/releases?per_page=100" \
+              | jq -r --arg tag "${RELEASE_TAG}" \
+                  '.[][] | select(.draft and .tag_name == $tag) | .id' \
+              | while read -r id; do
+                  gh api --method DELETE "repos/${GH_REPO}/releases/${id}"
+                  echo "Deleted draft release ${id} of ${RELEASE_TAG}"
+              done
