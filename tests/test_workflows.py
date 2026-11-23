@@ -427,12 +427,12 @@ def test_shared_actions_release_comments() -> None:
 def test_release_chart_checked() -> None:
     """The release workflow checks the chart before attesting and signing it.
 
-    `publish` downloads the chart artifact, which any job of the run could
-    replace, so it checks that `dist/` holds exactly the file that `prepare`
-    packaged (its name and SHA-256, as outputs of `prepare`) before anything,
-    the image included, is attested or signed. Only that file is attested and
-    signed. The wiring and order of the steps are checked here, the script
-    itself by `test_release_chart_check_runs`.
+    `release-image` downloads the chart artifact, which any job of the run
+    could replace, so it checks that `dist/` holds exactly the file that
+    `prepare` packaged (its name and SHA-256, as outputs of `prepare`) before
+    anything, the image included, is attested or signed. Only that file is
+    attested and signed. The wiring and order of the steps are checked here,
+    the script itself by `test_release_chart_check_runs`.
     """
     release = _load(WORKFLOWS / "release.yml")["jobs"]
     prepare = release["prepare"]
@@ -442,7 +442,7 @@ def test_release_chart_checked() -> None:
     assert packaging["Package chart"]["id"] == "chart"
     # Re-runs of all jobs replace the chart, so its checksum is the new one
     assert packaging["Upload chart"]["with"]["overwrite"] is True
-    steps = {step["name"]: step for step in release["publish"]["steps"]}
+    steps = {step["name"]: step for step in release["release-image"]["steps"]}
     assert steps["Download chart"]["with"] == {"name": "chart", "path": "dist/"}
     check = steps["Check chart"]
     # A failed check stops the job
@@ -453,8 +453,10 @@ def test_release_chart_checked() -> None:
     chart = "dist/${{ needs.prepare.outputs.chart_file }}"
     assert steps["Attest chart provenance"]["with"]["subject-path"] == chart
     assert steps["Sign chart"]["env"]["CHART"] == chart
-    sign = steps["Sign chart"]["run"]
-    assert sign == 'cosign sign-blob --yes --bundle "${CHART}.sigstore.json" "${CHART}"'
+    sign = steps["Sign chart"]["run"].splitlines()
+    assert (
+        sign[0] == 'cosign sign-blob --yes --bundle "${CHART}.sigstore.json" "${CHART}"'
+    )
     names = list(steps)
     assert names.index("Download chart") < names.index("Check chart")
     # A rejected chart leaves the image (pushed untagged by `push`) without
@@ -463,7 +465,46 @@ def test_release_chart_checked() -> None:
     assert names.index("Check chart") < names.index("Sign image")
     assert names.index("Check chart") < names.index("Attest chart provenance")
     assert names.index("Check chart") < names.index("Sign chart")
-    assert names.index("Sign chart") < names.index("Create release")
+    assert names.index("Sign chart") < names.index("Upload chart signature")
+
+
+def test_release_chart_signature_passed() -> None:
+    """`publish` attaches exactly the chart and the bundle of `release-image`.
+
+    `release-image` records the SHA-256 of the chart's Sigstore bundle and
+    uploads the bundle as the artifact `chart-signature`; `publish` downloads
+    it (in releases; dry runs sign nothing) next to the chart and checks
+    both, the script by `test_publish_chart_check_runs`.
+    """
+    jobs = _load(WORKFLOWS / "release.yml")["jobs"]
+    release_image = jobs["release-image"]
+    assert release_image["outputs"]["chart_bundle_sha256"] == (
+        "${{ steps.sign-chart.outputs.sha256 }}"
+    )
+    steps = _release_steps("release-image")
+    assert steps["Sign chart"]["id"] == "sign-chart"
+    assert 'sha256sum "${CHART}.sigstore.json"' in steps["Sign chart"]["run"]
+    upload = steps["Upload chart signature"]["with"]
+    assert upload["name"] == "chart-signature"
+    assert (
+        upload["path"] == "dist/${{ needs.prepare.outputs.chart_file }}.sigstore.json"
+    )
+    assert upload["overwrite"] is True
+    publish = _release_steps("publish")
+    assert publish["Download chart"]["with"] == {"name": "chart", "path": "dist/"}
+    download = publish["Download chart signature"]
+    assert download["if"] == RELEASE
+    assert download["with"] == {"name": "chart-signature", "path": "dist/"}
+    check = publish["Check chart"]
+    assert "if" not in check
+    assert check["env"] == {
+        "FILE": "${{ needs.prepare.outputs.chart_file }}",
+        "SHA256": "${{ needs.prepare.outputs.chart_sha256 }}",
+        "BUNDLE_SHA256": "${{ needs.release-image.outputs.chart_bundle_sha256 }}",
+    }
+    names = list(publish)
+    assert names.index("Download chart signature") < names.index("Check chart")
+    assert names.index("Check chart") < names.index("Create release")
 
 
 def test_release_tag_checked_first() -> None:
@@ -541,7 +582,7 @@ def test_release_chart_check_runs(
     sha256: str | None,
     passes: bool,
 ) -> None:
-    """The chart check of `publish` passes only for the chart of `prepare`.
+    """The chart check of `release-image` passes only for the chart of `prepare`.
 
     The step's script runs with the options of GitHub's default shell for
     steps without `shell:` (`bash -e`, no `pipefail`) in a directory whose
@@ -560,7 +601,7 @@ def test_release_chart_check_runs(
     """
     bash = shutil.which("bash")
     assert bash
-    steps = _load(WORKFLOWS / "release.yml")["jobs"]["publish"]["steps"]
+    steps = _load(WORKFLOWS / "release.yml")["jobs"]["release-image"]["steps"]
     script = {step["name"]: step for step in steps}["Check chart"]["run"]
     dist = tmp_path / "dist"
     dist.mkdir()
@@ -590,25 +631,101 @@ def test_release_chart_check_runs(
     assert (result.returncode == 0) == passes, result.stdout + result.stderr
 
 
+@pytest.mark.parametrize(
+    ("dry_run", "bundle", "extra", "tamper", "bundle_sha256", "passes"),
+    [
+        pytest.param(False, True, None, False, None, True, id="release"),
+        pytest.param(False, False, None, False, None, False, id="no-bundle"),
+        pytest.param(False, True, None, True, None, False, id="tampered-bundle"),
+        pytest.param(False, True, None, False, "", False, id="no-bundle-hash"),
+        pytest.param(False, True, None, False, "abc", False, id="bad-bundle-hash"),
+        pytest.param(False, True, "zzz", False, None, False, id="extra"),
+        # As many files as expected, but another one than the bundle
+        pytest.param(False, False, f"{CHART}.x", False, None, False, id="other"),
+        pytest.param(True, False, None, False, "", True, id="dry-run"),
+        pytest.param(True, True, None, False, None, False, id="dry-run-bundle"),
+        pytest.param(True, False, ".hidden", False, "", False, id="dry-run-extra"),
+    ],
+)
+def test_publish_chart_check_runs(
+    tmp_path: Path,
+    dry_run: bool,
+    bundle: bool,
+    extra: str | None,
+    tamper: bool,
+    bundle_sha256: str | None,
+    passes: bool,
+) -> None:
+    """The chart check of `publish` passes only for the files to attach.
+
+    Releases attach exactly the chart of `prepare` and its Sigstore bundle
+    from `release-image`, dry runs only the chart; the step's script runs as
+    in `test_release_chart_check_runs`.
+
+    Args:
+        tmp_path: The working directory of the step.
+        dry_run: Whether the run is a dry run.
+        bundle: Whether `dist/` holds the chart's bundle.
+        extra: A file added to `dist/`, if any.
+        tamper: Whether the bundle is changed after `release-image` signed.
+        bundle_sha256: The checksum output by `release-image` (that of the
+            bundle if None).
+        passes: Whether the check passes.
+    """
+    bash = shutil.which("bash")
+    assert bash
+    script = _release_steps("publish")["Check chart"]["run"]
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    chart = dist / CHART
+    chart.write_bytes(b"chart")
+    signature = dist / f"{CHART}.sigstore.json"
+    signature.write_bytes(b"bundle")
+    digest = hashlib.sha256(b"bundle").hexdigest()
+    if tamper:
+        signature.write_bytes(b"other bundle")
+    if not bundle:
+        signature.unlink()
+    if extra:
+        (dist / extra).write_bytes(b"extra")
+    result = subprocess.run(  # noqa: S603 (fixed arguments, no shell)
+        [bash, "--noprofile", "--norc", "-e", "-c", script],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "DRY_RUN": "true" if dry_run else "false",
+            "FILE": CHART,
+            "SHA256": hashlib.sha256(b"chart").hexdigest(),
+            "BUNDLE_SHA256": digest if bundle_sha256 is None else bundle_sha256,
+        },
+        check=False,
+    )
+    assert (result.returncode == 0) == passes, result.stdout + result.stderr
+
+
 def test_release_state_checked_first() -> None:
     """A re-run that a published release rejects fails before it signs.
 
-    `publish` checks the state of the release (`release_assets.py
+    `release-image` checks the state of the release (`release_assets.py
     precheck`) and, for a published release, the digest of the `X.Y.Z`
     image tag right after the chart, before it logs in to Docker Hub,
     attests, signs or tags anything, so that a re-run of all jobs (new
     digest, new chart) leaves the tags of the published release alone.
-    "Create release" checks the release again (`state`). The script itself
-    is tested by `test_release_state_check_runs`.
+    "Create release" of `publish` checks the release again (`state`). The
+    script itself is tested by `test_release_state_check_runs`.
     """
-    publish = _load(WORKFLOWS / "release.yml")["jobs"]["publish"]
-    steps = {step["name"]: step for step in publish["steps"]}
-    names = [step["name"] for step in publish["steps"]]
+    jobs = _load(WORKFLOWS / "release.yml")["jobs"]
+    release_image = jobs["release-image"]
+    steps = {step["name"]: step for step in release_image["steps"]}
+    names = [step["name"] for step in release_image["steps"]]
     assert len(names) == len(steps)
     check = steps["Check release state"]
     assert "if" not in check
     assert "continue-on-error" not in check
-    assert publish["env"]["RELEASE_TAG"] == "${{ needs.prepare.outputs.release_tag }}"
+    release_tag = "${{ needs.prepare.outputs.release_tag }}"
+    assert release_image["env"]["RELEASE_TAG"] == release_tag
     assert check["env"]["GH_REPO"] == "${{ github.repository }}"
     assert "release_assets.py precheck" in check["run"]
     assert '--releases "${releases}" dist/*' in check["run"]
@@ -624,7 +741,9 @@ def test_release_state_checked_first() -> None:
         "Sign chart",
     ):
         assert names.index("Check release state") < names.index(later), later
-    assert "release_assets.py state" in steps["Create release"]["run"]
+    assert jobs["publish"]["env"]["RELEASE_TAG"] == release_tag
+    create = _release_steps("publish")["Create release"]["run"]
+    assert "release_assets.py state" in create
 
 
 @pytest.mark.parametrize(
@@ -648,7 +767,7 @@ def test_release_state_check_runs(
     tagged: str | None,
     passes: bool,
 ) -> None:
-    """The release state check of `publish` rejects re-runs of all jobs.
+    """The release state check of `release-image` rejects re-runs of all jobs.
 
     The step's script runs as in `test_release_chart_check_runs`, with
     stand-ins for `gh` (the releases) and `docker` (the digest of the image
@@ -666,7 +785,7 @@ def test_release_state_check_runs(
     """
     bash = shutil.which("bash")
     assert bash and shutil.which("jq")
-    steps = _load(WORKFLOWS / "release.yml")["jobs"]["publish"]["steps"]
+    steps = _load(WORKFLOWS / "release.yml")["jobs"]["release-image"]["steps"]
     script = {step["name"]: step for step in steps}["Check release state"]["run"]
     (tmp_path / "scripts").mkdir()
     shutil.copy(ROOT / "scripts" / "release_assets.py", tmp_path / "scripts")
@@ -744,17 +863,15 @@ def test_release_state_check_runs(
 # all other events (dry runs)
 RELEASE = "github.event_name == 'push'"
 DRY_RUN = "github.event_name != 'push'"
-# The steps that use the Docker Hub credentials, attest or sign, per job of
-# the release workflow: in releases only
+# The jobs of the release workflow that run in releases only: the only ones
+# that attest or sign, with the signing identity (`id-token: write`) and the
+# Docker Hub credentials, as the jobs that sign in `ci.yml`
+RELEASE_JOBS = {"release-image"}
+# The steps of the other jobs that use the Docker Hub credentials or the
+# signature: in releases only
 RELEASE_ONLY = {
     "push": ["Log in to Docker Hub"],
-    "publish": [
-        "Log in to Docker Hub",
-        "Attest build provenance",
-        "Sign image",
-        "Attest chart provenance",
-        "Sign chart",
-    ],
+    "publish": ["Download chart signature"],
 }
 # A release commit, for the scripts of the release workflow
 SHA = "c" * 40
@@ -806,8 +923,8 @@ def test_release_triggers() -> None:
 def test_dry_run_environment() -> None:
     """Dry runs never enter the `release` environment.
 
-    Only `push` and `publish` run in an environment, `release`, and only for
-    tag pushes.
+    Only `push` and `release-image` run in an environment, `release`, and
+    only for tag pushes (`release-image` runs for tag pushes only).
     """
     jobs = _load(WORKFLOWS / "release.yml")["jobs"]
     environments = {
@@ -815,20 +932,23 @@ def test_dry_run_environment() -> None:
         for job_id, job in jobs.items()
         if "environment" in job
     }
-    assert set(environments) == {"push", "publish"}
-    expected = "${{ " + RELEASE + " && 'release' || '' }}"
-    assert environments["push"] == expected
-    assert environments["publish"]["name"] == expected
+    assert set(environments) == {"push", "release-image"}
+    assert environments["push"] == "${{ " + RELEASE + " && 'release' || '' }}"
+    assert environments["release-image"] == "release"
+    assert jobs["release-image"]["if"] == RELEASE
 
 
 def test_dry_run_skips_release_steps() -> None:
     """Dry runs don't log in to Docker Hub, attest or sign.
 
-    These steps run for tag pushes only, and no other step of any job uses
-    a secret or attests or signs.
+    The jobs and steps that do run for tag pushes only, and no other step of
+    any job uses a secret or attests or signs.
     """
     jobs = _load(WORKFLOWS / "release.yml")["jobs"]
-    for job_id in jobs:
+    for job_id, job in jobs.items():
+        if job_id in RELEASE_JOBS:
+            assert job["if"] == RELEASE, job_id
+            continue
         names = RELEASE_ONLY.get(job_id, [])
         steps = _release_steps(job_id)
         for name in names:
@@ -840,6 +960,56 @@ def test_dry_run_skips_release_steps() -> None:
             assert "secrets." not in text, (job_id, name)
             assert "attest-build-provenance" not in text, (job_id, name)
             assert "cosign sign" not in text, (job_id, name)
+
+
+def test_dry_run_permissions() -> None:
+    """Dry runs never get the signing identity or attestation permission.
+
+    As in `ci.yml`, where only jobs for pushes sign, only the release-only
+    jobs (`RELEASE_JOBS`) may request `id-token: write` or `attestations:
+    write`. The only write permission of dry runs is `contents: write` of
+    `publish`, for the draft release.
+    """
+    workflow = _load(WORKFLOWS / "release.yml")
+    assert workflow["permissions"] == {"contents": "read"}
+    for job_id, job in workflow["jobs"].items():
+        permissions = job["permissions"]
+        signs = {"id-token", "attestations"} & {
+            scope for scope, level in permissions.items() if level == "write"
+        }
+        assert bool(signs) == (job_id in RELEASE_JOBS), job_id
+        if job_id not in RELEASE_JOBS and job_id != "publish":
+            assert "write" not in permissions.values(), job_id
+    assert workflow["jobs"]["publish"]["permissions"] == {
+        "contents": "write",
+        "pull-requests": "read",
+    }
+    for job_id in RELEASE_JOBS:
+        job = workflow["jobs"][job_id]
+        assert job["permissions"]["contents"] == "read", job_id
+
+
+def test_publish_after_release_image() -> None:
+    """`publish` runs after `release-image`, or without it in dry runs only.
+
+    `release-image` runs for tag pushes only, so `publish` needs a condition
+    to run when it was skipped; in releases it needs its success, and its
+    decision whether the release is the latest.
+    """
+    publish = _load(WORKFLOWS / "release.yml")["jobs"]["publish"]
+    assert publish["needs"] == ["prepare", "push", "scan", "release-image"]
+    condition = " ".join(publish["if"].split())
+    assert condition == (
+        "!cancelled() && needs.scan.result == 'success'"
+        " && (needs.release-image.result == 'success'"
+        " || (" + DRY_RUN + " && needs.release-image.result == 'skipped'))"
+    )
+    assert "environment" not in publish
+    latest = _release_steps("publish")["Create release"]["env"]["LATEST"]
+    assert latest == (
+        "${{ " + RELEASE + " && needs.release-image.outputs.latest"
+        " || steps.latest.outputs.latest }}"
+    )
 
 
 @pytest.mark.parametrize(
@@ -918,10 +1088,20 @@ def test_dry_run_image_ref() -> None:
     )
     scan = _release_steps("scan")
     assert scan["Scan image"]["with"]["image"].startswith("${{ env.IMAGE_REF }}@")
+    release_image = _release_steps("release-image")
+    assert "${IMAGE_NAME}" not in release_image["Tag image"]["run"]
+    assert '"${IMAGE_REF}@${DIGEST}"' in release_image["Tag image"]["run"]
+    sign = release_image["Sign image"]["run"]
+    assert sign == 'cosign sign --yes "${IMAGE_REF}@${DIGEST}"'
+    # Dry runs, which skip `release-image`, decide `latest` and tag the image
+    # in `publish`, with the same steps
     publish = _release_steps("publish")
-    assert "${IMAGE_NAME}" not in publish["Tag image"]["run"]
-    assert '"${IMAGE_REF}@${DIGEST}"' in publish["Tag image"]["run"]
-    assert publish["Sign image"]["run"] == 'cosign sign --yes "${IMAGE_REF}@${DIGEST}"'
+    for name in ("Check whether this is the highest release", "Tag image"):
+        assert publish[name]["if"] == DRY_RUN, name
+        assert {**publish[name], "if": None} == {**release_image[name], "if": None}
+    names = list(publish)
+    assert names.index("Start local registry") < names.index("Tag image")
+    assert names.index("Tag image") < names.index("Create release")
     start = push["Start local registry"]
     assert start["if"] == DRY_RUN
     for job_id in ("scan", "publish"):
@@ -1283,6 +1463,7 @@ def test_credential_jobs_found() -> None:
         ("ci.yml", "push"),
         ("ci.yml", "publish"),
         ("release.yml", "push"),
+        ("release.yml", "release-image"),
         ("release.yml", "publish"),
     } <= found
 

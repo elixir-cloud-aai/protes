@@ -7,16 +7,17 @@
 # exactly that digest for vulnerabilities in a job of its own, without the
 # release credentials and signing identity (`scan`), and only then check the
 # chart against its recorded name and SHA-256, attest the image's build
-# provenance, sign it (Sigstore keyless signing) and tag it, and create the
-# GitHub release with the chart attached, also attested and signed
-# (`publish`; see "Verifying images and charts" in `docs/operations.md`).
-# `push` and `publish` each need approval in the `release` environment (in
-# releases; dry runs never enter it).
+# provenance, sign it (Sigstore keyless signing) and tag it, and attest and
+# sign the chart (`release-image`), and create the GitHub release with the
+# chart and its signature attached, in a job without secrets and signing
+# identity (`publish`; see "Verifying images and charts" in
+# `docs/operations.md`). `push` and `release-image` each need approval in
+# the `release` environment (in releases; dry runs never enter it).
 # Re-running all jobs builds, scans, signs and tags a new digest (and
 # packages the chart again), unless the GitHub release is published
-# already: then `publish` fails before it attests, signs or tags anything
-# (the release needs a new patch version); re-running failed jobs reuses
-# the digest already pushed (and scans it again if the scan failed). The
+# already: then `release-image` fails before it attests, signs or tags
+# anything (the release needs a new patch version); re-running failed jobs
+# reuses the digest already pushed (and scans it again if the scan failed). The
 # tag is the only source of the version: it is passed to the image build
 # (the Docker build gets no Git metadata) and set as the chart's `version`
 # and `appVersion`. Release notes are the curated `docs/releases/<version>.md`
@@ -25,10 +26,11 @@
 # `scripts/release_notes.py`), otherwise the generated notes alone; add
 # curated notes to the `nav` of `mkdocs.yml` too (the docs build fails
 # otherwise).
-# Publishing runs in the `release` environment (required reviewer, Docker
-# Hub secrets). Release tags are immutable (tag ruleset). See "Versioning
-# and releases" in `docs/development.md`. Until 1.0.0, all releases are GitHub
-# pre-releases (but stable ones still update the `latest` image).
+# Pushing, attesting, signing and tagging run in the `release` environment
+# (required reviewer, Docker Hub secrets). Release tags are immutable (tag
+# ruleset). See "Versioning and releases" in `docs/development.md`. Until
+# 1.0.0, all releases are GitHub pre-releases (but stable ones still update
+# the `latest` image).
 #
 # Dry run: every other event (`workflow_dispatch`, and pull requests from
 # branches of this repository that change the release) runs the same jobs
@@ -38,11 +40,14 @@
 # release" in `docs/development.md`). Whether a run is a dry run follows
 # from the event alone (`github.event_name != 'push'`), never from an
 # input. A dry run
-# never enters the `release` environment and never logs in to Docker Hub:
-# the image is pushed by digest to a registry on the runner (`IMAGE_REF`,
-# whose storage is passed on to `scan` and `publish` as an artifact, so
-# that all jobs see the same digest), scanned and tagged there; nothing is
-# attested or signed; the tag checks that need a tag are skipped; and the
+# never enters the `release` environment, never logs in to Docker Hub and
+# never gets the signing identity (`id-token: write`): `release-image`, the
+# only job that has it, runs for tag pushes only, as the jobs that sign do
+# in `ci.yml`. The image is pushed by digest to a registry on the runner
+# (`IMAGE_REF`, whose storage is passed on to `scan` and `publish` as an
+# artifact, so that all jobs see the same digest), scanned there, and tagged
+# there by `publish`; nothing is attested or signed; the tag checks that
+# need a tag are skipped; and the
 # GitHub release is created as a draft of the tag `dry-run-v<version>-<run
 # ID>` (no Git tag is created for drafts), gets its assets and notes, is
 # never published and is deleted at the end, also if the run fails.
@@ -290,7 +295,8 @@ jobs:
           [[ "${library}" == "$(yq '.dependencies[0].version' deployment/Chart.lock)" ]]
           [[ "$(tar -xzOf "${package}" protes/values.yaml | yq .protes.image)" \
               == "${image}" ]]
-          # For `publish` to check the downloaded chart against
+          # For `release-image` and `publish` to check the downloaded chart
+          # against
           echo "file=${package#dist/}" >> "${GITHUB_OUTPUT}"
           echo "sha256=$(sha256sum "${package}" | cut -d ' ' -f 1)" >> "${GITHUB_OUTPUT}"
       - name: Upload chart
@@ -304,7 +310,7 @@ jobs:
 
   # Builds the image of the release commit once and pushes it by digest only
   # (untagged, with SBOM and provenance attestations), for `scan` to scan and
-  # `publish` to sign and tag; checks that the app reports the release
+  # `release-image` to sign and tag; checks that the app reports the release
   # version. Digests of runs that fail (or fail the scan) are never signed or
   # tagged, but stay on Docker Hub, untagged (pullable by digest only)
   push:
@@ -349,8 +355,8 @@ jobs:
           driver-opts: ${{ github.event_name != 'push' && 'network=host' || '' }}
           buildkitd-config-inline: ${{ github.event_name != 'push' && env.BUILDKITD_DRY_RUN || '' }}
       # OCI labels with the version, commit and source; `tags` only sets the
-      # version label (the image is tagged by digest in `publish`, after the
-      # scan)
+      # version label (the image is tagged by digest in `release-image`, after
+      # the scan)
       - name: Generate image labels
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
@@ -403,10 +409,10 @@ jobs:
   # `elixir-cloud-aai/.github/actions/scan-image`; fails on fixable critical
   # and high vulnerabilities), so that vulnerabilities
   # published since CI scanned the commit block the release. Kept apart from
-  # `push` and `publish`, so that Trivy (whose binary is resolved from its
-  # release tag at run time) never runs next to the Docker Hub credentials,
-  # the `contents: write` token and the signing identity. CI uploads the
-  # results to code scanning
+  # `push`, `release-image` and `publish`, so that Trivy (whose binary is
+  # resolved from its release tag at run time) never runs next to the Docker
+  # Hub credentials, the `contents: write` token and the signing identity. CI
+  # uploads the results to code scanning
   scan:
     name: Scan release image
     needs: [prepare, push]
@@ -455,27 +461,35 @@ jobs:
           category: release
           upload: "false"
 
-  publish:
-    name: Publish release
+  # Attests, signs and tags the scanned digest, and attests and signs the
+  # chart, whose Sigstore bundle goes to `publish` as the artifact
+  # `chart-signature`. The only job with the signing identity
+  # (`id-token: write`), so it runs for tag pushes only, in the `release`
+  # environment, like the job that signs dev images in `ci.yml`
+  # (`publish`). Dry runs skip it, so that no run of a branch or pull
+  # request gets the signing identity; `publish` tags their image in the
+  # registry on the runner instead
+  release-image:
+    name: Release image
     needs: [prepare, push, scan]
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # None for dry runs
-    environment:
-      name: ${{ github.event_name == 'push' && 'release' || '' }}
-      url: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ github.ref_name }}
+    # Docker Hub secrets (required reviewer)
+    environment: release
     permissions:
-      contents: write # create the GitHub release
-      pull-requests: read # list the pull requests of a first release
+      contents: read
       id-token: write # Sigstore signing certificates
       attestations: write # GitHub artifact attestations
+    outputs:
+      latest: ${{ steps.latest.outputs.latest }}
+      chart_bundle_sha256: ${{ steps.sign-chart.outputs.sha256 }}
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
       DIGEST: ${{ needs.push.outputs.digest }}
       # The version tag, and the tag of the GitHub release (see `prepare`)
       TAG: ${{ needs.prepare.outputs.tag }}
       RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
-      SHA: ${{ needs.prepare.outputs.sha }}
     steps:
       # The commit checked by `prepare`; release tags cannot be moved (tag
       # ruleset)
@@ -486,9 +500,8 @@ jobs:
           ref: ${{ needs.prepare.outputs.sha }}
           # All tags and `main`, to determine the highest release
           fetch-depth: 0
-      # For `scripts/release_version.py`, `scripts/release_notes.py` and
-      # `scripts/release_assets.py` (standard library only); the Python
-      # version of `ci.yml`
+      # For `scripts/release_version.py` and `scripts/release_assets.py`
+      # (standard library only); the Python version of `ci.yml`
       - name: Set up Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
@@ -532,32 +545,8 @@ jobs:
               exit 1
           fi
           echo "${SHA256}  ${files[0]}" | sha256sum --check --strict
-      - name: Download local registry
-        if: github.event_name != 'push'
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: registry
-          path: ${{ runner.temp }}/registry
-      # Dry runs: the registry on the runner, with the storage of `push`
-      # (in `push`, empty)
-      - name: Start local registry
-        if: github.event_name != 'push'
-        run: |
-          mkdir -p "${RUNNER_TEMP}/registry"
-          docker run --detach --name registry --publish 127.0.0.1:5000:5000 \
-              --volume "${RUNNER_TEMP}/registry:/var/lib/registry" "${REGISTRY_IMAGE}"
-          for _ in $(seq 30); do
-              curl --silent --fail http://localhost:5000/v2/ > /dev/null && exit 0
-              sleep 1
-          done
-          echo "::error::The local registry didn't start"
-          exit 1
-      # Dry runs: on the host network, to reach the registry on the runner
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-        with:
-          driver-opts: ${{ github.event_name != 'push' && 'network=host' || '' }}
-          buildkitd-config-inline: ${{ github.event_name != 'push' && env.BUILDKITD_DRY_RUN || '' }}
       # Assets of a published immutable release can't be replaced, and a
       # re-run of all jobs builds a new image digest and packages the chart
       # again, so such a run fails here, before anything is attested, signed
@@ -567,8 +556,8 @@ jobs:
       # `scripts/release_assets.py`), and `X.Y.Z` must point to this run's
       # digest (the repository is public, so no credentials are needed), as
       # on a re-run of failed jobs, which reuses both. Drafts and new
-      # releases pass; "Create release" checks the release again (keep the
-      # fetch of the releases the same in both steps)
+      # releases pass; "Create release" of `publish` checks the release
+      # again (keep the fetch of the releases the same in both steps)
       - name: Check release state
         env:
           GH_TOKEN: ${{ github.token }}
@@ -595,16 +584,13 @@ jobs:
                   exit 1
               fi
           fi
-      # Not in dry runs, which attest and sign nothing
       - name: Log in to Docker Hub
-        if: github.event_name == 'push'
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           username: ${{ secrets.DOCKERHUB_LOGIN }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       # Of the scanned digest
       - name: Attest build provenance
-        if: github.event_name == 'push'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ env.IMAGE_REF }}
@@ -616,11 +602,11 @@ jobs:
         uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
       # The signature covers the digest, and so every tag of it
       - name: Sign image
-        if: github.event_name == 'push'
         run: cosign sign --yes "${IMAGE_REF}@${DIGEST}"
       # Decided last, from freshly fetched tags (the repository is public, so
       # no credentials are needed), so that neither a re-run of an older
-      # release nor a concurrent release moves `latest` back
+      # release nor a concurrent release moves `latest` back; `publish` marks
+      # the GitHub release as the latest by this decision too
       - name: Check whether this is the highest release
         id: latest
         run: |
@@ -650,17 +636,190 @@ jobs:
               fi
           done
       # Provenance attestation (stored by GitHub) and a Sigstore bundle
-      # (`<chart>.tgz.sigstore.json`, attached to the release) for the chart
+      # (`<chart>.tgz.sigstore.json`, attached to the release by `publish`)
+      # for the chart
       - name: Attest chart provenance
-        if: github.event_name == 'push'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/${{ needs.prepare.outputs.chart_file }}
+      # The bundle's SHA-256 is recorded, for `publish` to check the
+      # artifact against
       - name: Sign chart
-        if: github.event_name == 'push'
+        id: sign-chart
         env:
           CHART: dist/${{ needs.prepare.outputs.chart_file }}
-        run: cosign sign-blob --yes --bundle "${CHART}.sigstore.json" "${CHART}"
+        run: |
+          cosign sign-blob --yes --bundle "${CHART}.sigstore.json" "${CHART}"
+          echo "sha256=$(sha256sum "${CHART}.sigstore.json" | cut -d ' ' -f 1)" >> "${GITHUB_OUTPUT}"
+      - name: Upload chart signature
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: chart-signature
+          path: dist/${{ needs.prepare.outputs.chart_file }}.sigstore.json
+          if-no-files-found: error
+          # Re-runs replace the bundle of the earlier attempt
+          overwrite: true
+
+  # Creates the GitHub release with the chart and its Sigstore bundle. No
+  # environment and no signing identity: it needs no secrets, only
+  # `contents: write`. In dry runs, which skip `release-image`, it tags the
+  # image in the registry on the runner (with the steps of `release-image`)
+  # and creates the release as a draft of the dry-run tag, which it deletes
+  # at the end (see "Create release")
+  publish:
+    name: Publish release
+    needs: [prepare, push, scan, release-image]
+    # After `release-image`, which only dry runs skip
+    if: >-
+      !cancelled() && needs.scan.result == 'success'
+      && (needs.release-image.result == 'success'
+      || (github.event_name != 'push' && needs.release-image.result == 'skipped'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write # create the GitHub release
+      pull-requests: read # list the pull requests of a first release
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+      DIGEST: ${{ needs.push.outputs.digest }}
+      # The version tag, and the tag of the GitHub release (see `prepare`)
+      TAG: ${{ needs.prepare.outputs.tag }}
+      RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+      SHA: ${{ needs.prepare.outputs.sha }}
+    steps:
+      # The commit checked by `prepare`; release tags cannot be moved (tag
+      # ruleset)
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.sha }}
+          # All tags and `main`, to determine the highest release
+          fetch-depth: 0
+      # For `scripts/release_version.py`, `scripts/release_notes.py` and
+      # `scripts/release_assets.py` (standard library only); the Python
+      # version of `ci.yml`
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+      - name: Check image digest
+        run: |
+          if [[ ! "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "::error::Invalid image digest '${DIGEST}'"
+              exit 1
+          fi
+      - name: Download chart
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: chart
+          path: dist/
+      # Not in dry runs, which sign nothing
+      - name: Download chart signature
+        if: github.event_name == 'push'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: chart-signature
+          path: dist/
+      # As in `release-image`: exactly the chart of `prepare` and, in
+      # releases, the bundle of `release-image` (by their names and
+      # checksums), and nothing else in `dist/`, as all of `dist/` is
+      # attached to the release
+      - name: Check chart
+        env:
+          FILE: ${{ needs.prepare.outputs.chart_file }}
+          SHA256: ${{ needs.prepare.outputs.chart_sha256 }}
+          BUNDLE_SHA256: ${{ needs.release-image.outputs.chart_bundle_sha256 }}
+        run: |
+          if [[ ! "${FILE}" =~ ^protes-[0-9A-Za-z.+-]+\.tgz$ ]]; then
+              echo "::error::Invalid chart file name '${FILE}'"
+              exit 1
+          fi
+          if [[ ! "${SHA256}" =~ ^[0-9a-f]{64}$ ]]; then
+              echo "::error::Invalid chart checksum '${SHA256}'"
+              exit 1
+          fi
+          expected=("dist/${FILE}")
+          if [[ "${DRY_RUN}" != "true" ]]; then
+              if [[ ! "${BUNDLE_SHA256}" =~ ^[0-9a-f]{64}$ ]]; then
+                  echo "::error::Invalid chart bundle checksum '${BUNDLE_SHA256}'"
+                  exit 1
+              fi
+              expected+=("dist/${FILE}.sigstore.json")
+          fi
+          shopt -s nullglob dotglob
+          files=(dist/*)
+          if [[ "${#files[@]}" -ne "${#expected[@]}" ]]; then
+              echo "::error::Expected ${expected[*]} in dist/, found: ${files[*]}"
+              exit 1
+          fi
+          for i in "${!expected[@]}"; do
+              if [[ "${files[i]}" != "${expected[i]}" ]]; then
+                  echo "::error::Expected ${expected[*]} in dist/, found: ${files[*]}"
+                  exit 1
+              fi
+          done
+          echo "${SHA256}  dist/${FILE}" | sha256sum --check --strict
+          if [[ "${DRY_RUN}" != "true" ]]; then
+              echo "${BUNDLE_SHA256}  dist/${FILE}.sigstore.json" \
+                  | sha256sum --check --strict
+          fi
+      - name: Download local registry
+        if: github.event_name != 'push'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: registry
+          path: ${{ runner.temp }}/registry
+      # Dry runs: the registry on the runner, with the storage of `push`
+      # (in `push`, empty)
+      - name: Start local registry
+        if: github.event_name != 'push'
+        run: |
+          mkdir -p "${RUNNER_TEMP}/registry"
+          docker run --detach --name registry --publish 127.0.0.1:5000:5000 \
+              --volume "${RUNNER_TEMP}/registry:/var/lib/registry" "${REGISTRY_IMAGE}"
+          for _ in $(seq 30); do
+              curl --silent --fail http://localhost:5000/v2/ > /dev/null && exit 0
+              sleep 1
+          done
+          echo "::error::The local registry didn't start"
+          exit 1
+      # Dry runs: on the host network, to reach the registry on the runner
+      - name: Set up Docker Buildx
+        if: github.event_name != 'push'
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver-opts: network=host
+          buildkitd-config-inline: ${{ env.BUILDKITD_DRY_RUN }}
+      # Dry runs: as in `release-image` (keep the steps the same)
+      - name: Check whether this is the highest release
+        id: latest
+        if: github.event_name != 'push'
+        run: |
+          git fetch --quiet --force --tags origin \
+              "+refs/heads/main:refs/remotes/origin/main"
+          # The highest stable release among the tags on `main`, so that stray
+          # tags are ignored
+          git tag -l 'v*' --merged origin/main \
+              | python scripts/release_version.py latest "${TAG}" >> "${GITHUB_OUTPUT}"
+      - name: Tag image
+        if: github.event_name != 'push'
+        env:
+          LATEST: ${{ steps.latest.outputs.latest }}
+        run: |
+          tags=("${IMAGE_REF}:${VERSION}")
+          if [[ "${LATEST}" == "true" ]]; then
+              tags+=("${IMAGE_REF}:latest")
+          fi
+          for tag in "${tags[@]}"; do
+              docker buildx imagetools create --tag "${tag}" "${IMAGE_REF}@${DIGEST}"
+              actual="$(docker buildx imagetools inspect "${tag}" \
+                  --format '{{ json .Manifest }}' | jq -r .digest)"
+              if [[ "${actual}" != "${DIGEST}" ]]; then
+                  echo "::error::${tag} points to ${actual}, expected ${DIGEST}"
+                  exit 1
+              fi
+          done
       # GitHub's generated notes list the merged pull requests since the
       # previous release in the history of the release commit (see
       # `scripts/release_version.py`), or since the start for the first
@@ -701,7 +860,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          LATEST: ${{ steps.latest.outputs.latest }}
+          # Decided by `release-image` (dry runs: by this job)
+          LATEST: ${{ github.event_name == 'push' && needs.release-image.outputs.latest || steps.latest.outputs.latest }}
           PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
           PREVIOUS: ${{ steps.previous.outputs.previous_tag }}
         run: |
