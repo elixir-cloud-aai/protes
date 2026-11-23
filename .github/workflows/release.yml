@@ -466,7 +466,7 @@ jobs:
   # `chart-signature`. The only job with the signing identity
   # (`id-token: write`), so it runs for tag pushes only, in the `release`
   # environment, like the job that signs dev images in `ci.yml`
-  # (`publish`). Dry runs skip it, so that no run of a branch or pull
+  # (`Publish image`). Dry runs skip it, so that no run of a branch or pull
   # request gets the signing identity; `publish` tags their image in the
   # registry on the runner instead
   release-image:
@@ -476,13 +476,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # Docker Hub secrets (required reviewer)
-    environment: release
+    environment:
+      name: release
+      url: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ github.ref_name }}
     permissions:
       contents: read
       id-token: write # Sigstore signing certificates
       attestations: write # GitHub artifact attestations
     outputs:
-      latest: ${{ steps.latest.outputs.latest }}
       chart_bundle_sha256: ${{ steps.sign-chart.outputs.sha256 }}
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
@@ -605,8 +606,8 @@ jobs:
         run: cosign sign --yes "${IMAGE_REF}@${DIGEST}"
       # Decided last, from freshly fetched tags (the repository is public, so
       # no credentials are needed), so that neither a re-run of an older
-      # release nor a concurrent release moves `latest` back; `publish` marks
-      # the GitHub release as the latest by this decision too
+      # release nor a concurrent release moves `latest` back; `publish`
+      # decides again for the GitHub release, right before it creates it
       - name: Check whether this is the highest release
         id: latest
         run: |
@@ -791,10 +792,11 @@ jobs:
         with:
           driver-opts: network=host
           buildkitd-config-inline: ${{ env.BUILDKITD_DRY_RUN }}
-      # Dry runs: as in `release-image` (keep the steps the same)
+      # As in `release-image` (keep the steps the same), again right before
+      # the GitHub release is created, so that a re-run of this job alone
+      # decides from the current tags too
       - name: Check whether this is the highest release
         id: latest
-        if: github.event_name != 'push'
         run: |
           git fetch --quiet --force --tags origin \
               "+refs/heads/main:refs/remotes/origin/main"
@@ -860,8 +862,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          # Decided by `release-image` (dry runs: by this job)
-          LATEST: ${{ github.event_name == 'push' && needs.release-image.outputs.latest || steps.latest.outputs.latest }}
+          LATEST: ${{ steps.latest.outputs.latest }}
           PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
           PREVIOUS: ${{ steps.previous.outputs.previous_tag }}
         run: |

@@ -567,19 +567,19 @@ After approval in the `release` environment, it builds the image and pushes
 it by digest (untagged, with SBOM and provenance attestations) and checks
 that the app reports the release version; it then scans exactly that digest
 for vulnerabilities, in a job without credentials. After a second approval
-in the `release` environment (once the scan passed), it checks that the
-chart it downloads is the one it packaged (a single file with the name and
+in the `release` environment (once the scan passed), the job `release-image`
+checks that the chart it downloads is the one it packaged (a single file with the name and
 SHA-256 recorded when packaging; if not, the job fails before it attests,
 signs or tags anything), attests the build provenance of the scanned digest
 and signs it (see [Verifying images and
 charts](operations.md#verifying-images-and-charts)), tags exactly that image
 `X.Y.Z` (and `latest`, if it is the highest stable release on `main`),
-and attests and signs the chart. A last job, without credentials and
-signing identity (only permission to write the repository's contents),
-checks the chart and its Sigstore bundle again and creates a GitHub release
-with the chart (`.tgz`), its Sigstore bundle (`.tgz.sigstore.json`) and the
-release notes (see below). Releases are immutable (see the repository settings below):
-once published, their assets can't be added, replaced or deleted. The
+and attests and signs the chart. A last job, `publish`, without
+environment, credentials and signing identity (only permission to write the
+repository's contents), checks the chart and its Sigstore bundle again and
+creates a GitHub release with the chart (`.tgz`), its Sigstore bundle
+(`.tgz.sigstore.json`) and the release notes (see below). Releases are
+immutable (see the repository settings below): once published, their assets can't be added, replaced or deleted. The
 workflow therefore creates the release as a draft, uploads the assets and
 publishes it last. A re-run finishes a draft left by an earlier attempt; if
 the release is already published (e.g., by hand), it uploads nothing and
@@ -773,8 +773,8 @@ stays signed. Re-running only the failed jobs reuses the digest already
 pushed. Re-running all jobs also packages the chart again and replaces the
 chart artifact; the release checks the new chart against its new SHA-256.
 Once the GitHub release is published, re-running all jobs fails in
-`release-image` (step "Check release state") before it attests, signs or tags the
-new digest, so that `X.Y.Z` and `latest` keep pointing to the published
+`release-image` (step "Check release state") before it attests, signs or
+tags the new digest, so that `X.Y.Z` and `latest` keep pointing to the published
 image; re-running the failed jobs of a published release still passes, as
 it reuses the digest and the chart. Re-runs use the workflow of the tagged
 commit, so releases tagged before this step was added don't have it (check
@@ -830,8 +830,8 @@ generated notes are those of that release), with these differences:
 So a dry run tests the release workflow end to end except for the tag
 checks, the approvals, the Docker Hub login and the job `release-image`
 (attestations, signatures and the release state check before them), whose
-tagging and `latest` steps `publish` runs instead. Run one after every change to the release workflow and before
-tagging a release.
+tagging and `latest` steps `publish` runs instead. Run one after every
+change to the release workflow and before tagging a release.
 
 Runs for pull requests appear as checks of the pull request (they don't
 block merging) and run on its merge commit. The result is the run itself:

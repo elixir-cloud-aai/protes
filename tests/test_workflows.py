@@ -635,8 +635,10 @@ def test_release_chart_check_runs(
     ("dry_run", "bundle", "extra", "tamper", "bundle_sha256", "passes"),
     [
         pytest.param(False, True, None, False, None, True, id="release"),
+        pytest.param(False, True, None, "chart", None, False, id="tampered-chart"),
+        pytest.param(True, False, None, "chart", "", False, id="dry-run-tampered"),
         pytest.param(False, False, None, False, None, False, id="no-bundle"),
-        pytest.param(False, True, None, True, None, False, id="tampered-bundle"),
+        pytest.param(False, True, None, "bundle", None, False, id="tampered-bundle"),
         pytest.param(False, True, None, False, "", False, id="no-bundle-hash"),
         pytest.param(False, True, None, False, "abc", False, id="bad-bundle-hash"),
         pytest.param(False, True, "zzz", False, None, False, id="extra"),
@@ -652,7 +654,7 @@ def test_publish_chart_check_runs(
     dry_run: bool,
     bundle: bool,
     extra: str | None,
-    tamper: bool,
+    tamper: str | None,
     bundle_sha256: str | None,
     passes: bool,
 ) -> None:
@@ -667,7 +669,8 @@ def test_publish_chart_check_runs(
         dry_run: Whether the run is a dry run.
         bundle: Whether `dist/` holds the chart's bundle.
         extra: A file added to `dist/`, if any.
-        tamper: Whether the bundle is changed after `release-image` signed.
+        tamper: The file changed after `prepare` packaged the chart and
+            `release-image` signed it (`chart` or `bundle`), if any.
         bundle_sha256: The checksum output by `release-image` (that of the
             bundle if None).
         passes: Whether the check passes.
@@ -682,8 +685,10 @@ def test_publish_chart_check_runs(
     signature = dist / f"{CHART}.sigstore.json"
     signature.write_bytes(b"bundle")
     digest = hashlib.sha256(b"bundle").hexdigest()
-    if tamper:
+    if tamper == "bundle":
         signature.write_bytes(b"other bundle")
+    if tamper == "chart":
+        chart.write_bytes(b"other chart")
     if not bundle:
         signature.unlink()
     if extra:
@@ -934,7 +939,7 @@ def test_dry_run_environment() -> None:
     }
     assert set(environments) == {"push", "release-image"}
     assert environments["push"] == "${{ " + RELEASE + " && 'release' || '' }}"
-    assert environments["release-image"] == "release"
+    assert environments["release-image"]["name"] == "release"
     assert jobs["release-image"]["if"] == RELEASE
 
 
@@ -984,17 +989,20 @@ def test_dry_run_permissions() -> None:
         "contents": "write",
         "pull-requests": "read",
     }
-    for job_id in RELEASE_JOBS:
-        job = workflow["jobs"][job_id]
-        assert job["permissions"]["contents"] == "read", job_id
+    assert workflow["jobs"]["release-image"]["permissions"] == {
+        "contents": "read",
+        "id-token": "write",
+        "attestations": "write",
+    }
 
 
 def test_publish_after_release_image() -> None:
     """`publish` runs after `release-image`, or without it in dry runs only.
 
     `release-image` runs for tag pushes only, so `publish` needs a condition
-    to run when it was skipped; in releases it needs its success, and its
-    decision whether the release is the latest.
+    to run when it was skipped; in releases it needs its success. It
+    decides itself whether the release is the latest (also on a re-run of
+    `publish` alone), with the step of `release-image`.
     """
     publish = _load(WORKFLOWS / "release.yml")["jobs"]["publish"]
     assert publish["needs"] == ["prepare", "push", "scan", "release-image"]
@@ -1005,11 +1013,13 @@ def test_publish_after_release_image() -> None:
         " || (" + DRY_RUN + " && needs.release-image.result == 'skipped'))"
     )
     assert "environment" not in publish
-    latest = _release_steps("publish")["Create release"]["env"]["LATEST"]
-    assert latest == (
-        "${{ " + RELEASE + " && needs.release-image.outputs.latest"
-        " || steps.latest.outputs.latest }}"
+    steps = _release_steps("publish")
+    assert steps["Create release"]["env"]["LATEST"] == (
+        "${{ steps.latest.outputs.latest }}"
     )
+    latest = steps["Check whether this is the highest release"]
+    assert "if" not in latest
+    assert latest == _release_steps("release-image")[latest["name"]]
 
 
 @pytest.mark.parametrize(
@@ -1096,9 +1106,11 @@ def test_dry_run_image_ref() -> None:
     # Dry runs, which skip `release-image`, decide `latest` and tag the image
     # in `publish`, with the same steps
     publish = _release_steps("publish")
-    for name in ("Check whether this is the highest release", "Tag image"):
-        assert publish[name]["if"] == DRY_RUN, name
-        assert {**publish[name], "if": None} == {**release_image[name], "if": None}
+    assert publish["Tag image"]["if"] == DRY_RUN
+    assert {**publish["Tag image"], "if": None} == {
+        **release_image["Tag image"],
+        "if": None,
+    }
     names = list(publish)
     assert names.index("Start local registry") < names.index("Tag image")
     assert names.index("Tag image") < names.index("Create release")
