@@ -572,9 +572,9 @@ checks that the chart it downloads is the one it packaged (a single file with th
 SHA-256 recorded when packaging; if not, the job fails before it attests,
 signs or tags anything), attests the build provenance of the scanned digest
 and signs it (see [Verifying images and
-charts](operations.md#verifying-images-and-charts)), tags exactly that image
-`X.Y.Z` (and `latest`, if it is the highest stable release on `main`),
-and attests and signs the chart. A last job, `publish`, without
+charts](operations.md#verifying-images-and-charts)), attests and signs the
+chart, and only then tags exactly that image `X.Y.Z` (and `latest`, if it is
+the highest stable release on `main`). A last job, `publish`, without
 environment, credentials and signing identity (only permission to write the
 repository's contents), checks the chart and its Sigstore bundle again and
 creates a GitHub release with the chart (`.tgz`), its Sigstore bundle
@@ -790,7 +790,8 @@ The release workflow also runs as a dry run, without a tag and without
 publishing anything: on demand (`workflow_dispatch`, e.g., on the branch
 that prepares the release, right before tagging) and for pull requests from
 branches of this repository that change the release workflow, its scripts,
-`CITATION.cff` or `docs/releases/` (pull requests from forks skip it):
+`CITATION.cff`, `docs/releases/` or the chart (`deployment/`; pull requests
+from forks skip it):
 
 ```bash
 gh workflow run release.yml --repo elixir-cloud-aai/protes --ref <branch>

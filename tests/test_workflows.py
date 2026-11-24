@@ -466,6 +466,11 @@ def test_release_chart_checked() -> None:
     assert names.index("Check chart") < names.index("Attest chart provenance")
     assert names.index("Check chart") < names.index("Sign chart")
     assert names.index("Sign chart") < names.index("Upload chart signature")
+    # A failed chart signature leaves no tagged image without a signed chart
+    assert names.index("Upload chart signature") < names.index(
+        "Check whether this is the highest release"
+    )
+    assert names.index("Upload chart signature") < names.index("Tag image")
 
 
 def test_release_chart_signature_passed() -> None:
@@ -916,6 +921,7 @@ def test_release_triggers() -> None:
     assert "scripts/release_*.py" in paths
     assert "CITATION.cff" in paths
     assert "docs/releases/**" in paths
+    assert "deployment/**" in paths
     for path in paths:
         if "*" not in path:
             assert (ROOT / path).exists(), path
@@ -954,6 +960,9 @@ def test_dry_run_skips_release_steps() -> None:
         if job_id in RELEASE_JOBS:
             assert job["if"] == RELEASE, job_id
             continue
+        # Nothing that all steps of the job inherit
+        settings = {key: value for key, value in job.items() if key != "steps"}
+        assert "secrets." not in yaml.safe_dump(settings), job_id
         names = RELEASE_ONLY.get(job_id, [])
         steps = _release_steps(job_id)
         for name in names:
