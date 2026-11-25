@@ -56,7 +56,9 @@ tokens only. Tasks of service clients belong to `client:<client ID>`
 subject starts with `client:` (possible only with an issuer whose subjects
 are not namespaced) can no longer create tasks (`401`), also without service
 clients, as they couldn't be told apart from clients; check for tasks of
-such users before upgrading (see [Task owners](operations.md#task-owners)).
+such users before upgrading (see [Task owners](operations.md#task-owners));
+their earlier tasks and usage records keep their `user_id`, which usage and
+reports then count together with a service client of the same ID.
 
 **Execution reports (with accounting):** admins can now get the usage
 records as execution reports of the Tool Execution Report format of ELIXIR

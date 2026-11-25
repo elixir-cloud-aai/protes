@@ -519,13 +519,31 @@ def test_service_audience_only_for_service_tokens(
         lambda: make_headers(USER, claims={"aud": [AUDIENCE, CLIENT]}),
         # service tokens for a configured audience
         lambda: client_headers(audience=AUDIENCE),
+        # a client's own service token, also with other whitespace or case
+        client_headers,
+        lambda: {
+            "Authorization": client_headers()["Authorization"].replace(" ", "\t", 1)
+        },
+        lambda: {
+            "Authorization": client_headers()["Authorization"].replace(
+                "Bearer", "bearer", 1
+            )
+        },
     ],
-    ids=["user", "user via client", "user, both audiences", "client"],
+    ids=[
+        "user",
+        "user via client",
+        "user, both audiences",
+        "client",
+        "own audience",
+        "own audience, tab",
+        "own audience, lower case",
+    ],
 )
 def test_other_audiences_unchanged(
     service_client: FlaskClient, headers: Callable[[], dict[str, str]]
 ) -> None:
-    """Tokens for the other audiences are accepted as before.
+    """Tokens for the other audiences, and clients' own, are accepted.
 
     Tokens are made in the test (by `headers`), as they expire.
     """
