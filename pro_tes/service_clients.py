@@ -47,16 +47,13 @@ _CHALLENGE = (
 )
 
 
-def check_service_clients() -> bool:
+def check_service_clients() -> None:
     """Check the service clients on startup, and log them.
 
     Must be called in an app context. Without service clients (the default),
     only the header naming the users they act for is refused. With service
-    clients, the app checks the audience of each request's token (cf.
+    clients, the app also checks the audience of each request's token (cf.
     :py:func:`check_service_audience`).
-
-    Returns:
-        Whether there are service clients.
 
     Raises:
         RuntimeError: The header naming users (`on_behalf_of_header`) is set,
@@ -77,7 +74,7 @@ def check_service_clients() -> bool:
             " `security.auth.service_clients`"
         )
     if not auth.service_clients:
-        return False
+        return
     mapping = security.access_control.client_mapping or {}
     for client in auth.service_clients:
         if client.issuer is None:
@@ -107,11 +104,10 @@ def check_service_clients() -> bool:
             for client in auth.service_clients
         ),
     )
-    return True
 
 
 def _warn_missing_audiences(auth: AuthConfig) -> None:
-    """Warn of service clients whose ID is no accepted audience of its issuer.
+    """Warn of service clients whose ID is not an accepted audience of its issuer.
 
     Their service tokens are accepted only if they name another accepted
     audience, but identity providers may put only the client's own ID into
@@ -126,7 +122,7 @@ def _warn_missing_audiences(auth: AuthConfig) -> None:
     for client in auth.service_clients:
         if client.client_id not in (auth.get_audience(str(client.issuer)) or []):
             logger.warning(
-                "Service client %s is no accepted audience of its issuer"
+                "Service client %s is not an accepted audience of its issuer"
                 " (`security.auth.audience`): its tokens are accepted only for"
                 " the other audiences; add it if its identity provider puts"
                 " only its own client ID into `aud`",
@@ -210,6 +206,8 @@ def check_service_audience() -> None:
         " (%s), but no service token of that client",
         escape_log_value(", ".join(sorted(matched))),
     )
+    # FOCA's class, not Connexion's of `pro_tes.exceptions`, as it takes the
+    # challenge (`WWW-Authenticate`) as headers
     raise Unauthorized(
         "Token for the audience of a service client, but no service token of"
         " that client",

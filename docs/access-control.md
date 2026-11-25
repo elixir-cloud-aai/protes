@@ -143,7 +143,7 @@ Apps that run tasks for themselves, not for a user (e.g., a workflow engine
 with a client-credentials token of its own, or automated tests), can be
 allowed as service clients. This is off by default: without
 `security.auth.service_clients`, tokens of clients are handled as before,
-and their own client IDs are no accepted audience. Each allowed client is
+and their own client IDs are not accepted audiences. Each allowed client is
 listed explicitly, by its issuer and client ID, and gets the role `user`,
 e.g., for a client `my-engine` of the identity provider of the example
 below (see [Deployment settings](#deployment-settings)):

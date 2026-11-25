@@ -209,8 +209,8 @@ class Handler(BaseHTTPRequestHandler):
         """Issue an access token of a client (client credentials grant).
 
         Of proTES (`CLIENT_ID`), or of the service client
-        (`SERVICE_CLIENT_ID`), whose tokens are for its own audience, as LS
-        Login issues them. The client authenticates with HTTP Basic
+        (`SERVICE_CLIENT_ID`), whose tokens are for its own audience, as some
+        identity providers issue them. The client authenticates with HTTP Basic
         (`client_secret_basic`).
 
         Args:

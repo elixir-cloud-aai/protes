@@ -171,7 +171,7 @@ def test_default_no_service_clients() -> None:
     """Without service clients (the default), nothing changes.
 
     No request hook is added, and service tokens for their own audience are
-    rejected, as that is no accepted audience.
+    rejected, as that is not an accepted audience.
     """
     default = init_app()
     assert service_clients.check_service_audience not in [
@@ -276,7 +276,7 @@ def test_audience_warning(
     app_env: None,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """A warning names service clients whose ID is no accepted audience.
+    """A warning names service clients whose ID is not an accepted audience.
 
     The service clients are logged, too.
     """
@@ -288,7 +288,7 @@ def test_audience_warning(
         line for line in lines if "WARNING" in line and "Service client" in line
     ]
     assert len(warnings) == 1
-    assert f"Service client {OTHER_CLIENT} is no accepted audience" in warnings[0]
+    assert f"Service client {OTHER_CLIENT} is not an accepted audience" in warnings[0]
     assert any(
         f"{CLIENT} (issuer {ISSUER}), {OTHER_CLIENT} (issuer {ISSUER})" in line
         for line in lines
@@ -306,7 +306,7 @@ def test_no_audience_check(
         monkeypatch, tmp_path, service_overlay(audience=None, verify_audience=False)
     )
     init_app()
-    assert "is no accepted audience" not in capsys.readouterr().err
+    assert "is not an accepted audience" not in capsys.readouterr().err
 
 
 # Tasks of service clients

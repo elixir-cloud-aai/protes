@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 
 from connexion import FlaskApp
-from foca import Foca, get_collection
+from foca import Foca, get_collection, get_config
 
 from pro_tes.gateway import GATEWAY, add_plugin_listing
 from pro_tes.security import check_backends, check_task_ownership, check_user_groups
@@ -70,7 +70,8 @@ def init_app() -> FlaskApp:
         raise
     with app.app.app_context():
         check_task_ownership()
-        if check_service_clients():
+        check_service_clients()
+        if get_config().security.auth.service_clients:
             app.app.before_request(check_service_audience)
         check_user_groups()
         check_backends()
