@@ -145,6 +145,37 @@ check GET "/tasks/${id}" 403 '.status == 403'
 check POST "/tasks/${id}:cancel" 403 '.status == 403'
 auth="$(token admin)"
 check GET "/tasks/${id}" 403 '.status == 403'
+# A service client (`config.yaml`) creates a task with its own token, for its
+# own audience, and owns it; the task goes to the fake backend that requires
+# proTES' token, so proTES relays it with its own. Users and the client don't
+# see each other's tasks, and tokens of users for the client's audience are
+# rejected as invalid
+auth="$(docker compose exec -T fake-tes python -c \
+  "import base64, json, sys, urllib.request; \
+  sys.path.insert(0, '/smoke'); \
+  from fake_tes import SERVICE_CLIENT_ID as ID, SERVICE_CLIENT_SECRET as SECRET; \
+  basic = base64.b64encode(f'{ID}:{SECRET}'.encode()).decode(); \
+  request = urllib.request.Request('http://localhost:8080/oidc/token', \
+    data=b'grant_type=client_credentials', headers={'Authorization': f'Basic {basic}'}); \
+  print(json.load(urllib.request.urlopen(request))['access_token'])")"
+check POST /tasks 200 '.id | length > 0' \
+  '{"tags": {"fake.hold": "true", "gateway.backends":
+    "{\"type\": \"allow\", \"backends\": [\"http://fake-tes:8080\"]}"},
+    "executors": [{"image": "alpine", "command": ["true"]}]}'
+client_task="$(jq -r .id "${body}")"
+await_state "${client_task}" RUNNING
+check GET "/tasks/${client_task}?view=FULL" 200 \
+  '.tags["gateway.backend"] == "http://fake-tes:8080"'
+check GET '/tasks?view=MINIMAL' 200 \
+  "any(.tasks[]; .id == \"${client_task}\") and all(.tasks[]; .id != \"${id}\")"
+check GET "/tasks/${id}" 403 '.status == 403'
+check POST "/tasks/${client_task}:cancel" 200 '. == {}'
+await_state "${client_task}" CANCELED
+auth="$(token alice)"
+check GET '/tasks?view=MINIMAL' 200 "all(.tasks[]; .id != \"${client_task}\")"
+check GET "/tasks/${client_task}" 403 '.status == 403'
+auth="$(token 'alice&client_id=smoke-engine&aud=smoke-engine')"
+check GET /tasks 401 '.status == 401'
 # The fake backend got the task (and those of earlier runs, if not
 # restarted), with the access token of proTES (which it requires); listed
 # with a token of proTES' client
