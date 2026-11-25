@@ -12,16 +12,20 @@ images tagged by date, on FOCA 0.12 ([From versions before
 
 ## To version 0.7.0
 
-**Listing tasks without the role `user` (rules renamed):** the rule
+**Listing tasks without the role `user` (behaviour change, rules
+renamed):** `GET /tasks` is now allowed for every authenticated caller, also
+without a role (it shows only the caller's own tasks, so nothing of others
+becomes visible). The rule
 `users-create-list-tasks` is split into `users-create-tasks` (`POST /tasks`,
 role `user`) and `authenticated-list-tasks` (`GET /tasks`, any authenticated
 caller), so that owners who lost the role `user` (e.g., whose group
 membership was revoked) still list their tasks, as they could already read
 and cancel them; the list still shows only the caller's own tasks. If a
 config overlay of yours names `users-create-list-tasks`, rename it: a
-changed rule under the old name is added next to the new ones, and
-`users-create-list-tasks: null` no longer removes anything, so a deployment
-that removed it to stop task creation must set `users-create-tasks: null`
+changed rule under the old name is added next to the new ones (so it no
+longer restricts anything), and `users-create-list-tasks: null` makes
+proTES refuse to start (FOCA refuses to remove unknown rules): a deployment
+that removed it to stop task creation sets `users-create-tasks: null`
 instead. To keep listing for the role `user` only, set
 `authenticated-list-tasks: null` and add a rule of your own, e.g.,
 `users-list-tasks: [p, user, /ga4gh/tes/v1/tasks, (GET)|(HEAD)]`.
@@ -867,7 +871,8 @@ Remove the keys that had no effect from config overlays: all of
 
 API specifications (`api.specs`) and access control rules
 (`security.access_control.policies`) of the base config are named entries
-(the spec `tes`; rules `users-create-list-tasks`,
+(the spec `tes`; rules `users-create-list-tasks` (split in 0.7.0, see
+[To version 0.7.0](#to-version-070)),
 `owners-get-cancel-tasks`, `owners-get-provenance`, `admins-get-provenance`,
 `users-list-plugins`, `users-get-plugins`, `admins-list-add-permissions`
 and `admins-manage-permissions`), which overlays change by name (see

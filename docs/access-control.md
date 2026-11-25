@@ -57,10 +57,11 @@ tasks they create (see [Task ownership](#task-ownership)).
 The roles and their permissions are the policies of
 `security.access_control.policies` in the base config (see
 [FOCA's access control](https://foca.readthedocs.io/en/latest/access-control/)),
-named rules (`users-create-tasks`, `authenticated-list-tasks`, `owners-get-cancel-tasks`,
-`owners-get-provenance`, `admins-get-provenance`, `admins-get-usage`,
-`admins-get-usage-reports`, `users-list-plugins`, `users-get-plugins`,
-`admins-list-add-permissions` and `admins-manage-permissions`): a config
+named rules (`users-create-tasks`, `authenticated-list-tasks`,
+`owners-get-cancel-tasks`, `owners-get-provenance`, `admins-get-provenance`,
+`admins-get-usage`, `admins-get-usage-reports`, `users-list-plugins`,
+`users-get-plugins`, `admins-list-add-permissions` and
+`admins-manage-permissions`): a config
 overlay adds, changes or removes (`null`) single rules by name, e.g., rules
 that let only users list their tasks, and owners only read them:
 
@@ -73,6 +74,7 @@ security:
       owners-get-cancel-tasks: [p, owner, "/ga4gh/tes/v1/tasks/:id", (GET)|(HEAD)]
 ```
 
+(`users-list-tasks` is a name of your own; names only need to be unique.)
 The subject `"*"` of a rule (as in `authenticated-list-tasks`) stands for
 any authenticated caller.
 

@@ -138,8 +138,8 @@ def test_forbidden(client: FlaskClient, task_id: str, user: str) -> None:
     Nor read or cancel those of others. Errors are problem details. Listing
     is allowed, but shows only their own tasks (none here).
     """
-    operations = task_operations(task_id)
-    for method, path in [operations[0], *operations[2:]]:
+    listing = ("GET", f"{BASE_PATH}/tasks")
+    for method, path in [op for op in task_operations(task_id) if op != listing]:
         response = client.open(
             path, method=method, json=body(method, path), headers=make_headers(user)
         )
@@ -489,6 +489,7 @@ def test_named_policies(
     assert client.get(f"{BASE_PATH}/tasks/{task_id}").status_code == 403
 
 
+@pytest.mark.usefixtures("backend")
 def test_list_for_users_only(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -525,6 +526,68 @@ def test_list_for_users_only(
     path = f"{BASE_PATH}/tasks"
     assert client.get(path, headers=make_headers(OUTSIDER)).status_code == 403
     assert client.get(path, headers=make_headers(USER)).status_code == 200
+    response = client.post(path, json=TASK, headers=make_headers(USER))
+    assert response.status_code == 200
+
+
+@pytest.mark.usefixtures("backend")
+def test_old_rule_name_added(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    app_env: None,
+) -> None:
+    """A rule under the old name `users-create-list-tasks` is added.
+
+    As the upgrade notes say: next to the new rules, which it doesn't
+    replace, so users still create tasks and everyone lists their own.
+    """
+    overlay = tmp_path / "policies.yaml"
+    rule = ["p", "user", "/ga4gh/tes/v1/tasks", "(GET)|(HEAD)"]
+    overlay.write_text(
+        yaml.safe_dump(
+            {
+                "security": {
+                    "access_control": {"policies": {"users-create-list-tasks": rule}}
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    set_overlays(monkeypatch, overlay)
+    reset_gateway()
+    client = init_app().app.test_client()
+    path = f"{BASE_PATH}/tasks"
+    assert client.get(path, headers=make_headers(OUTSIDER)).status_code == 200
+    response = client.post(path, json=TASK, headers=make_headers(USER))
+    assert response.status_code == 200
+
+
+def test_old_rule_name_removed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    app_env: None,
+) -> None:
+    """Removing the old rule (`users-create-list-tasks: null`) stops startup.
+
+    FOCA refuses to remove unknown rules, so a deployment that removed the
+    old rule (e.g., to stop task creation) doesn't start with task creation
+    enabled again.
+    """
+    overlay = tmp_path / "policies.yaml"
+    overlay.write_text(
+        yaml.safe_dump(
+            {
+                "security": {
+                    "access_control": {"policies": {"users-create-list-tasks": None}}
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    set_overlays(monkeypatch, overlay)
+    reset_gateway()
+    with pytest.raises(ValueError, match="users-create-list-tasks"):
+        init_app()
 
 
 def test_public(anonymous_client: FlaskClient) -> None:
