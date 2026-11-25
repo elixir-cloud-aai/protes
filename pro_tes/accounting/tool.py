@@ -3,9 +3,10 @@
 The tool of a task is the image of its first executor: its name is the last
 component of the image repository (e.g., `samtools` of
 `quay.io/biocontainers/samtools:1.17--h00cdaf9_0`), its version the tag of
-the image. Its identifiers are those of the tags `biotools_id` (a bio.tools
-identifier) and `rrid` (an RRID of software, `SCR_<digits>`) of the task, if
-valid, and the image repository (`docker://<repository>`, without tag and
+the image, unless the reference has a digest (its tag is then unchecked).
+Its identifiers are those of the tags `biotools_id` (a bio.tools identifier)
+and `rrid` (an RRID of software, `SCR_<digits>`) of the task, if valid, and
+the image repository (`docker://<repository>`, without tag and
 digest). Nothing else of the task is kept: no commands, arguments,
 environment variables, inputs, outputs or other tags.
 """
@@ -53,7 +54,10 @@ def _image_tool(image: Any) -> dict[str, Any] | None:
     match = IMAGE_REFERENCE.fullmatch(image)
     if match is None or len(match["repository"]) > MAX_REPOSITORY_LENGTH:
         return None
-    tag = match["tag"]
+    # Container runtimes pull an image by its digest and ignore its tag
+    # then, so the tag of a reference with a digest is unchecked and may
+    # hold any text (e.g., the name of a user): it gives no version
+    tag = None if match["digest"] is not None else match["tag"]
     version = None if tag in (None, "latest") else tag
     package_version = None
     # BioContainers: `<version>--<build>`

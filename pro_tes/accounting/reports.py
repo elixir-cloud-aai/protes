@@ -243,7 +243,9 @@ def execution_reports(
         "attempts.0": {"$exists": True},
         # tasks that completed ran their image, which therefore exists (in
         # the trusted namespace): names and tags of images that don't exist
-        # (e.g., `ubuntu:<name of a user>`) are not reported
+        # (e.g., `ubuntu:<name of a user>`) are not reported; tags of
+        # references with a digest, which runtimes don't check, give no
+        # version (see `tool.py`)
         "state": COMPLETE,
         **finished_range(since, until),
     }
