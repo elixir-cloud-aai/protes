@@ -2036,12 +2036,15 @@ def test_task_owner_partly_granted(
     add_owner = ownership.add_owner
     granted: list[str] = []
 
-    def add_owner_once(resource: str, subject: str) -> None:
+    def add_owner_once(
+        resource: str, subject: str, subject_type: Literal["user", "client"]
+    ) -> None:
         """Grant the first owner role only.
 
         Args:
             resource: Resource of the role.
             subject: Owner.
+            subject_type: Type of the owner.
 
         Raises:
             pymongo.errors.PyMongoError: For the second role.
@@ -2049,7 +2052,7 @@ def test_task_owner_partly_granted(
         if granted:
             raise PyMongoError("unavailable")
         granted.append(resource)
-        add_owner(resource=resource, subject=subject)
+        add_owner(resource=resource, subject=subject, subject_type=subject_type)
 
     monkeypatch.setattr(ownership, "add_owner", add_owner_once)
     with app.app.test_request_context():

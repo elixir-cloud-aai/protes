@@ -30,10 +30,10 @@ def check_task_ownership() -> None:
 
     Owners are enforced by access control (cf.
     :py:mod:`pro_tes.ga4gh.tes.ownership`), so it must be enabled and
-    enforced. Tasks are owned by the users of the access tokens only, so
-    service clients are refused too, by FOCA's
-    :py:func:`foca.security.auth.require_no_service_clients`, which the app
-    calls on startup. Must be called in an app context.
+    enforced. Tasks are owned by the callers of their access tokens: users,
+    or service clients with their own tokens, which are checked separately
+    (cf. :py:func:`pro_tes.service_clients.check_service_clients`). Must be
+    called in an app context.
 
     Raises:
         RuntimeError: Access control is not enabled and enforced.
