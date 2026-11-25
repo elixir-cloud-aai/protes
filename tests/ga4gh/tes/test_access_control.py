@@ -535,12 +535,14 @@ def test_old_rule_name_refused(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     app_env: None,
+    mongo_client: MongoClient[dict[str, Any]],
 ) -> None:
     """A rule under the old name `users-create-list-tasks` stops startup.
 
     It would be added next to the new rules, not replace them: the overlay
     documented before 0.7.0 to stop task creation (listing only) would let
-    users create tasks again.
+    users create tasks again. Startup stops before any rule is stored, so
+    that running instances keep theirs.
     """
     overlay = tmp_path / "policies.yaml"
     rule = ["p", "user", "/ga4gh/tes/v1/tasks", "(GET)|(HEAD)"]
@@ -556,8 +558,27 @@ def test_old_rule_name_refused(
     )
     set_overlays(monkeypatch, overlay)
     reset_gateway()
+    stored = _stored(mongo_client)  # by the app of the fixture `backend`
     with pytest.raises(RuntimeError, match="was renamed to `users-create-tasks`"):
         init_app()
+    assert _stored(mongo_client) == stored
+
+
+def _stored(client: MongoClient[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Get all documents of all databases.
+
+    Args:
+        client: The MongoDB client.
+
+    Returns:
+        The documents.
+    """
+    return [
+        document
+        for name in client.list_database_names()
+        for collection in client[name].list_collection_names()
+        for document in client[name][collection].find()
+    ]
 
 
 def test_old_rule_name_removed(

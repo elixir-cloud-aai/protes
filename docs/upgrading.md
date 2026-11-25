@@ -22,7 +22,7 @@ caller), so that owners who lost the role `user` (e.g., whose group
 membership was revoked) still list their tasks, as they could already read
 and cancel them; the list still shows only the caller's own tasks. If a
 config overlay of yours names `users-create-list-tasks`, proTES refuses to
-start: a rule under the old name would be added next to the new ones, not
+start (before it stores any rule, so running instances keep theirs): a rule under the old name would be added next to the new ones, not
 change them, so the overlay that earlier versions documented to stop task
 creation (`users-create-list-tasks` with `(GET)|(HEAD)` only) would let
 users create tasks again. Rename it; to stop task creation, set

@@ -64,6 +64,8 @@ def init_app() -> FlaskApp:
         custom_config_model="pro_tes.config_models.CustomConfig",
         gateway=GATEWAY,
     )
+    # Before the app is created, which stores the rules for all instances
+    check_renamed_rules(foca.conf)
     add_plugin_listing(foca.conf)
     try:
         app = foca.create_app()
@@ -73,7 +75,6 @@ def init_app() -> FlaskApp:
     require_no_service_clients(app.app)
     with app.app.app_context():
         check_task_ownership()
-        check_renamed_rules()
         check_user_groups()
         check_backends()
         collection = get_collection(TASK_DB, TASK_COLLECTION)

@@ -4,6 +4,7 @@ import logging
 import os
 
 from foca import get_config, get_custom_config
+from foca.models.config import Config
 from foca.plugins.backends import BackendList, RegistryEntry, ServiceEntry
 
 from pro_tes.config_models import CustomConfig, Tes
@@ -52,18 +53,22 @@ RENAMED_RULES = {
 }
 
 
-def check_renamed_rules() -> None:
+def check_renamed_rules(config: Config) -> None:
     """Refuse rules under the names of rules that were renamed.
 
     A config overlay that names a renamed rule would add it next to the new
     rules, not change them: e.g., the overlay documented before 0.7.0 to
     stop task creation (`users-create-list-tasks` for listing only) would
-    let users create tasks again. Must be called in an app context.
+    let users create tasks again. Must be called before the app is created,
+    which stores the rules in the database for all instances.
+
+    Args:
+        config: The app's config.
 
     Raises:
         RuntimeError: A rule has the name of a renamed rule.
     """
-    policies = get_config().security.access_control.named_policies or {}
+    policies = config.security.access_control.named_policies or {}
     for old, new in RENAMED_RULES.items():
         if old in policies:
             raise RuntimeError(

@@ -226,7 +226,8 @@ or upgrade:
   and an invalid token get `401`, a user with the role `user` lists tasks
   and plugins, unknown tasks are forbidden, and, with `OTHER_TOKEN`, a user
   without a role lists tasks (only her own, if any) and gets `403` for
-  plugins. It creates no tasks. The smoke test runs its
+  plugins (set `OTHER_LISTS=false` if your deployment lists tasks for the
+  role `user` only; then she gets `403` for the listing too). It creates no tasks. The smoke test runs its
   access checks against the Compose stack, over plain HTTP
   (`ALLOW_HTTP=true`); the HTTPS checks run only against deployments.
 - `tests/integration/check.sh`, the check of CI's integration jobs, runs
