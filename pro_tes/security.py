@@ -47,6 +47,33 @@ def check_task_ownership() -> None:
         )
 
 
+RENAMED_RULES = {
+    "users-create-list-tasks": "users-create-tasks` and `authenticated-list-tasks",
+}
+
+
+def check_renamed_rules() -> None:
+    """Refuse rules under the names of rules that were renamed.
+
+    A config overlay that names a renamed rule would add it next to the new
+    rules, not change them: e.g., the overlay documented before 0.7.0 to
+    stop task creation (`users-create-list-tasks` for listing only) would
+    let users create tasks again. Must be called in an app context.
+
+    Raises:
+        RuntimeError: A rule has the name of a renamed rule.
+    """
+    policies = get_config().security.access_control.named_policies or {}
+    for old, new in RENAMED_RULES.items():
+        if old in policies:
+            raise RuntimeError(
+                f"Access control rule `{old}` was renamed to `{new}` in "
+                "proTES 0.7.0, so a rule under the old name would be added "
+                "next to them, not change them: rename it in your config "
+                "(see the upgrade notes of 0.7.0 in `docs/upgrading.md`)"
+            )
+
+
 def check_user_groups() -> None:
     """Log the groups mapped to the role `user`, or warn if there are none.
 

@@ -531,15 +531,16 @@ def test_list_for_users_only(
 
 
 @pytest.mark.usefixtures("backend")
-def test_old_rule_name_added(
+def test_old_rule_name_refused(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     app_env: None,
 ) -> None:
-    """A rule under the old name `users-create-list-tasks` is added.
+    """A rule under the old name `users-create-list-tasks` stops startup.
 
-    As the upgrade notes say: next to the new rules, which it doesn't
-    replace, so users still create tasks and everyone lists their own.
+    It would be added next to the new rules, not replace them: the overlay
+    documented before 0.7.0 to stop task creation (listing only) would let
+    users create tasks again.
     """
     overlay = tmp_path / "policies.yaml"
     rule = ["p", "user", "/ga4gh/tes/v1/tasks", "(GET)|(HEAD)"]
@@ -555,11 +556,8 @@ def test_old_rule_name_added(
     )
     set_overlays(monkeypatch, overlay)
     reset_gateway()
-    client = init_app().app.test_client()
-    path = f"{BASE_PATH}/tasks"
-    assert client.get(path, headers=make_headers(OUTSIDER)).status_code == 200
-    response = client.post(path, json=TASK, headers=make_headers(USER))
-    assert response.status_code == 200
+    with pytest.raises(RuntimeError, match="was renamed to `users-create-tasks`"):
+        init_app()
 
 
 def test_old_rule_name_removed(

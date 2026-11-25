@@ -21,14 +21,19 @@ role `user`) and `authenticated-list-tasks` (`GET /tasks`, any authenticated
 caller), so that owners who lost the role `user` (e.g., whose group
 membership was revoked) still list their tasks, as they could already read
 and cancel them; the list still shows only the caller's own tasks. If a
-config overlay of yours names `users-create-list-tasks`, rename it: a
-changed rule under the old name is added next to the new ones (so it no
-longer restricts anything), and `users-create-list-tasks: null` makes
-proTES refuse to start (FOCA refuses to remove unknown rules): a deployment
-that removed it to stop task creation sets `users-create-tasks: null`
-instead. To keep listing for the role `user` only, set
+config overlay of yours names `users-create-list-tasks`, proTES refuses to
+start: a rule under the old name would be added next to the new ones, not
+change them, so the overlay that earlier versions documented to stop task
+creation (`users-create-list-tasks` with `(GET)|(HEAD)` only) would let
+users create tasks again. Rename it; to stop task creation, set
+`users-create-tasks: null`. To keep listing for the role `user` only, set
 `authenticated-list-tasks: null` and add a rule of your own, e.g.,
-`users-list-tasks: [p, user, /ga4gh/tes/v1/tasks, (GET)|(HEAD)]`.
+`users-list-tasks: [p, user, /ga4gh/tes/v1/tasks, (GET)|(HEAD)]`. Every
+token that your identity providers issue for proTES now reaches the task
+listing, which costs more than a refusal (see
+[Task ownership](access-control.md#task-ownership)): with a broad identity
+provider, limit request rates at the ingress, or list for the role `user`
+only as above.
 
 **Tokens per TES instance (optional):** proTES can request an access token
 of its own for each TES instance, so that TES instances (also those

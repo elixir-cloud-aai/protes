@@ -89,7 +89,10 @@ claim set in `security.access_control.claim_identity`) becomes its owner:
 
 - `GET /tasks` lists only the tasks of the caller, also for admins, and is
   allowed for every authenticated caller (rule `authenticated-list-tasks`),
-  so that former users still find their tasks;
+  so that former users still find their tasks (also everyone else whom
+  your identity providers issue tokens for proTES, who see an empty list;
+  set `authenticated-list-tasks: null` and add a rule for the role `user`
+  to refuse them, see [Roles](#roles));
 - `GET /tasks/{id}` and `POST /tasks/{id}:cancel` are allowed for the owner
   only; everyone else gets `403 Forbidden`, also admins and for unknown
   tasks, so that responses don't tell which tasks exist. The owner gets
@@ -130,6 +133,8 @@ Each task adds two rules, and FOCA loads all rules on each request (and
 creating or listing tasks loads them a few more times), so the time of each
 request grows with the number of tasks (see FOCA's notes on
 [scaling](https://foca.readthedocs.io/en/latest/access-control/#scaling)).
+As every authenticated caller may list tasks, limit request rates at the
+ingress if your identity providers issue tokens for proTES to many people.
 
 Ownership is taken from the caller's own token only: proTES doesn't support
 service clients, also acting for users, yet, and refuses to start if

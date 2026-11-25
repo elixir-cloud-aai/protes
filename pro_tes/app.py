@@ -8,7 +8,12 @@ from foca import Foca, get_collection
 from foca.security.auth import require_no_service_clients
 
 from pro_tes.gateway import GATEWAY, add_plugin_listing
-from pro_tes.security import check_backends, check_task_ownership, check_user_groups
+from pro_tes.security import (
+    check_backends,
+    check_renamed_rules,
+    check_task_ownership,
+    check_user_groups,
+)
 from pro_tes.utils.db import (
     TASK_COLLECTION,
     TASK_DB,
@@ -68,6 +73,7 @@ def init_app() -> FlaskApp:
     require_no_service_clients(app.app)
     with app.app.app_context():
         check_task_ownership()
+        check_renamed_rules()
         check_user_groups()
         check_backends()
         collection = get_collection(TASK_DB, TASK_COLLECTION)
