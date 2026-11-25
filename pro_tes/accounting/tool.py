@@ -35,6 +35,8 @@ BIOTOOLS_ID = re.compile(r"[A-Za-z0-9_~-][A-Za-z0-9._~-]{0,99}", re.ASCII)
 RRID = re.compile(r"(?:RRID:)?(?P<id>SCR_[0-9]{1,12})", re.ASCII)
 BIOTOOLS_IRI = "https://bio.tools/{}"
 RRID_IRI = "https://identifiers.org/RRID/RRID:{}"
+# Identifier of the image repository of a tool
+IMAGE_IRI = "docker://{}"
 # Tags of tasks that are read, and the start of the IRIs they give (to
 # tell, in reports, which tag an identifier came from)
 IdentifierTag = Literal["biotools_id", "rrid"]
@@ -91,7 +93,7 @@ def _image_tool(image: Any) -> dict[str, Any] | None:
         "repository": match["repository"],
         "version": version,
         "package_version": package_version,
-        "identifiers": [f"docker://{match['repository']}"],
+        "identifiers": [IMAGE_IRI.format(match["repository"])],
     }
 
 

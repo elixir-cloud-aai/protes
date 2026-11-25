@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from pro_tes.accounting.tool import task_tool
+from pro_tes.accounting.tool import identifier_tag, task_tool
 
 
 def _task(image: Any, tags: Any = None) -> dict[str, Any]:
@@ -154,3 +154,18 @@ def test_tool_identifiers_of_invalid_tags(tags: Any) -> None:
     tool = task_tool(_task("bwa", tags))
     assert tool is not None
     assert tool["identifiers"] == ["docker://bwa"]
+
+
+@pytest.mark.parametrize(
+    ("identifier", "tag"),
+    [
+        ("https://bio.tools/bwa", "biotools_id"),
+        ("https://identifiers.org/RRID/RRID:SCR_010910", "rrid"),
+        ("docker://quay.io/biocontainers/bwa", None),
+        ("https://bio.tools", None),
+        ("bwa", None),
+    ],
+)
+def test_identifier_tag(identifier: str, tag: str | None) -> None:
+    """Identifiers from tags of tasks are told apart by the start of their IRIs."""
+    assert identifier_tag(identifier) == tag

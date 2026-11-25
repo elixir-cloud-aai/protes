@@ -31,7 +31,7 @@ from pymongo.collection import Collection
 
 from pro_tes.accounting.config import ExecutionReports, canonical_image
 from pro_tes.accounting.report import finished_range
-from pro_tes.accounting.tool import identifier_tag
+from pro_tes.accounting.tool import IMAGE_IRI, identifier_tag
 
 # Version of the report format (`report_format_version`); the schema in
 # `tests/accounting/data` must be of the same version (cf. its `.license`
@@ -163,6 +163,27 @@ def trusted_image(repository: Any, images: list[str]) -> bool:
     )
 
 
+def _reported_identifier(identifier: Any, config: ExecutionReports) -> bool:
+    """Tell whether an identifier of a recorded tool is reported.
+
+    Only the identifier of the image and those of the tags of tasks listed
+    in `tags` are reported; anything else (e.g., of another tag, or no
+    string) is not.
+
+    Args:
+        identifier: Identifier of the tool, as recorded.
+        config: Settings of the reports.
+
+    Returns:
+        Whether the identifier is reported.
+    """
+    if not isinstance(identifier, str):
+        return False
+    if identifier.startswith(IMAGE_IRI.format("")):
+        return True
+    return identifier_tag(identifier) in config.tags
+
+
 def _reports(record: dict[str, Any], config: ExecutionReports) -> list[dict[str, Any]]:
     """Get the reports of a record, one per attempt.
 
@@ -181,7 +202,7 @@ def _reports(record: dict[str, Any], config: ExecutionReports) -> list[dict[str,
         "tool_identifier": [
             identifier
             for identifier in tool["identifiers"]
-            if identifier_tag(identifier) in (None, *config.tags)
+            if _reported_identifier(identifier, config)
         ],
         "tool_name": tool["name"],
     }

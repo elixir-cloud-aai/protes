@@ -541,6 +541,33 @@ def test_reports_tag_identifiers(
     assert report["tool_identifier"] == identifiers
 
 
+def test_reports_unknown_identifiers(usage: Collection[dict[str, Any]]) -> None:
+    """Recorded identifiers of no listed tag and not of the image are not reported.
+
+    E.g., of other tags or forms of IRIs, or no strings.
+    """
+    add(usage)
+    usage.update_one(
+        {},
+        {
+            "$set": {
+                "tool.identifiers": [
+                    "http://bio.tools/alice",
+                    "https://example.org/alice",
+                    42,
+                    "https://bio.tools/bwa",
+                    "docker://quay.io/biocontainers/bwa",
+                ]
+            }
+        },
+    )
+    (report,) = execution_reports(usage, ExecutionReports())
+    assert report["tool_identifier"] == [
+        "https://bio.tools/bwa",
+        "docker://quay.io/biocontainers/bwa",
+    ]
+
+
 def test_config_tags() -> None:
     """By default, identifiers of the tags `biotools_id` and `rrid` are reported."""
     assert ExecutionReports().tags == ["biotools_id", "rrid"]

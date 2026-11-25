@@ -275,8 +275,9 @@ name users, so only tasks whose image is in a trusted namespace are reported
 (`custom.accounting.reports.images`; by default Docker Hub's official images
 and BioContainers, see [Execution
 reports](configuration.md#execution-reports)). The tool identifier tags
-(`biotools_id`, `rrid`) are reported as the task sets them, if valid; they
-are meant for tool identifiers only. Only tasks that completed (`COMPLETE`)
+(`biotools_id`, `rrid`) are reported as the task sets them, if valid and
+listed in `custom.accounting.reports.tags`; they are meant for tool
+identifiers only. Only tasks that completed (`COMPLETE`)
 are reported: their images exist, so names and tags of images that don't
 (e.g., `ubuntu:<user name>`, which fail) are never reported. Tasks in other
 final states, tasks of other images, tasks whose first
