@@ -176,6 +176,10 @@ check GET '/tasks?view=MINIMAL' 200 "all(.tasks[]; .id != \"${client_task}\")"
 check GET "/tasks/${client_task}" 403 '.status == 403'
 auth="$(token 'alice&client_id=smoke-engine&aud=smoke-engine')"
 check GET /tasks 401 '.status == 401'
+# ... by proTES, not by the identity provider: the same user's token of the
+# client for proTES' audience is accepted
+auth="$(token 'alice&client_id=smoke-engine')"
+check GET '/tasks?view=MINIMAL' 200 "all(.tasks[]; .id != \"${client_task}\")"
 # The fake backend got the task (and those of earlier runs, if not
 # restarted), with the access token of proTES (which it requires); listed
 # with a token of proTES' client

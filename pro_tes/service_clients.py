@@ -173,10 +173,12 @@ def check_service_audience() -> None:
             `invalid_token` challenge, without the reason.
     """
     authorization = current_request().headers.get("Authorization", "")
-    scheme, _, token = authorization.partition(" ")
-    token = token.strip()
-    if scheme.lower() != "bearer" or not token:
+    # Split at any whitespace, as Connexion and FOCA do, so that this check
+    # sees each token that they validate
+    parts = authorization.split(None, 1)
+    if len(parts) != 2 or parts[0].lower() != "bearer":
         return
+    token = parts[1].strip()
     try:
         # Read only to reject (see above); FOCA verifies the token
         # nosemgrep: jwt-decode-without-verification

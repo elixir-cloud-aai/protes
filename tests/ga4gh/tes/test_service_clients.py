@@ -450,8 +450,27 @@ def test_owner_of_client(
         client_headers(client_id="other-app", audience=CLIENT),
         # a user's token for the audience of a service client
         make_headers(USER, audience=CLIENT),
+        # the same, with other whitespace after the scheme, as FOCA and
+        # Connexion split the header at any whitespace
+        *(
+            {"Authorization": f"Bearer{space}{make_token(USER, audience=CLIENT)}"}
+            for space in ("\t", "  ", "\xa0", "\x85", "\x0b", "\x1f")
+        ),
+        {"Authorization": f"bearer {make_token(USER, audience=CLIENT)}"},
     ],
-    ids=["user via client", "other client", "unknown client", "user"],
+    ids=[
+        "user via client",
+        "other client",
+        "unknown client",
+        "user",
+        "tab",
+        "two spaces",
+        "no-break space",
+        "next line",
+        "vertical tab",
+        "unit separator",
+        "lower case",
+    ],
 )
 @pytest.mark.parametrize(
     "method, path",
@@ -463,7 +482,11 @@ def test_owner_of_client(
     ],
 )
 def test_service_audience_only_for_service_tokens(
-    service_client: FlaskClient, headers: dict[str, str], method: str, path: str
+    service_client: FlaskClient,
+    headers: dict[str, str],
+    method: str,
+    path: str,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """The audience of a service client is accepted for its own tokens only.
 
@@ -476,6 +499,8 @@ def test_service_audience_only_for_service_tokens(
     assert response.status_code == 401
     assert 'error="invalid_token"' in response.headers["WWW-Authenticate"]
     assert response.get_json()["status"] == 401
+    # rejected by the hook, not by the user info (any audience) or FOCA
+    assert "Token rejected: accepted only for the audience" in caplog.text
 
 
 @pytest.mark.usefixtures("backend")

@@ -98,8 +98,10 @@ clients](access-control.md#service-clients) belong to `client:<client ID>`
 ```js
 // tasks of a user
 db.tasks.find({ user_id: "<sub>" }, { "task.id": 1, "task.state": 1 })
-// tasks of a service client
+// tasks of a service client (or, before 0.7.0, of a user whose subject
+// starts with `client:`)
 db.tasks.find({ user_id: "client:<client ID>" }, { "task.id": 1, "task.state": 1 })
+db.tasks.find({ user_id: /^client:/ }, { user_id: 1, "task.id": 1 })
 // tasks without owner, e.g., created by earlier versions (not tombstones)
 db.tasks.find(
   { user_id: { $exists: false }, deleted_at: { $exists: false } },

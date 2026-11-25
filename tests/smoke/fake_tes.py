@@ -173,7 +173,11 @@ class Handler(BaseHTTPRequestHandler):
             token = (self.headers.get("Authorization") or "").removeprefix("Bearer ")
             try:
                 claims = jwt.decode(
-                    token, KEY.public_key(), algorithms=["RS256"], audience=AUDIENCE
+                    token,
+                    KEY.public_key(),
+                    algorithms=["RS256"],
+                    # any audience, as identity providers' user info endpoints do
+                    options={"verify_aud": False},
                 )
             except jwt.InvalidTokenError:
                 self._send(HTTPStatus.UNAUTHORIZED, {"error": "invalid_token"})
