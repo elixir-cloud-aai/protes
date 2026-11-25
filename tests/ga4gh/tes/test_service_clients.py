@@ -7,6 +7,7 @@ issue client-credentials tokens: with the client ID as `client_id`, `sub` and
 TES backends are faked (cf. :py:class:`tests.ga4gh.tes.conftest.FakeBackend`).
 """
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -443,20 +444,22 @@ def test_owner_of_client(
     "headers",
     [
         # a user's token obtained by the client, e.g., by token exchange
-        client_headers(sub=USER),
+        lambda: client_headers(sub=USER),
         # a service token for the audience of another service client
-        client_headers(audience=OTHER_CLIENT),
+        lambda: client_headers(audience=OTHER_CLIENT),
         # a service token of a client that is not a service client
-        client_headers(client_id="other-app", audience=CLIENT),
+        lambda: client_headers(client_id="other-app", audience=CLIENT),
         # a user's token for the audience of a service client
-        make_headers(USER, audience=CLIENT),
+        lambda: make_headers(USER, audience=CLIENT),
         # the same, with other whitespace after the scheme, as FOCA and
         # Connexion split the header at any whitespace
         *(
-            {"Authorization": f"Bearer{space}{make_token(USER, audience=CLIENT)}"}
+            lambda space=space: {
+                "Authorization": f"Bearer{space}{make_token(USER, audience=CLIENT)}"
+            }
             for space in ("\t", "  ", "\xa0", "\x85", "\x0b", "\x1f")
         ),
-        {"Authorization": f"bearer {make_token(USER, audience=CLIENT)}"},
+        lambda: {"Authorization": f"bearer {make_token(USER, audience=CLIENT)}"},
     ],
     ids=[
         "user via client",
@@ -483,7 +486,7 @@ def test_owner_of_client(
 )
 def test_service_audience_only_for_service_tokens(
     service_client: FlaskClient,
-    headers: dict[str, str],
+    headers: Callable[[], dict[str, str]],
     method: str,
     path: str,
     caplog: pytest.LogCaptureFixture,
@@ -494,7 +497,10 @@ def test_service_audience_only_for_service_tokens(
     `invalid_token` challenge) on all endpoints, before any other check.
     """
     response = service_client.open(
-        path, method=method, headers=headers, json=TASK if method == "POST" else None
+        path,
+        method=method,
+        headers=headers(),
+        json=TASK if method == "POST" else None,
     )
     assert response.status_code == 401
     assert 'error="invalid_token"' in response.headers["WWW-Authenticate"]
@@ -508,19 +514,22 @@ def test_service_audience_only_for_service_tokens(
     "headers",
     [
         # users' tokens for a configured audience, also obtained by a client
-        make_headers(USER),
-        make_headers(USER, claims={"client_id": CLIENT}),
-        make_headers(USER, claims={"aud": [AUDIENCE, CLIENT]}),
+        lambda: make_headers(USER),
+        lambda: make_headers(USER, claims={"client_id": CLIENT}),
+        lambda: make_headers(USER, claims={"aud": [AUDIENCE, CLIENT]}),
         # service tokens for a configured audience
-        client_headers(audience=AUDIENCE),
+        lambda: client_headers(audience=AUDIENCE),
     ],
     ids=["user", "user via client", "user, both audiences", "client"],
 )
 def test_other_audiences_unchanged(
-    service_client: FlaskClient, headers: dict[str, str]
+    service_client: FlaskClient, headers: Callable[[], dict[str, str]]
 ) -> None:
-    """Tokens for the other audiences are accepted as before."""
-    response = service_client.get(f"{BASE_PATH}/tasks", headers=headers)
+    """Tokens for the other audiences are accepted as before.
+
+    Tokens are made in the test (by `headers`), as they expire.
+    """
+    response = service_client.get(f"{BASE_PATH}/tasks", headers=headers())
     assert response.status_code == 200
 
 
