@@ -5,6 +5,8 @@ from typing import Annotated
 from foca.utils.urls import normalize_url
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
+from pro_tes.accounting.tool import TAG_KEYS, IdentifierTag
+
 # IRIs (RFC 3987): a scheme, then characters that IRIs may have (no spaces,
 # controls or delimiters such as `<` and `"`); not fully checked
 IRI_PATTERN = r"^[A-Za-z][A-Za-z0-9+.-]*:[^\s<>\"{}|\\^`\x00-\x1f\x7f]+$"
@@ -173,6 +175,10 @@ class ExecutionReports(ReportModel):
             images are `library`; not a registry alone. By default, Docker
             Hub's official images and BioContainers (on Docker Hub and
             Quay).
+        tags: Tags of tasks whose values are reported as identifiers of the
+            tool (`tool_identifier`), if valid; values of tags that are not
+            listed are not reported. By default, `biotools_id` and `rrid`
+            (the only ones known).
 
     Attributes:
         max_records: Maximum number of records of a request for reports.
@@ -181,6 +187,7 @@ class ExecutionReports(ReportModel):
         backends: TES instances, by normalized URL.
         images: Trusted namespaces of images, in canonical form (cf.
             :py:func:`canonical_image`, e.g., `docker.io/library`).
+        tags: Tags of tasks whose values are reported as identifiers.
     """
 
     max_records: Annotated[int, Field(gt=0, le=1000000)] = 10000
@@ -191,6 +198,7 @@ class ExecutionReports(ReportModel):
         default=["library", "biocontainers", "quay.io/biocontainers"],
         validate_default=True,
     )
+    tags: list[IdentifierTag] = list(TAG_KEYS)
 
     @field_validator("images")
     @classmethod

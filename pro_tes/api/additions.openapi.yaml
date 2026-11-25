@@ -284,7 +284,8 @@ components:
             type: string
           description: >-
             Identifiers of the tool (IRIs): of the tags `biotools_id` and
-            `rrid` of the task, and the repository of the image of its first
+            `rrid` of the task, if listed in `custom.accounting.reports.tags`
+            (by default both), and the repository of the image of its first
             executor (`docker://<repository>`).
         tool_name:
           type: string

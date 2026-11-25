@@ -15,8 +15,9 @@ task identifiers, commands, arguments, environment variables, URLs or paths
 of inputs and outputs, or other tags; the records hold none of these but the
 owner and the task identifier, which are not read. The tags `biotools_id`
 and `rrid`, which the user who creates a task chooses, give identifiers of
-the tool if they match the patterns of such identifiers; they are not looked
-up. Only tasks that completed, of images in trusted namespaces
+the tool if they match the patterns of such identifiers (they are not looked
+up), and only if they are listed in `custom.accounting.reports.tags`. Only
+tasks that completed, of images in trusted namespaces
 (`custom.accounting.reports.images`, e.g., BioContainers), are reported, as
 image names and tags in other namespaces (e.g., personal ones), or of images
 that don't exist, may name users.
@@ -30,6 +31,7 @@ from pymongo.collection import Collection
 
 from pro_tes.accounting.config import ExecutionReports, canonical_image
 from pro_tes.accounting.report import finished_range
+from pro_tes.accounting.tool import identifier_tag
 
 # Version of the report format (`report_format_version`); the schema in
 # `tests/accounting/data` must be of the same version (cf. its `.license`
@@ -176,7 +178,11 @@ def _reports(record: dict[str, Any], config: ExecutionReports) -> list[dict[str,
         return []
     common: dict[str, Any] = {
         "report_format_version": REPORT_FORMAT_VERSION,
-        "tool_identifier": list(tool["identifiers"]),
+        "tool_identifier": [
+            identifier
+            for identifier in tool["identifiers"]
+            if identifier_tag(identifier) in (None, *config.tags)
+        ],
         "tool_name": tool["name"],
     }
     for field in ("version", "package_version"):

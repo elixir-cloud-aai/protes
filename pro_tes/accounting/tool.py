@@ -12,7 +12,7 @@ environment variables, inputs, outputs or other tags.
 """
 
 import re
-from typing import Any
+from typing import Any, Literal, get_args
 
 # Image references (cf. the grammar of the Distribution project,
 # https://github.com/distribution/reference): an optional registry (host and
@@ -35,8 +35,30 @@ BIOTOOLS_ID = re.compile(r"[A-Za-z0-9_~-][A-Za-z0-9._~-]{0,99}", re.ASCII)
 RRID = re.compile(r"(?:RRID:)?(?P<id>SCR_[0-9]{1,12})", re.ASCII)
 BIOTOOLS_IRI = "https://bio.tools/{}"
 RRID_IRI = "https://identifiers.org/RRID/RRID:{}"
-# Tags of tasks that are read
-TAG_KEYS = ("biotools_id", "rrid")
+# Tags of tasks that are read, and the start of the IRIs they give (to
+# tell, in reports, which tag an identifier came from)
+IdentifierTag = Literal["biotools_id", "rrid"]
+TAG_KEYS: tuple[IdentifierTag, ...] = get_args(IdentifierTag)
+TAG_IRIS: dict[IdentifierTag, str] = {
+    "biotools_id": BIOTOOLS_IRI.format(""),
+    "rrid": RRID_IRI.format(""),
+}
+
+
+def identifier_tag(identifier: str) -> IdentifierTag | None:
+    """Get the tag of tasks that an identifier of a tool came from.
+
+    Args:
+        identifier: Identifier (IRI) of a tool, as recorded.
+
+    Returns:
+        The tag (cf. :py:data:`TAG_KEYS`) whose IRIs the identifier starts
+        with; `None` for other identifiers (e.g., of the image).
+    """
+    for tag, prefix in TAG_IRIS.items():
+        if identifier.startswith(prefix):
+            return tag
+    return None
 
 
 def _image_tool(image: Any) -> dict[str, Any] | None:

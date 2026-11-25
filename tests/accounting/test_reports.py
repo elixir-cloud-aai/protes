@@ -118,6 +118,7 @@ def add(
     cpu_cores: Any = 2,
     backend: str = BACKEND,
     state: str = "COMPLETE",
+    tags: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Store the record of a task with personal data and details.
 
@@ -131,6 +132,8 @@ def add(
         cpu_cores: Requested CPU cores.
         backend: URL of its TES instance.
         state: Final state of the task.
+        tags: Tags of the task; by default, a bio.tools identifier and a
+            tag with personal data.
 
     Returns:
         The record.
@@ -166,7 +169,11 @@ def add(
                 }
             ],
             "inputs": [{"url": "s3://bucket/alice-input.fq", "path": "/data/alice.fq"}],
-            "tags": {"biotools_id": "bwa", "project": "alice-project"},
+            "tags": (
+                {"biotools_id": "bwa", "project": "alice-project"}
+                if tags is None
+                else tags
+            ),
         },
     }
     record = usage_record(
@@ -495,8 +502,56 @@ def test_reports_configured(usage: Collection[dict[str, Any]]) -> None:
 
 
 @pytest.mark.parametrize(
+    ("tags", "identifiers"),
+    [
+        (
+            None,
+            [
+                "https://bio.tools/bwa",
+                "https://identifiers.org/RRID/RRID:SCR_010910",
+                "docker://quay.io/biocontainers/bwa",
+            ],
+        ),
+        (
+            ["rrid"],
+            [
+                "https://identifiers.org/RRID/RRID:SCR_010910",
+                "docker://quay.io/biocontainers/bwa",
+            ],
+        ),
+        (
+            ["biotools_id"],
+            ["https://bio.tools/bwa", "docker://quay.io/biocontainers/bwa"],
+        ),
+        ([], ["docker://quay.io/biocontainers/bwa"]),
+    ],
+)
+def test_reports_tag_identifiers(
+    usage: Collection[dict[str, Any]], tags: list[str] | None, identifiers: list[str]
+) -> None:
+    """Identifiers from tags of tasks are reported for the listed tags only.
+
+    By default, those of `biotools_id` and `rrid`; the identifier of the
+    image is always reported. The list applies to tasks recorded before.
+    """
+    add(usage, tags={"biotools_id": "bwa", "rrid": "SCR_010910"})
+    config = ExecutionReports.model_validate({} if tags is None else {"tags": tags})
+    (report,) = execution_reports(usage, config)
+    validate([report])
+    assert report["tool_identifier"] == identifiers
+
+
+def test_config_tags() -> None:
+    """By default, identifiers of the tags `biotools_id` and `rrid` are reported."""
+    assert ExecutionReports().tags == ["biotools_id", "rrid"]
+
+
+@pytest.mark.parametrize(
     "config",
     [
+        {"tags": ["project"]},
+        {"tags": "biotools_id"},
+        {"tags": [None]},
         {"max_records": 0},
         {"infra": [{"infra_name": "X", "infra_identifier": []}]},
         {"infra": [{"infra_name": "X", "infra_identifier": ["no iri"]}]},

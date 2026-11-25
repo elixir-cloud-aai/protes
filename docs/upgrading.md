@@ -60,7 +60,8 @@ Compute, version 0.0.2, without personal data (`GET /usage/reports`, see
 for deployments without accounting. With accounting, the records of tasks that
 finish from now on also hold the tool of the task (from the image of its
 first executor, without version if the image is given with a digest, and
-its tags `biotools_id` and `rrid`), the times and total
+its tags `biotools_id` and `rrid`, which are reported only while listed in
+`custom.accounting.reports.tags`, by default both), the times and total
 output size of each attempt, and the version of proTES; records of earlier
 tasks give no reports. Only tasks that completed, of images in trusted
 namespaces, are reported (by default Docker Hub's official images and BioContainers). To
