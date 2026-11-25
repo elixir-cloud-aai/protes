@@ -198,6 +198,16 @@ tokens: other tokens whose only accepted audiences are IDs of service
 clients are rejected on all endpoints (`401`, with an `invalid_token`
 challenge). Tokens for the other audiences are not affected.
 
+**Groups.** Service tokens with groups (in the group claim,
+`claim_groups`) are rejected likewise (`401`), also without audience
+validation, as the roles of their groups (`group_mapping`) would be added
+to the role `user` of the client, e.g., `admin`; proTES logs a warning
+naming the client and the claim. Many identity providers put no groups into
+client-credentials tokens, and proTES doesn't request user info for them.
+Where they do (e.g., for groups of a client's service account), remove the
+groups from the client's tokens at the identity provider (its group
+memberships or the mapper of the claim) before listing the client.
+
 proTES refuses to start if a service client has no explicit `issuer` (client
 IDs are unique per issuer only), isn't mapped to the role `user` or is
 mapped to another role, may act for users (`on_behalf_of`), or is proTES'

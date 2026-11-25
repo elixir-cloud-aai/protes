@@ -16,6 +16,8 @@ service tokens, so deployments accept that ID as an audience
 client (e.g., tokens of users obtained by it, by login or token exchange),
 the audience of a service client is accepted for that client's own service
 tokens only (cf. :py:func:`check_service_audience`), on all endpoints.
+Service tokens with groups are rejected, so that groups grant service
+clients no other roles.
 
 Clients acting for users (`on_behalf_of`) are not supported: tasks belong to
 the caller of their token, and token exchange (RFC 8693) is the way to pass
@@ -24,12 +26,13 @@ users on to proTES.
 
 import logging
 import os
-from typing import Any
+from typing import Any, NoReturn
 
 from foca import get_config
 from foca.context import current_request
 from foca.errors import Unauthorized
 from foca.models.config import AuthConfig
+from foca.security.access_control import get_claim_groups
 from foca.security.auth import get_service_client
 from foca.utils.logging import escape_log_value
 import jwt
@@ -167,10 +170,17 @@ def check_service_audience() -> None:
     issuer are left to FOCA, too, and audiences are not checked at all
     without audience validation (`security.auth.verify_audience`).
 
+    Service tokens of service clients with groups (the issuer's group claim,
+    cf. :py:func:`foca.security.access_control.get_claim_groups`) are
+    rejected, too, also without audience validation: FOCA would add the
+    roles of their groups (`security.access_control.group_mapping`) to the
+    role `user` of the client.
+
     Raises:
         foca.errors.Unauthorized: The token names only audiences of service
-            clients, but is not the service token of that client; with an
-            `invalid_token` challenge, without the reason.
+            clients, but is not the service token of that client, or is a
+            service token with groups; with an `invalid_token` challenge,
+            without the reason.
     """
     authorization = current_request().headers.get("Authorization", "")
     # Split at any whitespace, as Connexion and FOCA do, so that this check
@@ -191,9 +201,22 @@ def check_service_audience() -> None:
         return
     auth = get_config().security.auth
     issuer = claims.get("iss")
-    if not auth.verify_audience or not isinstance(issuer, str):
+    if not isinstance(issuer, str) or issuer not in auth.issuer_urls:
         return
-    if issuer not in auth.issuer_urls:
+    service_client = get_service_client(claims=claims, conf=auth)
+    claim = _group_claim(claims, issuer)
+    if service_client is not None and claim is not None:
+        # Names the client and the claim (config), not the token or groups
+        logger.warning(
+            "Token rejected: service token of a service client with groups,"
+            " which would grant it roles beyond '%s'; remove the groups"
+            " (claim '%s') from the service tokens of client %s",
+            ROLE,
+            escape_log_value(claim),
+            escape_log_value(service_client.client_id),
+        )
+        _reject("Service token with groups")
+    if not auth.verify_audience:
         return
     matched = _audiences(claims) & set(auth.get_audience(issuer) or [])
     clients = {client.client_id for client in auth.service_clients}
@@ -208,10 +231,47 @@ def check_service_audience() -> None:
         " (%s), but no service token of that client",
         escape_log_value(", ".join(sorted(matched))),
     )
+    _reject(
+        "Token for the audience of a service client, but no service token of"
+        " that client"
+    )
+
+
+def _group_claim(claims: dict[str, Any], issuer: str) -> str | None:
+    """Get the group claim of a token, if it has groups.
+
+    FOCA requests no user info for service tokens, so their groups are
+    those of the token. They are read as FOCA reads them (cf.
+    :py:func:`foca.security.access_control.get_current_group_values`): a
+    string, also an empty one, is one group; a list or tuple, its values.
+
+    Args:
+        claims: Claims of the token.
+        issuer: Issuer of the token.
+
+    Returns:
+        The group claim of the issuer (cf.
+        :py:func:`foca.security.access_control.get_claim_groups`), if the
+        token has groups in it; otherwise `None`.
+    """
+    claim = get_claim_groups(issuer)
+    if claim is None:
+        return None
+    values = claims.get(claim)
+    if isinstance(values, str) or (isinstance(values, (list, tuple)) and values):
+        return claim
+    return None
+
+
+def _reject(description: str) -> NoReturn:
+    """Reject the token of the current request as invalid.
+
+    Args:
+        description: Description of the error.
+
+    Raises:
+        foca.errors.Unauthorized: Always, with an `invalid_token` challenge.
+    """
     # FOCA's class, not Connexion's of `pro_tes.exceptions`, as it takes the
     # challenge (`WWW-Authenticate`) as headers
-    raise Unauthorized(
-        "Token for the audience of a service client, but no service token of"
-        " that client",
-        headers={"WWW-Authenticate": _CHALLENGE},
-    )
+    raise Unauthorized(description, headers={"WWW-Authenticate": _CHALLENGE})

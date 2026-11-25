@@ -14,6 +14,7 @@ from typing import Any
 from connexion import FlaskApp
 from flask.testing import FlaskClient
 from foca import get_config
+from foca.errors import Unauthorized as FocaUnauthorized
 from pymongo import MongoClient
 import pytest
 import yaml
@@ -25,6 +26,7 @@ from pro_tes.ga4gh.tes import ownership
 from pro_tes.ga4gh.tes.backends import CLIENT_ID_ENV
 from tests.conftest import (
     ADMIN,
+    ADMIN_GROUP,
     AUDIENCE,
     DB,
     GROUPS,
@@ -210,6 +212,15 @@ def test_hook_registered(service_app: FlaskApp) -> None:
         (
             service_overlay(
                 service_clients=[
+                    {"client_id": CLIENT, "issuer": ISSUER, "on_behalf_of": True},
+                    {"client_id": OTHER_CLIENT, "issuer": ISSUER},
+                ],
+            ),
+            "act for users",
+        ),
+        (
+            service_overlay(
+                service_clients=[
                     {"client_id": CLIENT},
                     {"client_id": OTHER_CLIENT, "issuer": ISSUER},
                 ]
@@ -239,7 +250,14 @@ def test_hook_registered(service_app: FlaskApp) -> None:
             "role 'user'",
         ),
     ],
-    ids=["header", "on behalf of", "no issuer", "no role", "admin"],
+    ids=[
+        "header",
+        "on behalf of, with header",
+        "on behalf of",
+        "no issuer",
+        "no role",
+        "admin",
+    ],
 )
 def test_refused(
     monkeypatch: pytest.MonkeyPatch,
@@ -584,4 +602,85 @@ def test_audience_check_without_audience_validation(
     headers = client_headers(sub=USER)
     with app.app.test_request_context(headers=headers):
         assert get_config().security.auth.verify_audience is False
+        service_clients.check_service_audience()
+
+
+@pytest.mark.usefixtures("backend")
+@pytest.mark.parametrize(
+    "groups",
+    [[ADMIN_GROUP], ADMIN_GROUP, [USER_GROUP], ["other-group"], "", [""]],
+    ids=["admin", "admin as string", "user", "unmapped", "empty string", "empty"],
+)
+@pytest.mark.parametrize(
+    "method, path",
+    [
+        ("GET", f"{BASE_PATH}/tasks"),
+        ("POST", f"{BASE_PATH}/tasks"),
+        ("GET", "/admin/access-control/permissions"),
+        ("GET", "/usage"),
+    ],
+)
+def test_service_token_with_groups(
+    service_client: FlaskClient,
+    groups: str | list[str],
+    method: str,
+    path: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Service tokens with groups are rejected, so that groups grant no roles.
+
+    FOCA adds the roles of a token's groups (`group_mapping`) to the role of
+    a service client, but service clients get the role `user` only.
+    """
+    response = service_client.open(
+        path,
+        method=method,
+        headers=client_headers(groups=groups),
+        json=TASK if method == "POST" else None,
+    )
+    assert response.status_code == 401
+    assert 'error="invalid_token"' in response.headers["WWW-Authenticate"]
+    assert "Token rejected: service token of a service client with groups" in (
+        caplog.text
+    )
+
+
+@pytest.mark.usefixtures("backend")
+@pytest.mark.parametrize("groups", [[], None, 42], ids=["empty list", "null", "number"])
+def test_service_token_with_empty_groups(
+    service_client: FlaskClient, groups: list[str] | int | None
+) -> None:
+    """Service tokens whose group claim has no groups for FOCA are accepted."""
+    response = service_client.get(
+        f"{BASE_PATH}/tasks", headers=client_headers(groups=groups)
+    )
+    assert response.status_code == 200
+
+
+def test_groups_check_without_audience_validation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, app_env: None
+) -> None:
+    """Without audience validation, service tokens with groups are rejected."""
+    use_overlay(
+        monkeypatch, tmp_path, service_overlay(audience=None, verify_audience=False)
+    )
+    app = init_app()
+    headers = client_headers(groups=[ADMIN_GROUP])
+    with (
+        app.app.test_request_context(headers=headers),
+        pytest.raises(FocaUnauthorized),
+    ):
+        service_clients.check_service_audience()
+
+
+def test_groups_check_without_group_claim(
+    service_app: FlaskApp, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without a group claim of the issuer, service tokens have no groups.
+
+    E.g., with an empty `claim_groups` of the issuer.
+    """
+    monkeypatch.setattr(service_clients, "get_claim_groups", lambda issuer: None)
+    headers = client_headers(groups=[ADMIN_GROUP])
+    with service_app.app.test_request_context(headers=headers):
         service_clients.check_service_audience()
