@@ -12,6 +12,20 @@ images tagged by date, on FOCA 0.12 ([From versions before
 
 ## To version 0.7.0
 
+**Listing tasks without the role `user` (rules renamed):** the rule
+`users-create-list-tasks` is split into `users-create-tasks` (`POST /tasks`,
+role `user`) and `authenticated-list-tasks` (`GET /tasks`, any authenticated
+caller), so that owners who lost the role `user` (e.g., whose group
+membership was revoked) still list their tasks, as they could already read
+and cancel them; the list still shows only the caller's own tasks. If a
+config overlay of yours names `users-create-list-tasks`, rename it: a
+changed rule under the old name is added next to the new ones, and
+`users-create-list-tasks: null` no longer removes anything, so a deployment
+that removed it to stop task creation must set `users-create-tasks: null`
+instead. To keep listing for the role `user` only, set
+`authenticated-list-tasks: null` and add a rule of your own, e.g.,
+`users-list-tasks: [p, user, /ga4gh/tes/v1/tasks, (GET)|(HEAD)]`.
+
 **Tokens per TES instance (optional):** proTES can request an access token
 of its own for each TES instance, so that TES instances (also those
 discovered in service registries) can't use their tokens at each other.

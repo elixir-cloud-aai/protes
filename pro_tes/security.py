@@ -50,7 +50,7 @@ def check_task_ownership() -> None:
 def check_user_groups() -> None:
     """Log the groups mapped to the role `user`, or warn if there are none.
 
-    Nobody can create or list tasks without such groups. FOCA checks the
+    Nobody can create tasks without such groups. FOCA checks the
     groups of the role `admin` (`security.access_control.require_admin`) and
     that groups are only mapped with a group claim (`claim_groups`). Must be
     called in an app context.
@@ -61,7 +61,7 @@ def check_user_groups() -> None:
         logger.info("Groups mapped to the role 'user': %s", ", ".join(users))
     else:
         logger.warning(
-            "No group is mapped to the role 'user', so nobody can create or list tasks"
+            "No group is mapped to the role 'user', so nobody can create tasks"
         )
 
 

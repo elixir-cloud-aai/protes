@@ -41,7 +41,8 @@ options](https://foca.readthedocs.io/en/latest/configuration/auth/)).
 
 | Role | May |
 | --- | --- |
-| `user` | create tasks, and list their own (`POST /tasks`, `GET /tasks`) |
+| `user` | create tasks (`POST /tasks`) |
+| any authenticated caller | list their own tasks (`GET /tasks`), also without a role |
 | `owner` (of a task) | read and cancel the task (`GET /tasks/{id}`, `POST /tasks/{id}:cancel`) |
 | `admin` | manage the access control rules ([permissions API](#permissions-api)), and get the resources that tasks used per user ([Usage](api.md#usage)) and as execution reports ([Execution reports](api.md#execution-reports)); not the tasks of others |
 
@@ -56,20 +57,24 @@ tasks they create (see [Task ownership](#task-ownership)).
 The roles and their permissions are the policies of
 `security.access_control.policies` in the base config (see
 [FOCA's access control](https://foca.readthedocs.io/en/latest/access-control/)),
-named rules (`users-create-list-tasks`, `owners-get-cancel-tasks`,
+named rules (`users-create-tasks`, `authenticated-list-tasks`, `owners-get-cancel-tasks`,
 `owners-get-provenance`, `admins-get-provenance`, `admins-get-usage`,
 `admins-get-usage-reports`, `users-list-plugins`, `users-get-plugins`,
 `admins-list-add-permissions` and `admins-manage-permissions`): a config
 overlay adds, changes or removes (`null`) single rules by name, e.g., rules
-that let users only list their tasks, and owners only read them:
+that let only users list their tasks, and owners only read them:
 
 ```yaml
 security:
   access_control:
     policies:
-      users-create-list-tasks: [p, user, /ga4gh/tes/v1/tasks, (GET)|(HEAD)]
+      authenticated-list-tasks: null
+      users-list-tasks: [p, user, /ga4gh/tes/v1/tasks, (GET)|(HEAD)]
       owners-get-cancel-tasks: [p, owner, "/ga4gh/tes/v1/tasks/:id", (GET)|(HEAD)]
 ```
+
+The subject `"*"` of a rule (as in `authenticated-list-tasks`) stands for
+any authenticated caller.
 
 The access control model of proTES (`pro_tes/access_control/model.conf`)
 differs from FOCA's reference model in that the role `admin` may not do
@@ -80,7 +85,9 @@ everything: admins only have the rights that rules give them.
 The user who creates a task (the `sub` claim of the access token, or the
 claim set in `security.access_control.claim_identity`) becomes its owner:
 
-- `GET /tasks` lists only the tasks of the caller, also for admins;
+- `GET /tasks` lists only the tasks of the caller, also for admins, and is
+  allowed for every authenticated caller (rule `authenticated-list-tasks`),
+  so that former users still find their tasks;
 - `GET /tasks/{id}` and `POST /tasks/{id}:cancel` are allowed for the owner
   only; everyone else gets `403 Forbidden`, also admins and for unknown
   tasks, so that responses don't tell which tasks exist. The owner gets
@@ -102,8 +109,9 @@ claim set in `security.access_control.claim_identity`) becomes its owner:
 Tasks are not shared with other users, and admins can't read or cancel the
 tasks of others through the API: tasks and their logs may hold sensitive
 data, and users' entitlements to access data can't be passed on to others.
-Owners keep access to their tasks if they lose the role `user`, but can't
-create or list tasks then.
+Owners keep access to their tasks if they lose the role `user` (e.g., when
+their group membership is revoked): they still list, read and cancel them,
+but can't create tasks then.
 
 Owners are stored as resource-scoped roles of FOCA (`g2` rules in the
 collection `policy_rules`) on the task and on its cancellation, e.g., for

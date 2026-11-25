@@ -133,17 +133,19 @@ def test_allowed(client: FlaskClient, task_id: str) -> None:
 
 @pytest.mark.parametrize("user", [OUTSIDER, ADMIN])
 def test_forbidden(client: FlaskClient, task_id: str, user: str) -> None:
-    """Users without the role `user`, also admins, can't use tasks (`403`).
+    """Users without the role `user`, also admins, can't create tasks (`403`).
 
-    They can't create or list tasks, nor read or cancel those of others.
-    Errors are problem details.
+    Nor read or cancel those of others. Errors are problem details. Listing
+    is allowed, but shows only their own tasks (none here).
     """
-    for method, path in task_operations(task_id):
+    operations = task_operations(task_id)
+    for method, path in [operations[0], *operations[2:]]:
         response = client.open(
             path, method=method, json=body(method, path), headers=make_headers(user)
         )
         assert response.status_code == 403, (method, path)
         assert response.get_json()["status"] == 403
+    assert list_ids(client, user) == []
 
 
 @pytest.mark.parametrize("user", [OTHER_USER, ADMIN_USER])
@@ -164,7 +166,8 @@ def test_owner_without_role(
 ) -> None:
     """Owners keep access to their tasks without the role `user`.
 
-    But they can't create or list tasks.
+    They read, cancel and list them (as former members, whose group was
+    revoked), but can't create tasks.
     """
     # the owner roles are given to a user without role (as for an owner who
     # left the groups with the role `user`)
@@ -175,11 +178,9 @@ def test_owner_without_role(
     for method, path in task_item_operations(task_id):
         response = client.open(path, method=method, headers=headers)
         assert response.status_code == 200, (method, path)
-    for method, path in task_operations(task_id)[:2]:
-        response = client.open(
-            path, method=method, json=body(method, path), headers=headers
-        )
-        assert response.status_code == 403, (method, path)
+    assert list_ids(client, OUTSIDER) == [task_id]
+    response = client.post(f"{BASE_PATH}/tasks", json=TASK, headers=headers)
+    assert response.status_code == 403
 
 
 def test_admin_grants_owner(client: FlaskClient, task_id: str) -> None:
@@ -486,6 +487,44 @@ def test_named_policies(
     assert client.get(f"{BASE_PATH}/tasks").status_code == 200
     task_id = response.get_json()["id"]
     assert client.get(f"{BASE_PATH}/tasks/{task_id}").status_code == 403
+
+
+def test_list_for_users_only(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    app_env: None,
+) -> None:
+    """The overlay of the docs keeps listing for the role `user` only.
+
+    Callers without the role then get `403` on `GET /tasks`, users `200`.
+    """
+    overlay = tmp_path / "policies.yaml"
+    overlay.write_text(
+        yaml.safe_dump(
+            {
+                "security": {
+                    "access_control": {
+                        "policies": {
+                            "authenticated-list-tasks": None,
+                            "users-list-tasks": [
+                                "p",
+                                "user",
+                                "/ga4gh/tes/v1/tasks",
+                                "(GET)|(HEAD)",
+                            ],
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    set_overlays(monkeypatch, overlay)
+    reset_gateway()
+    client = init_app().app.test_client()
+    path = f"{BASE_PATH}/tasks"
+    assert client.get(path, headers=make_headers(OUTSIDER)).status_code == 403
+    assert client.get(path, headers=make_headers(USER)).status_code == 200
 
 
 def test_public(anonymous_client: FlaskClient) -> None:

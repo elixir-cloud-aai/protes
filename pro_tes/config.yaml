@@ -55,9 +55,10 @@ security:
     # clients:
     #   - my-portal-client-id
     issuers: []
-  # Access control: users (the role `user`) may create tasks, and list their
-  # own; the user creating a task becomes its owner, and only owners may read
-  # and cancel a task. Admins (the role `admin`) may only use the permissions
+  # Access control: users (the role `user`) may create tasks; every
+  # authenticated caller may list their own; the user creating a task becomes
+  # its owner, and only owners may read and cancel a task, also after losing
+  # the role `user`. Admins (the role `admin`) may only use the permissions
   # API, read the provenance of tasks and the usage per user, not the tasks of
   # others. Roles are given to groups of the identity provider (values of the
   # claim `claim_groups`) by `group_mapping`, e.g.:
@@ -81,8 +82,11 @@ security:
     # the permissions API. Named, so that overlays can change, add or remove
     # single rules by name (`null` removes a rule)
     policies:
-      # `GET` lists the tasks of the user only
-      users-create-list-tasks: [p, user, /ga4gh/tes/v1/tasks, (GET)|(HEAD)|(POST)]
+      # Only users create tasks
+      users-create-tasks: [p, user, /ga4gh/tes/v1/tasks, (POST)]
+      # Every authenticated caller lists their own tasks only (the list is
+      # filtered by owner), also after losing the role `user`
+      authenticated-list-tasks: [p, "*", /ga4gh/tes/v1/tasks, (GET)|(HEAD)]
       # `POST` is cancellation (`/tasks/{id}:cancel`)
       owners-get-cancel-tasks: [p, owner, "/ga4gh/tes/v1/tasks/:id", (GET)|(HEAD)|(POST)]
       # the provenance of a task, also for admins (no inputs or logs)
