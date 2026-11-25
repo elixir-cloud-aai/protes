@@ -91,11 +91,15 @@ the collection `tasks`, and as owner roles (`g2` rules) in the collection
 `policy_rules`. Owners are subjects (`sub` claims) of the users' access
 tokens; with several trusted issuers, they are namespaced by issuer
 (`<issuer>|<sub>`, or the issuer's `namespace`; bare for an issuer with
-`namespace: ""`), so `<sub>` below stands for that form:
+`namespace: ""`), so `<sub>` below stands for that form. Tasks of [service
+clients](access-control.md#service-clients) belong to `client:<client ID>`
+(`user_id`, and `v0` of their owner roles):
 
 ```js
 // tasks of a user
 db.tasks.find({ user_id: "<sub>" }, { "task.id": 1, "task.state": 1 })
+// tasks of a service client
+db.tasks.find({ user_id: "client:<client ID>" }, { "task.id": 1, "task.state": 1 })
 // tasks without owner, e.g., created by earlier versions (not tombstones)
 db.tasks.find(
   { user_id: { $exists: false }, deleted_at: { $exists: false } },
