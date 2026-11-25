@@ -157,6 +157,30 @@ def test_record_for_reports() -> None:
     ]
 
 
+def test_record_for_reports_digest() -> None:
+    """Records hold no version of images given with a digest.
+
+    Container runtimes pull such images by digest and don't check the tag,
+    which could hold any text (e.g., the name of a user).
+    """
+    document = {
+        "user_id": "alice@example.org",
+        "task": {
+            "id": "TASK01",
+            "executors": [
+                {
+                    "image": f"quay.io/biocontainers/bwa:alice--1@sha256:{'a' * 64}",
+                    "command": ["bwa"],
+                }
+            ],
+        },
+    }
+    usage = record([tes.TaskLog(start_time=START)], document=document)
+    assert usage["tool"]["version"] is None
+    assert usage["tool"]["package_version"] is None
+    assert "alice" not in repr(usage["tool"])
+
+
 @pytest.mark.parametrize(
     ("log", "start", "end"),
     [

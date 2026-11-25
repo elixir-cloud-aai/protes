@@ -13,8 +13,10 @@ rounded.
 Reports hold no personal data and no details of tasks: no user identifiers,
 task identifiers, commands, arguments, environment variables, URLs or paths
 of inputs and outputs, or other tags; the records hold none of these but the
-owner and the task identifier, which are not read. Only tasks that
-completed, of images in trusted namespaces
+owner and the task identifier, which are not read. The tags `biotools_id`
+and `rrid`, which the user who creates a task chooses, give identifiers of
+the tool if they match the patterns of such identifiers; they are not looked
+up. Only tasks that completed, of images in trusted namespaces
 (`custom.accounting.reports.images`, e.g., BioContainers), are reported, as
 image names and tags in other namespaces (e.g., personal ones), or of images
 that don't exist, may name users.

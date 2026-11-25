@@ -810,8 +810,9 @@ owner of the task (`user_id`, as in the task document, see [Task
 owners](operations.md#task-owners)), the task identifier, the URL of the TES
 instance, the final state, the times, the requested resources and the
 products above, and, for [execution reports](#execution-reports), the tool
-(name, version and identifiers, from the image of the first executor and the
-tags `biotools_id` and `rrid` of the task), the start, end and total size of
+(name, version and identifiers, from the image of the first executor, with
+no version if it is given with a digest, and the tags `biotools_id` and
+`rrid` of the task), the start, end and total size of
 the outputs of each attempt (task log), and the version of proTES; nothing
 else of the task (no commands, environment variables, URLs or paths of inputs
 and outputs, or other tags). The records are kept when tasks

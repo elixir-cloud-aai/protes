@@ -52,10 +52,9 @@ def test_tool_of_image(
     """The tool is the last component of the image repository, its tag the version.
 
     Tags of BioContainers (`<version>--<build>`) give the version and the
-    package version; `latest` and digests give no version, also with a tag
-    (the tag of an image pulled by digest is not checked by container
-    runtimes, so it may hold any text). The identifier is
-    the repository of the image, without tag and digest.
+    package version; `latest` and references with a digest give no version,
+    also with a tag. The identifier is the repository of the image, without
+    tag and digest.
     """
     assert task_tool(_task(image)) == {
         "name": repository.rsplit("/", 1)[-1],
