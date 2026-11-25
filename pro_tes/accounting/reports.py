@@ -197,13 +197,18 @@ def _reports(record: dict[str, Any], config: ExecutionReports) -> list[dict[str,
     tool = record["tool"]
     if not trusted_image(tool.get("repository"), config.images):
         return []
+    identifiers = [
+        identifier
+        for identifier in tool["identifiers"]
+        if _reported_identifier(identifier, config)
+    ]
+    # the report format requires an identifier (records of proTES always
+    # have that of the image)
+    if not identifiers:
+        return []
     common: dict[str, Any] = {
         "report_format_version": REPORT_FORMAT_VERSION,
-        "tool_identifier": [
-            identifier
-            for identifier in tool["identifiers"]
-            if _reported_identifier(identifier, config)
-        ],
+        "tool_identifier": identifiers,
         "tool_name": tool["name"],
     }
     for field in ("version", "package_version"):

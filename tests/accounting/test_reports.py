@@ -568,6 +568,19 @@ def test_reports_unknown_identifiers(usage: Collection[dict[str, Any]]) -> None:
     ]
 
 
+def test_reports_without_reported_identifiers(
+    usage: Collection[dict[str, Any]],
+) -> None:
+    """Records without any reported identifier of their tool give no reports.
+
+    The report format requires one; records of proTES always have that of
+    the image.
+    """
+    add(usage)
+    usage.update_one({}, {"$set": {"tool.identifiers": ["https://bio.tools/bwa"]}})
+    assert execution_reports(usage, ExecutionReports(tags=[])) == []
+
+
 def test_config_tags() -> None:
     """By default, identifiers of the tags `biotools_id` and `rrid` are reported."""
     assert ExecutionReports().tags == ["biotools_id", "rrid"]
