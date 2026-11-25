@@ -243,7 +243,11 @@ available: <id>`), invalid JSON, or a choice that the admin disabled
   otherwise. Only TES instances that proTES would use anyway count
   (configured, or discovered and verified in a registry): others are
   discarded and recorded in the task's provenance, so clients can't make
-  proTES use other TES instances.
+  proTES use other TES instances. An `allow` of identifiers only (no URLs),
+  none of which names a TES instance of proTES, is rejected with `400 Bad
+  Request` (problem type `invalid-backends`) and not stored; an `allow`
+  whose TES instances are all discarded leaves none, and the task fails
+  with `503 Service Unavailable`.
 
 Users (role `user`) list what they may choose with `GET /ga4gh/tes/v1/plugins`
 (the plugins that they may choose, the presets, the limits of

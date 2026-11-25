@@ -207,18 +207,29 @@ def test_pin_to_one_tes_instance(
     assert [url for url, _ in relayed(backend)] == [BACKENDS[0], BACKENDS[1]]
 
 
-@pytest.mark.parametrize("pin", ["site-3", "https://tes3.example.org"])
+@pytest.mark.parametrize(
+    ("pin", "status"), [("site-3", 400), ("https://tes3.example.org", 503)]
+)
 def test_pin_to_unknown_tes_instance(
     with_plugins: PluginClient,
     backend: type[FakeBackend],
     mongo_client: MongoClient[dict[str, Any]],
     pin: str,
+    status: int,
 ) -> None:
-    """A pin to an unknown TES instance fails (`503`): no task, no fallback."""
+    """A pin to an unknown TES instance fails: no task, no fallback.
+
+    A pin by an identifier that names no TES instance is refused (`400`,
+    `invalid-backends`, FOCA 0.23); one by an unknown URL leaves no TES
+    instance (`503`).
+    """
     client = with_plugins({})
     named(client)
     selection = json.dumps({"type": "allow", "backends": [pin]})
-    assert submit(client, gateway__backends=selection).status_code == 503
+    response = submit(client, gateway__backends=selection)
+    assert response.status_code == status
+    if status == 400:
+        assert response.get_json()["problem_type"].endswith("#invalid-backends")
     assert not relayed(backend)
     assert mongo_client[DB]["tasks"].count_documents({}) == 0
 

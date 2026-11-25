@@ -538,8 +538,9 @@ settings apply to all plugins (`plugins.defaults.store`), or to one plugin
 whether the plugin keeps its entries in the database (`enabled`, by
 default `true`; with `false`, each process keeps them in memory, so
 counters and caches hold per process only), the maximum size of values
-(`max_entry_size`, bytes of compact JSON, by default 4096) and the maximum
-time to live of entries (`max_ttl`, in seconds, by default 30 days, at
+(`max_entry_size`, bytes of compact JSON, by default 4096), the maximum
+size of all entries of a plugin's namespace (`max_namespace_size`, in
+bytes, by default 16 MiB; writes beyond it raise FOCA's `StoreFullError`), and the maximum time to live of entries (`max_ttl`, in seconds, by default 30 days, at
 most 10 years); set the same `enabled` for all plugins of a distribution,
 which share their entries. For example:
 

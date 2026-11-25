@@ -72,6 +72,22 @@ ADMIN = "admin@example.org"
 ADMIN_USER = "carol@example.org"
 # Member of no group with a role
 OUTSIDER = "eve@example.org"
+
+
+def subject(user: str) -> str:
+    """Return a user's subject as proTES stores it (FOCA's `namespace_subject`).
+
+    Subjects are namespaced by their issuer (`<issuer>|<sub>`), also with a
+    single trusted issuer, as the test overlay has (FOCA 0.23).
+
+    Args:
+        user: Subject as issued (`sub` claim), e.g., `USER`.
+
+    Returns:
+        The subject, namespaced by `ISSUER`.
+    """
+    return f"{ISSUER}|{user}"
+
 # Groups mapped to the roles `user` and `admin` in the test overlay
 USER_GROUP = "compute-users"
 ADMIN_GROUP = "urn:example:group:compute-admins#login.example.org"

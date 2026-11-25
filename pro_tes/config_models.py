@@ -330,8 +330,6 @@ DEFAULT_API_PATH = "/ga4gh/tes/v1"
 """Path of the TES API, relative to the URL of a backend, as the TES
 specification has it; that of the API of proTES too."""
 
-# Absolute paths of unreserved characters (RFC 3986, section 2.3)
-_API_PATH = re.compile(r"(?:/[A-Za-z0-9._~-]+)+")
 
 # Absolute URIs without query and fragment (RFC 3986, sections 3 and 4.3):
 # a scheme, then unreserved, reserved (but `?`, `#`) and percent-encoded
@@ -395,21 +393,15 @@ class TesServiceEntry(ServiceEntry):
         Returns:
             The API path.
 
+        FOCA's `ServiceEntry` checks its characters and segments before
+        (since FOCA 0.23); it also allows an empty path, proTES doesn't.
+
         Raises:
-            ValueError: The path is not absolute, has characters other than
-                unreserved ones (e.g., a query), or segments `.` or `..`.
+            ValueError: The path is not absolute.
         """
         if not value.startswith("/"):
             raise ValueError("API path must be absolute")
-        path = value.removesuffix("/")
-        if path and (
-            not _API_PATH.fullmatch(path) or {".", ".."} & set(path.split("/"))
-        ):
-            raise ValueError(
-                "API path must have unreserved characters only, and no segments"
-                " `.` or `..`"
-            )
-        return path
+        return value.removesuffix("/")
 
 
 class Tes(ConfigModel):
@@ -524,30 +516,23 @@ class Tes(ConfigModel):
             The configuration.
 
         Raises:
-            ValueError: An entry has an audience, but no `auth:
-                client_credentials`, or audiences are not requested
-                (`client_credentials.audience_parameter`); or an audience
-                has surrounding whitespace; or one requested as `resource`
-                is not an absolute URI without query and fragment (RFC
-                8707, section 2).
+            ValueError: An entry has an audience, but audiences are not
+                requested (`client_credentials.audience_parameter`); or one
+                requested as `resource` is not an absolute URI without query
+                and fragment (RFC 8707, section 2). FOCA's `ServiceEntry`
+                checks before (since FOCA 0.23) that entries with an
+                audience have `auth: client_credentials` and that audiences
+                have no surrounding whitespace.
         """
         parameter = self.client_credentials.audience_parameter
         for entry in self.backends.root:
             audience = getattr(entry, "audience", None)
             if audience is None:
                 continue
-            if entry.auth != "client_credentials":
-                raise ValueError(
-                    f"`audience` of {entry.url} needs `auth: client_credentials`"
-                )
             if parameter is None:
                 raise ValueError(
                     f"`audience` of {entry.url} needs"
                     " `client_credentials.audience_parameter`"
-                )
-            if audience != audience.strip():
-                raise ValueError(
-                    f"`audience` of {entry.url} must not have surrounding whitespace"
                 )
             if parameter == "resource" and not _is_resource(audience):
                 raise ValueError(

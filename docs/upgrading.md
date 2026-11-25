@@ -12,6 +12,58 @@ images tagged by date, on FOCA 0.12 ([From versions before
 
 ## To version 0.7.0
 
+**FOCA 0.23 (all deployments):** proTES now requires FOCA 0.23.0, on the FOCA
+0.23.0 image, with the release train `foca-plugins` 0.4.0 (was 0.3.0; its
+plugins `foca-plugin-generic-routing-random` and
+`foca-plugin-tes-routing-distance` 0.2.0 allow FOCA 0.19 to 0.23; see FOCA's
+[release notes of 0.23.0](https://github.com/elixir-cloud-aai/foca/releases/tag/v0.23.0)
+and its [migration guide to 0.23](https://foca.readthedocs.io/en/v0.23.0/migration-0.23/)).
+What this changes:
+
+- **Owners with one trusted issuer (action needed):** users are now
+  namespaced by their issuer (`<issuer>|<sub>`) also if only one issuer is
+  trusted. Until now, deployments with a single issuer stored bare subjects:
+  as owners of tasks (`user_id` and the owner roles), in the counts of
+  [task limits](configuration.md#task-limits) and in accounting records. Without
+  action, users would no longer see or cancel their earlier tasks, and
+  limits and usage would count them as new users. Keep the subjects bare
+  with `namespace: ""` for the issuer, a map instead of the URL in
+  `security.auth.issuers` (with the Helm chart, in
+  `config.security.auth.issuers`):
+
+  ```yaml
+  security:
+    auth:
+      issuers:
+        - issuer: https://login.example.org/oidc/
+          namespace: ""
+  ```
+
+  proTES 0.7.0 has no tool to rewrite stored subjects: FOCA's `foca
+  namespace-subjects` rewrites the owner roles only, not `user_id` of tasks
+  and accounting records, so don't run it on proTES' database. Deployments
+  with several trusted issuers already namespaced their subjects and are
+  not affected. Rules of your overlays that name bare users (`user:<sub>`)
+  stop the start unless the issuer keeps them bare.
+- **Pins to unknown TES instances:** a task whose `gateway.backends` is an
+  `allow` of identifiers only, none of which names a TES instance of
+  proTES, is now rejected with `400 Bad Request` (problem type
+  `invalid-backends`) instead of `503 Service Unavailable` (see [Choices of
+  clients](plugins.md#choices-of-clients)).
+- **Request bodies:** on endpoints that require a token, the token is
+  checked before the body is read, so anonymous requests with bodies larger
+  than `server.max_content_length` get `401` instead of `413`.
+- **Plugin store:** each plugin's entries are limited to 16 MiB in all
+  (`max_namespace_size` of `plugins.defaults.store` or
+  `plugins.available.<id>.store`; with the Helm chart,
+  `plugins.available.<id>.store.maxNamespaceSize`), kept in the new
+  collection `plugin_store_sizes` (see [Plugins](configuration.md#plugins)).
+- **Patterns:** a `$` at the end of a `pattern` of the API specification (or
+  of your patches of it) matches only at the end of the value, so values
+  with a trailing newline are rejected with `400`.
+- **Plugins:** resolving plugins that cap `foca<0.23` against this image
+  fails; ask their authors for a release.
+
 **Tokens per TES instance (optional):** proTES can request an access token
 of its own for each TES instance, so that TES instances (also those
 discovered in service registries) can't use their tokens at each other.
