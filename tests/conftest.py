@@ -74,6 +74,21 @@ ADMIN_USER = "carol@example.org"
 OUTSIDER = "eve@example.org"
 
 
+# Groups mapped to the roles `user` and `admin` in the test overlay
+USER_GROUP = "compute-users"
+ADMIN_GROUP = "urn:example:group:compute-admins#login.example.org"
+# Group memberships the identity provider returns as user info (not in
+# access tokens)
+GROUPS = {
+    USER: [USER_GROUP],
+    OTHER_USER: [USER_GROUP],
+    ADMIN: [ADMIN_GROUP],
+    ADMIN_USER: [USER_GROUP, ADMIN_GROUP],
+    OUTSIDER: ["other-group"],
+}
+KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+
 def subject(user: str) -> str:
     """Return a user's subject as proTES stores it (FOCA's `namespace_subject`).
 
@@ -88,19 +103,6 @@ def subject(user: str) -> str:
     """
     return f"{ISSUER}|{user}"
 
-# Groups mapped to the roles `user` and `admin` in the test overlay
-USER_GROUP = "compute-users"
-ADMIN_GROUP = "urn:example:group:compute-admins#login.example.org"
-# Group memberships the identity provider returns as user info (not in
-# access tokens)
-GROUPS = {
-    USER: [USER_GROUP],
-    OTHER_USER: [USER_GROUP],
-    ADMIN: [ADMIN_GROUP],
-    ADMIN_USER: [USER_GROUP, ADMIN_GROUP],
-    OUTSIDER: ["other-group"],
-}
-KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
 # The Celery app (`pro_tes.celery_worker`) is created, with its MongoDB
 # client, when its module is imported (e.g., with the controllers), so the

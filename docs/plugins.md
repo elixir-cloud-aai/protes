@@ -244,8 +244,11 @@ available: <id>`), invalid JSON, or a choice that the admin disabled
   (configured, or discovered and verified in a registry): others are
   discarded and recorded in the task's provenance, so clients can't make
   proTES use other TES instances. An `allow` of identifiers only (no URLs),
-  none of which names a TES instance of proTES, is rejected with `400 Bad
-  Request` (problem type `invalid-backends`) and not stored; an `allow`
+  none of which names a TES instance of proTES (configured, or discovered
+  and verified), is rejected with `400 Bad Request` (problem type
+  `invalid-backends`) and not stored; one whose TES instances can't run
+  the task gets `400` as well, naming the fields (see [TES
+  versions](tes-versions.md)); an `allow`
   whose TES instances are all discarded leaves none, and the task fails
   with `503 Service Unavailable`.
 

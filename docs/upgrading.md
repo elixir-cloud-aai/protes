@@ -47,17 +47,28 @@ What this changes:
   stop the start unless the issuer keeps them bare.
 - **Pins to unknown TES instances:** a task whose `gateway.backends` is an
   `allow` of identifiers only, none of which names a TES instance of
-  proTES, is now rejected with `400 Bad Request` (problem type
+  proTES (configured, or discovered and verified), is now rejected with `400 Bad Request` (problem type
   `invalid-backends`) instead of `503 Service Unavailable` (see [Choices of
   clients](plugins.md#choices-of-clients)).
 - **Request bodies:** on endpoints that require a token, the token is
   checked before the body is read, so anonymous requests with bodies larger
   than `server.max_content_length` get `401` instead of `413`.
-- **Plugin store:** each plugin's entries are limited to 16 MiB in all
+- **Plugin store:** the entries of each namespace (the plugins of one
+  distribution share one) are limited to 16 MiB in all
   (`max_namespace_size` of `plugins.defaults.store` or
   `plugins.available.<id>.store`; with the Helm chart,
-  `plugins.available.<id>.store.maxNamespaceSize`), kept in the new
-  collection `plugin_store_sizes` (see [Plugins](configuration.md#plugins)).
+  `plugins.available.<id>.store.maxNamespaceSize`; see
+  [Plugins](configuration.md#plugins)). Their sizes are kept in the new
+  collection `plugin_store_sizes`: a database user whose roles are limited
+  to certain collections needs it too.
+- **Admin scripts:** users in rules, in the permissions API and in the
+  `user_id` filter of usage reports are now namespaced (`<issuer>|<sub>`,
+  URL-encoded in queries) unless the issuer keeps them bare; the
+  permissions API answers invalid rules, identifiers and pages with
+  problems of type `invalid-request` that list the invalid fields
+  (`errors`). An issuer that is its own namespace (no `namespace` set)
+  must not contain `|`, `,` or line breaks, nor be longer than 256
+  characters, or the app doesn't start.
 - **Patterns:** a `$` at the end of a `pattern` of the API specification (or
   of your patches of it) matches only at the end of the value, so values
   with a trailing newline are rejected with `400`.

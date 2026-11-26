@@ -539,10 +539,12 @@ whether the plugin keeps its entries in the database (`enabled`, by
 default `true`; with `false`, each process keeps them in memory, so
 counters and caches hold per process only), the maximum size of values
 (`max_entry_size`, bytes of compact JSON, by default 4096), the maximum
-size of all entries of a plugin's namespace (`max_namespace_size`, in
-bytes, by default 16 MiB; writes beyond it raise FOCA's `StoreFullError`), and the maximum time to live of entries (`max_ttl`, in seconds, by default 30 days, at
-most 10 years); set the same `enabled` for all plugins of a distribution,
-which share their entries. For example:
+size of all entries of a namespace (shared by the plugins of one
+distribution; `max_namespace_size`, in bytes, by default 16 MiB; writes
+beyond it raise FOCA's `StoreFullError`), and the maximum time to live of
+entries (`max_ttl`, in seconds, by default 30 days, at most 10 years); set
+the same `enabled` for all plugins of a distribution, which share their
+entries. For example:
 
 ```yaml
 plugins:
@@ -915,8 +917,9 @@ defaults. See [Access control](access-control.md).
 
 Request bodies are limited to `server.max_content_length` bytes (default:
 1048576, i.e., 1 MiB), by FOCA: larger requests, also chunked ones, are
-rejected with `413 Content Too Large` before they are authenticated and
-parsed. The inline content of each input (`inputs[].content`) has a lower
+rejected with `413 Content Too Large` before they are parsed; on
+endpoints that require a token, the token is checked first, so requests
+without a valid one get `401 Unauthorized` instead. The inline content of each input (`inputs[].content`) has a lower
 limit of its own (`custom.controllers.post_task.max_inline_content`, see
 [Tasks](#tasks)), as contents are stored with each task: raise both if
 tasks with large inline contents must be accepted. Prefer inputs with URLs.

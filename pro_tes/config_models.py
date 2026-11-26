@@ -330,7 +330,6 @@ DEFAULT_API_PATH = "/ga4gh/tes/v1"
 """Path of the TES API, relative to the URL of a backend, as the TES
 specification has it; that of the API of proTES too."""
 
-
 # Absolute URIs without query and fragment (RFC 3986, sections 3 and 4.3):
 # a scheme, then unreserved, reserved (but `?`, `#`) and percent-encoded
 # characters only
@@ -387,14 +386,14 @@ class TesServiceEntry(ServiceEntry):
     def check_api_path(cls, value: str) -> str:
         """Check the API path, and remove trailing slashes.
 
+        FOCA's `ServiceEntry` checks its characters and segments before
+        (since FOCA 0.23); it also allows an empty path, proTES doesn't.
+
         Args:
             value: API path, as given.
 
         Returns:
             The API path.
-
-        FOCA's `ServiceEntry` checks its characters and segments before
-        (since FOCA 0.23); it also allows an empty path, proTES doesn't.
 
         Raises:
             ValueError: The path is not absolute.
