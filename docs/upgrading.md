@@ -44,12 +44,16 @@ What this changes:
   and accounting records, so don't run it on proTES' database. Deployments
   with several trusted issuers already namespaced their subjects and are
   not affected. Rules of your overlays that name bare users (`user:<sub>`)
-  stop the start unless the issuer keeps them bare.
+  stop the start unless the issuer keeps them bare. An issuer that is its
+  own namespace (no `namespace` set) must not contain `|`, `,` or line
+  breaks, nor be longer than 256 characters, or the app doesn't start.
 - **Pins to unknown TES instances:** a task whose `gateway.backends` is an
   `allow` of identifiers only, none of which names a TES instance of
-  proTES (configured, or discovered and verified), is now rejected with `400 Bad Request` (problem type
-  `invalid-backends`) instead of `503 Service Unavailable` (see [Choices of
-  clients](plugins.md#choices-of-clients)).
+  proTES (configured, or discovered and verified), is now rejected with
+  `400 Bad Request` (problem type `invalid-backends`) instead of `503
+  Service Unavailable` (see [Choices of
+  clients](plugins.md#choices-of-clients)). Pins to TES instances that
+  can't run the task still get `400` naming its fields.
 - **Request bodies:** on endpoints that require a token, the token is
   checked before the body is read, so anonymous requests with bodies larger
   than `server.max_content_length` get `401` instead of `413`.
@@ -66,9 +70,7 @@ What this changes:
   URL-encoded in queries) unless the issuer keeps them bare; the
   permissions API answers invalid rules, identifiers and pages with
   problems of type `invalid-request` that list the invalid fields
-  (`errors`). An issuer that is its own namespace (no `namespace` set)
-  must not contain `|`, `,` or line breaks, nor be longer than 256
-  characters, or the app doesn't start.
+  (`errors`).
 - **Patterns:** a `$` at the end of a `pattern` of the API specification (or
   of your patches of it) matches only at the end of the value, so values
   with a trailing newline are rejected with `400`.

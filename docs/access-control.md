@@ -186,8 +186,9 @@ Issuers may also be maps of the issuer (`issuer`) and settings of their own
 (FOCA's `IssuerConfig`): the namespace of their users' subjects
 (`namespace`; by default the issuer, also if only one issuer is
 trusted; `""` keeps the subjects bare; see [Task
-owners](operations.md#task-owners)), and an `audience`, a group claim (`claim_groups`) and `userinfo_claims` that
-replace the global ones for the issuer's tokens (unless unset or null), e.g.:
+owners](operations.md#task-owners)), and an `audience`, a group claim
+(`claim_groups`) and `userinfo_claims` that replace the global ones for
+the issuer's tokens (unless unset or null), e.g.:
 
 ```yaml
 security:

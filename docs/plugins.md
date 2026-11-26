@@ -247,10 +247,11 @@ available: <id>`), invalid JSON, or a choice that the admin disabled
   none of which names a TES instance of proTES (configured, or discovered
   and verified), is rejected with `400 Bad Request` (problem type
   `invalid-backends`) and not stored; one whose TES instances can't run
-  the task gets `400` as well, naming the fields (see [TES
-  versions](tes-versions.md)); an `allow`
-  whose TES instances are all discarded leaves none, and the task fails
-  with `503 Service Unavailable`.
+  the task gets `400` as well, naming the fields (`503` while their TES
+  version is unknown; see [TES versions](tes-versions.md)), and so does a
+  pin to unknown identifiers if no TES instance can run the task; an
+  `allow` whose TES instances are all discarded leaves none, and the task
+  fails with `503 Service Unavailable`.
 
 Users (role `user`) list what they may choose with `GET /ga4gh/tes/v1/plugins`
 (the plugins that they may choose, the presets, the limits of

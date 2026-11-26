@@ -919,8 +919,8 @@ Request bodies are limited to `server.max_content_length` bytes (default:
 1048576, i.e., 1 MiB), by FOCA: larger requests, also chunked ones, are
 rejected with `413 Content Too Large` before they are parsed; on
 endpoints that require a token, the token is checked first, so requests
-without a valid one get `401 Unauthorized` instead. The inline content of each input (`inputs[].content`) has a lower
-limit of its own (`custom.controllers.post_task.max_inline_content`, see
+without a valid one get `401 Unauthorized` instead. The inline content
+of each input (`inputs[].content`) has a lower limit of its own (`custom.controllers.post_task.max_inline_content`, see
 [Tasks](#tasks)), as contents are stored with each task: raise both if
 tasks with large inline contents must be accepted. Prefer inputs with URLs.
 
