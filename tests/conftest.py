@@ -384,7 +384,11 @@ def mock_get(
         token = headers["Authorization"].removeprefix("Bearer ")
         try:
             claims = jwt.decode(
-                token, KEY.public_key(), algorithms=["RS256"], audience=AUDIENCE
+                token,
+                KEY.public_key(),
+                algorithms=["RS256"],
+                # any audience, as identity providers' user info endpoints do
+                options={"verify_aud": False},
             )
         except jwt.InvalidTokenError:
             return MockResponse({"error": "invalid_token"}, status_code=401)

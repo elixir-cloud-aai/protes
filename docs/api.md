@@ -21,8 +21,9 @@ control](access-control.md)).
 | `GET /plugins/{plugin_id}` | proTES extension: describe a plugin that the caller may choose (`404 Not Found` otherwise). |
 | `POST /tasks/{id}:cancel` | Cancel a task of the caller that has not finished yet (also in state `UNKNOWN`, e.g., not tracked yet), at the TES instance that runs it; the task is then in state `CANCELING` until the TES instance reports its final state (usually `CANCELED`), or answers that it no longer has the task (`404` or `410`; then `CANCELED`). Meanwhile, the task stays `CANCELING`, also while the TES instance is unavailable, until the first poll after `polling.max_cancel_time` seconds (default 3600; then `SYSTEM_ERROR`, and it is no longer tracked; see [Task tracking](operations.md#task-tracking)); finished tasks are left as they are, also tasks that finish while they are canceled (their final state is kept), and tasks that the TES instance refuses to cancel as they have finished there (`200`; proTES stores their final state with the next poll). If a TES instance refuses to cancel a task that it hasn't finished, the task stays as it is (`502 Bad Gateway`). Unfinished tasks whose identifier at their TES instance is unknown (e.g., while they are being forwarded, or if forwarding failed unexpectedly) can't be canceled (`409 Conflict`). |
 
-Only the owner of a task, the user who created it, can read and cancel it
-(see [Task ownership](access-control.md#task-ownership)). Admins can manage
+Only the owner of a task, the user or [service
+client](access-control.md#service-clients) who created it, can read and
+cancel it (see [Task ownership](access-control.md#task-ownership)). Admins can manage
 the access control rules at runtime through FOCA's permissions API at
 `/admin/access-control/permissions` (see [Access
 control](access-control.md#permissions-api)).
@@ -174,7 +175,9 @@ changes are recorded as paths and hashes only.
 `GET /usage` (a proTES extension) returns the resources that the tasks of
 each user used, as recorded when they finished, if [accounting of resource
 usage](configuration.md#accounting-of-resource-usage) is enabled: per user
-(`user_id`, the owner of the tasks; `null` for tasks without owner), the
+(`user_id`, the owner of the tasks, `client:<client ID>` for [service
+clients](access-control.md#service-clients); `null` for tasks without
+owner), the
 number of tasks, those without known run time (`untimed_tasks`), the run
 time in seconds, and the requested resources times the run time:
 
@@ -249,9 +252,9 @@ The fields come from the record of the task:
 | Field | Source |
 | --- | --- |
 | `tool_name` | the last component of the image repository of the first executor (e.g., `bwa` of `quay.io/biocontainers/bwa:0.7.18--he4a0461_1`) |
-| `tool_version` | the tag of that image, unless it is `latest`; for tags of the form `<version>--<build>` (BioContainers), the part before `--` |
-| `tool_package_version` | the whole tag, if of the form `<version>--<build>` |
-| `tool_identifier` | `https://bio.tools/<id>` for a tag `biotools_id` of the task, `https://identifiers.org/RRID/RRID:SCR_<n>` for a tag `rrid` (`SCR_<n>` or `RRID:SCR_<n>`), if valid, then the image repository (`docker://<repository>`, without tag and digest) |
+| `tool_version` | the tag of that image, unless it is `latest` or the image is given with a digest (e.g., `ubuntu:24.04@sha256:<digest>`: container runtimes pull it by digest and don't check the tag, which could then hold any text); for tags of the form `<version>--<build>` (BioContainers), the part before `--` |
+| `tool_package_version` | the whole tag, if of the form `<version>--<build>` (not for images given with a digest) |
+| `tool_identifier` | `https://bio.tools/<id>` for a tag `biotools_id` of the task, `https://identifiers.org/RRID/RRID:SCR_<n>` for a tag `rrid` (`SCR_<n>` or `RRID:SCR_<n>`), if valid (checked against the pattern of such identifiers only, not looked up: the user who creates the task chooses its tags) and listed in `custom.accounting.reports.tags` (by default both), then the image repository (`docker://<repository>`, without tag and digest) |
 | `infra` | the providers of `custom.accounting.reports.infra`, the TES instance (as configured in `reports.backends`, or else named by the host of its URL, with its URL as identifier), and proTES with the version that recorded the task |
 | `location` | that of the TES instance in `reports.backends`, or else `reports.location`; left out if neither is set |
 | `cpu_cores_assigned` | the CPU cores that the task requested (`resources.cpu_cores`): an allocation, not a measurement; left out if the task requested none |
@@ -275,8 +278,9 @@ name users, so only tasks whose image is in a trusted namespace are reported
 (`custom.accounting.reports.images`; by default Docker Hub's official images
 and BioContainers, see [Execution
 reports](configuration.md#execution-reports)). The tool identifier tags
-(`biotools_id`, `rrid`) are reported as the task sets them, if valid; they
-are meant for tool identifiers only. Only tasks that completed (`COMPLETE`)
+(`biotools_id`, `rrid`) are reported (as IRIs, see the table above) if
+valid and listed in `custom.accounting.reports.tags`; they are meant for tool
+identifiers only. Only tasks that completed (`COMPLETE`)
 are reported: their images exist, so names and tags of images that don't
 (e.g., `ubuntu:<user name>`, which fail) are never reported. Tasks in other
 final states, tasks of other images, tasks whose first

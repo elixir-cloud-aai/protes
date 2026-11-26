@@ -5,9 +5,13 @@ creation, retrieval and cancellation) from memory: created tasks are
 complete right away, unless held (see below). Also serves an OpenID Connect
 identity provider for
 proTES (issuer `ISSUER`; discovery, keys and user info), which issues access
-tokens of the users of `GROUPS` at `GET /oidc/token?sub=<user>` (no login),
-and access tokens of proTES itself at `POST /oidc/token` (client credentials
-grant, with the client `CLIENT_ID` and `CLIENT_SECRET`). Except for the
+tokens of the users of `GROUPS` at `GET /oidc/token?sub=<user>` (no login;
+with `client_id=<client>` and `aud=<audience>`, as obtained by another
+client, for another audience), and access tokens of proTES itself at `POST
+/oidc/token` (client credentials grant, with the client `CLIENT_ID` and
+`CLIENT_SECRET`), and of the service client `SERVICE_CLIENT_ID` (with
+`SERVICE_CLIENT_SECRET`), whose tokens are for its own audience, as some
+identity providers issue client-credentials tokens. Except for the
 service info, the TES API requires access tokens of proTES, as TES backends
 of proTES may.
 Run it with `python fake_tes.py [port]` (default 8080); it depends on the
@@ -55,6 +59,11 @@ AUDIENCE = "smoke-client"
 # Client of proTES (fictitious; as in `compose.yaml` of this directory)
 CLIENT_ID = "smoke-protes"
 CLIENT_SECRET = "smoke-protes-secret"  # noqa: S105 (fictitious)
+# Service client that creates tasks at proTES with its own tokens (fictitious;
+# as in `config.yaml` of this directory)
+SERVICE_CLIENT_ID = "smoke-engine"
+SERVICE_CLIENT_SECRET = "smoke-engine-secret"  # noqa: S105 (fictitious)
+CLIENTS = {CLIENT_ID: CLIENT_SECRET, SERVICE_CLIENT_ID: SERVICE_CLIENT_SECRET}
 # Groups of the users (user info), as mapped to roles in `config.yaml`
 GROUPS = {
     "alice": ["smoke-users"],
@@ -164,7 +173,11 @@ class Handler(BaseHTTPRequestHandler):
             token = (self.headers.get("Authorization") or "").removeprefix("Bearer ")
             try:
                 claims = jwt.decode(
-                    token, KEY.public_key(), algorithms=["RS256"], audience=AUDIENCE
+                    token,
+                    KEY.public_key(),
+                    algorithms=["RS256"],
+                    # any audience, as identity providers' user info endpoints do
+                    options={"verify_aud": False},
                 )
             except jwt.InvalidTokenError:
                 self._send(HTTPStatus.UNAUTHORIZED, {"error": "invalid_token"})
@@ -172,15 +185,20 @@ class Handler(BaseHTTPRequestHandler):
             sub = claims["sub"]
             self._send(HTTPStatus.OK, {"sub": sub, "groups": GROUPS.get(sub, [])})
         elif path == "/oidc/token":
-            sub = parse_qs(urlsplit(self.path).query).get("sub", ["alice"])[0]
+            query = parse_qs(urlsplit(self.path).query)
+            sub = query.get("sub", ["alice"])[0]
+            client = (
+                {"client_id": query["client_id"][0]} if "client_id" in query else {}
+            )
             now = int(time.time())
             token = jwt.encode(
                 {
                     "iss": ISSUER,
-                    "aud": AUDIENCE,
+                    "aud": query.get("aud", [AUDIENCE])[0],
                     "sub": sub,
                     "iat": now,
                     "exp": now + 600,
+                    **client,
                 },
                 KEY,
                 algorithm="RS256",
@@ -192,9 +210,12 @@ class Handler(BaseHTTPRequestHandler):
         return True
 
     def _issue_client_token(self, body: bytes) -> None:
-        """Issue an access token of proTES (client credentials grant).
+        """Issue an access token of a client (client credentials grant).
 
-        The client authenticates with HTTP Basic (`client_secret_basic`).
+        Of proTES (`CLIENT_ID`), or of the service client
+        (`SERVICE_CLIENT_ID`), whose tokens are for its own audience, as some
+        identity providers issue them. The client authenticates with HTTP Basic
+        (`client_secret_basic`).
 
         Args:
             body: Request body (form-encoded).
@@ -210,17 +231,20 @@ class Handler(BaseHTTPRequestHandler):
         if form.get("grant_type") != ["client_credentials"]:
             self._send(HTTPStatus.BAD_REQUEST, {"error": "unsupported_grant_type"})
             return
-        if scheme != "Basic" or client != (CLIENT_ID, CLIENT_SECRET):
+        if scheme != "Basic" or len(client) != 2 or CLIENTS.get(client[0]) != client[1]:
             self._send(HTTPStatus.UNAUTHORIZED, {"error": "invalid_client"})
             return
+        client_id = client[0]
+        audience = {"aud": client_id} if client_id == SERVICE_CLIENT_ID else {}
         now = int(time.time())
         token = jwt.encode(
             {
                 "iss": ISSUER,
-                "sub": CLIENT_ID,
-                "client_id": CLIENT_ID,
+                "sub": client_id,
+                "client_id": client_id,
                 "iat": now,
                 "exp": now + 300,
+                **audience,
             },
             KEY,
             algorithm="RS256",

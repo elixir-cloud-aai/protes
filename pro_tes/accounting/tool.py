@@ -3,15 +3,16 @@
 The tool of a task is the image of its first executor: its name is the last
 component of the image repository (e.g., `samtools` of
 `quay.io/biocontainers/samtools:1.17--h00cdaf9_0`), its version the tag of
-the image. Its identifiers are those of the tags `biotools_id` (a bio.tools
-identifier) and `rrid` (an RRID of software, `SCR_<digits>`) of the task, if
-valid, and the image repository (`docker://<repository>`, without tag and
+the image, unless the reference has a digest (its tag is then unchecked).
+Its identifiers are those of the tags `biotools_id` (a bio.tools identifier)
+and `rrid` (an RRID of software, `SCR_<digits>`) of the task, if valid, and
+the image repository (`docker://<repository>`, without tag and
 digest). Nothing else of the task is kept: no commands, arguments,
 environment variables, inputs, outputs or other tags.
 """
 
 import re
-from typing import Any
+from typing import Any, Literal, get_args
 
 # Image references (cf. the grammar of the Distribution project,
 # https://github.com/distribution/reference): an optional registry (host and
@@ -34,8 +35,32 @@ BIOTOOLS_ID = re.compile(r"[A-Za-z0-9_~-][A-Za-z0-9._~-]{0,99}", re.ASCII)
 RRID = re.compile(r"(?:RRID:)?(?P<id>SCR_[0-9]{1,12})", re.ASCII)
 BIOTOOLS_IRI = "https://bio.tools/{}"
 RRID_IRI = "https://identifiers.org/RRID/RRID:{}"
-# Tags of tasks that are read
-TAG_KEYS = ("biotools_id", "rrid")
+# Identifier of the image repository of a tool
+IMAGE_IRI = "docker://{}"
+# Tags of tasks that are read, and the start of the IRIs they give (to
+# tell, in reports, which tag an identifier came from)
+IdentifierTag = Literal["biotools_id", "rrid"]
+TAG_KEYS: tuple[IdentifierTag, ...] = get_args(IdentifierTag)
+TAG_IRIS: dict[IdentifierTag, str] = {
+    "biotools_id": BIOTOOLS_IRI.format(""),
+    "rrid": RRID_IRI.format(""),
+}
+
+
+def identifier_tag(identifier: str) -> IdentifierTag | None:
+    """Get the tag of tasks that an identifier of a tool came from.
+
+    Args:
+        identifier: Identifier (IRI) of a tool, as recorded.
+
+    Returns:
+        The tag (cf. :py:data:`TAG_KEYS`) whose IRIs the identifier starts
+        with; `None` for other identifiers (e.g., of the image).
+    """
+    for tag, prefix in TAG_IRIS.items():
+        if identifier.startswith(prefix):
+            return tag
+    return None
 
 
 def _image_tool(image: Any) -> dict[str, Any] | None:
@@ -53,7 +78,10 @@ def _image_tool(image: Any) -> dict[str, Any] | None:
     match = IMAGE_REFERENCE.fullmatch(image)
     if match is None or len(match["repository"]) > MAX_REPOSITORY_LENGTH:
         return None
-    tag = match["tag"]
+    # Container runtimes pull an image by its digest and ignore its tag
+    # then, so the tag of a reference with a digest is unchecked and may
+    # hold any text (e.g., the name of a user): it gives no version
+    tag = None if match["digest"] is not None else match["tag"]
     version = None if tag in (None, "latest") else tag
     package_version = None
     # BioContainers: `<version>--<build>`
@@ -65,7 +93,7 @@ def _image_tool(image: Any) -> dict[str, Any] | None:
         "repository": match["repository"],
         "version": version,
         "package_version": package_version,
-        "identifiers": [f"docker://{match['repository']}"],
+        "identifiers": [IMAGE_IRI.format(match["repository"])],
     }
 
 

@@ -54,6 +54,10 @@ security:
     # by default, clients are not restricted:
     # clients:
     #   - my-portal-client-id
+    # Service clients, which create and own tasks with their own tokens
+    # (client credentials grant), are off by default: deployments list them
+    # with their issuer (`service_clients`) and map them to the role `user`
+    # (`access_control.client_mapping`; see `docs/access-control.md`)
     issuers: []
   # Access control: users (the role `user`) may create tasks, and list their
   # own; the user creating a task becomes its owner, and only owners may read
@@ -427,6 +431,7 @@ custom:
       location: null
       backends: {}
       images: [library, biocontainers, quay.io/biocontainers]
+      tags: [biotools_id, rrid]
 
 # Plugins (FOCA's gateway plugins, `foca.plugins`) process each new task
 # (`POST /tasks`): they may change the task, choose and order the TES backends
