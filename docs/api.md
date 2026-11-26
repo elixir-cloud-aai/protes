@@ -252,9 +252,9 @@ The fields come from the record of the task:
 | Field | Source |
 | --- | --- |
 | `tool_name` | the last component of the image repository of the first executor (e.g., `bwa` of `quay.io/biocontainers/bwa:0.7.18--he4a0461_1`) |
-| `tool_version` | the tag of that image, unless it is `latest`; for tags of the form `<version>--<build>` (BioContainers), the part before `--` |
-| `tool_package_version` | the whole tag, if of the form `<version>--<build>` |
-| `tool_identifier` | `https://bio.tools/<id>` for a tag `biotools_id` of the task, `https://identifiers.org/RRID/RRID:SCR_<n>` for a tag `rrid` (`SCR_<n>` or `RRID:SCR_<n>`), if valid, then the image repository (`docker://<repository>`, without tag and digest) |
+| `tool_version` | the tag of that image, unless it is `latest` or the image is given with a digest (e.g., `ubuntu:24.04@sha256:<digest>`: container runtimes pull it by digest and don't check the tag, which could then hold any text); for tags of the form `<version>--<build>` (BioContainers), the part before `--` |
+| `tool_package_version` | the whole tag, if of the form `<version>--<build>` (not for images given with a digest) |
+| `tool_identifier` | `https://bio.tools/<id>` for a tag `biotools_id` of the task, `https://identifiers.org/RRID/RRID:SCR_<n>` for a tag `rrid` (`SCR_<n>` or `RRID:SCR_<n>`), if valid (checked against the pattern of such identifiers only, not looked up: the user who creates the task chooses its tags) and listed in `custom.accounting.reports.tags` (by default both), then the image repository (`docker://<repository>`, without tag and digest) |
 | `infra` | the providers of `custom.accounting.reports.infra`, the TES instance (as configured in `reports.backends`, or else named by the host of its URL, with its URL as identifier), and proTES with the version that recorded the task |
 | `location` | that of the TES instance in `reports.backends`, or else `reports.location`; left out if neither is set |
 | `cpu_cores_assigned` | the CPU cores that the task requested (`resources.cpu_cores`): an allocation, not a measurement; left out if the task requested none |
@@ -278,8 +278,9 @@ name users, so only tasks whose image is in a trusted namespace are reported
 (`custom.accounting.reports.images`; by default Docker Hub's official images
 and BioContainers, see [Execution
 reports](configuration.md#execution-reports)). The tool identifier tags
-(`biotools_id`, `rrid`) are reported as the task sets them, if valid; they
-are meant for tool identifiers only. Only tasks that completed (`COMPLETE`)
+(`biotools_id`, `rrid`) are reported (as IRIs, see the table above) if
+valid and listed in `custom.accounting.reports.tags`; they are meant for tool
+identifiers only. Only tasks that completed (`COMPLETE`)
 are reported: their images exist, so names and tags of images that don't
 (e.g., `ubuntu:<user name>`, which fail) are never reported. Tasks in other
 final states, tasks of other images, tasks whose first

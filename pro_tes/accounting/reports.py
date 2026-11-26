@@ -13,8 +13,11 @@ rounded.
 Reports hold no personal data and no details of tasks: no user identifiers,
 task identifiers, commands, arguments, environment variables, URLs or paths
 of inputs and outputs, or other tags; the records hold none of these but the
-owner and the task identifier, which are not read. Only tasks that
-completed, of images in trusted namespaces
+owner and the task identifier, which are not read. The tags `biotools_id`
+and `rrid`, which the user who creates a task chooses, give identifiers of
+the tool if they match the patterns of such identifiers (they are not looked
+up), and only if they are listed in `custom.accounting.reports.tags`. Only
+tasks that completed, of images in trusted namespaces
 (`custom.accounting.reports.images`, e.g., BioContainers), are reported, as
 image names and tags in other namespaces (e.g., personal ones), or of images
 that don't exist, may name users.
@@ -28,6 +31,7 @@ from pymongo.collection import Collection
 
 from pro_tes.accounting.config import ExecutionReports, canonical_image
 from pro_tes.accounting.report import finished_range
+from pro_tes.accounting.tool import IMAGE_IRI, identifier_tag
 
 # Version of the report format (`report_format_version`); the schema in
 # `tests/accounting/data` must be of the same version (cf. its `.license`
@@ -159,6 +163,27 @@ def trusted_image(repository: Any, images: list[str]) -> bool:
     )
 
 
+def _reported_identifier(identifier: Any, config: ExecutionReports) -> bool:
+    """Tell whether an identifier of a recorded tool is reported.
+
+    Only the identifier of the image and those of the tags of tasks listed
+    in `tags` are reported; anything else (e.g., of another tag, or no
+    string) is not.
+
+    Args:
+        identifier: Identifier of the tool, as recorded.
+        config: Settings of the reports.
+
+    Returns:
+        Whether the identifier is reported.
+    """
+    if not isinstance(identifier, str):
+        return False
+    if identifier.startswith(IMAGE_IRI.format("")):
+        return True
+    return identifier_tag(identifier) in config.tags
+
+
 def _reports(record: dict[str, Any], config: ExecutionReports) -> list[dict[str, Any]]:
     """Get the reports of a record, one per attempt.
 
@@ -172,9 +197,18 @@ def _reports(record: dict[str, Any], config: ExecutionReports) -> list[dict[str,
     tool = record["tool"]
     if not trusted_image(tool.get("repository"), config.images):
         return []
+    identifiers = [
+        identifier
+        for identifier in tool["identifiers"]
+        if _reported_identifier(identifier, config)
+    ]
+    # the report format requires an identifier (records of proTES always
+    # have that of the image)
+    if not identifiers:
+        return []
     common: dict[str, Any] = {
         "report_format_version": REPORT_FORMAT_VERSION,
-        "tool_identifier": list(tool["identifiers"]),
+        "tool_identifier": identifiers,
         "tool_name": tool["name"],
     }
     for field in ("version", "package_version"):
@@ -243,7 +277,9 @@ def execution_reports(
         "attempts.0": {"$exists": True},
         # tasks that completed ran their image, which therefore exists (in
         # the trusted namespace): names and tags of images that don't exist
-        # (e.g., `ubuntu:<name of a user>`) are not reported
+        # (e.g., `ubuntu:<name of a user>`) are not reported; tags of
+        # references with a digest, which runtimes don't check, give no
+        # version (see `tool.py`)
         "state": COMPLETE,
         **finished_range(since, until),
     }

@@ -813,8 +813,9 @@ owner of the task (`user_id`, as in the task document, see [Task
 owners](operations.md#task-owners)), the task identifier, the URL of the TES
 instance, the final state, the times, the requested resources and the
 products above, and, for [execution reports](#execution-reports), the tool
-(name, version and identifiers, from the image of the first executor and the
-tags `biotools_id` and `rrid` of the task), the start, end and total size of
+(name, version and identifiers, from the image of the first executor, with
+no version if it is given with a digest, and the tags `biotools_id` and
+`rrid` of the task), the start, end and total size of
 the outputs of each attempt (task log), and the version of proTES; nothing
 else of the task (no commands, environment variables, URLs or paths of inputs
 and outputs, or other tags). The records are kept when tasks
@@ -867,6 +868,10 @@ custom:
         - biocontainers
         - quay.io/biocontainers
         - registry.example.org/tools
+      # tags of tasks whose values are reported as identifiers of the tool
+      # (default: both known ones), here bio.tools identifiers only
+      tags:
+        - biotools_id
       # most tasks that one request may cover (1 to 1000000)
       max_records: 10000
 ```
@@ -897,6 +902,15 @@ custom:
   exist; a TES instance that runs images built locally under names of a
   trusted namespace (e.g., a one-component name, which counts as `library`)
   would still report those names, so don't trust such namespaces there.
+- `tags`: the tags of tasks whose values are reported as identifiers of the
+  tool (`tool_identifier`): `biotools_id` (a bio.tools identifier, reported
+  as `https://bio.tools/<id>`) and `rrid` (an RRID of software,
+  `SCR_<digits>`), both by default; other tag names are invalid. The user
+  who creates a task chooses its tags, and their values are only checked
+  against the patterns of such identifiers, not looked up: a value that
+  fits (e.g., a name in the form of a bio.tools identifier) is reported as
+  it is. Leave out a tag (or set `[]`) to report only the image repository
+  (`docker://<repository>`), which is always reported.
 - `max_records`: the most tasks that one request may cover (completed
   tasks with a recorded tool, also those of untrusted images, whatever their
   number of attempts); requests for more get `400 Bad Request`.

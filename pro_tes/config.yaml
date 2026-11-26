@@ -431,6 +431,7 @@ custom:
       location: null
       backends: {}
       images: [library, biocontainers, quay.io/biocontainers]
+      tags: [biotools_id, rrid]
 
 # Plugins (FOCA's gateway plugins, `foca.plugins`) process each new task
 # (`POST /tasks`): they may change the task, choose and order the TES backends

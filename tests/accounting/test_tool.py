@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from pro_tes.accounting.tool import task_tool
+from pro_tes.accounting.tool import identifier_tag, task_tool
 
 
 def _task(image: Any, tags: Any = None) -> dict[str, Any]:
@@ -34,7 +34,16 @@ def _task(image: Any, tags: Any = None) -> dict[str, Any]:
         ),
         ("localhost:5000/tools/bwa:0.7.18", "localhost:5000/tools/bwa", "0.7.18", None),
         (f"ubuntu@sha256:{'a' * 64}", "ubuntu", None, None),
-        (f"ubuntu:24.04@sha256:{'a' * 64}", "ubuntu", "24.04", None),
+        (f"ubuntu:24.04@sha256:{'a' * 64}", "ubuntu", None, None),
+        (
+            f"quay.io/biocontainers/samtools:1.17--h00cdaf9_0@sha256:{'a' * 64}",
+            "quay.io/biocontainers/samtools",
+            None,
+            None,
+        ),
+        # Pulled by digest, the tag is never checked: it could be any text,
+        # e.g. the name of a user, and is not reported
+        (f"ubuntu:john.doe@sha256:{'a' * 64}", "ubuntu", None, None),
     ],
 )
 def test_tool_of_image(
@@ -43,8 +52,9 @@ def test_tool_of_image(
     """The tool is the last component of the image repository, its tag the version.
 
     Tags of BioContainers (`<version>--<build>`) give the version and the
-    package version; `latest` and digests give no version. The identifier is
-    the repository of the image, without tag and digest.
+    package version; `latest` and references with a digest give no version,
+    also with a tag. The identifier is the repository of the image, without
+    tag and digest.
     """
     assert task_tool(_task(image)) == {
         "name": repository.rsplit("/", 1)[-1],
@@ -144,3 +154,18 @@ def test_tool_identifiers_of_invalid_tags(tags: Any) -> None:
     tool = task_tool(_task("bwa", tags))
     assert tool is not None
     assert tool["identifiers"] == ["docker://bwa"]
+
+
+@pytest.mark.parametrize(
+    ("identifier", "tag"),
+    [
+        ("https://bio.tools/bwa", "biotools_id"),
+        ("https://identifiers.org/RRID/RRID:SCR_010910", "rrid"),
+        ("docker://quay.io/biocontainers/bwa", None),
+        ("https://bio.tools", None),
+        ("bwa", None),
+    ],
+)
+def test_identifier_tag(identifier: str, tag: str | None) -> None:
+    """Identifiers from tags of tasks are told apart by the start of their IRIs."""
+    assert identifier_tag(identifier) == tag

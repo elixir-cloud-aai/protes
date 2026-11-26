@@ -116,6 +116,19 @@ See [Tokens per TES
 instance](access-control.md#tokens-per-tes-instance) for what to check
 before relying on it.
 
+**Accounting of resource usage (opt-in):** the Celery workers can now record
+the run time and requested resources of each task that finishes at its TES
+instance, with its owner, and admins get the totals per user at `GET /usage`
+(`custom.accounting.enabled`); off by default, so nothing is recorded unless
+you set it (see [Accounting of resource
+usage](configuration.md#accounting-of-resource-usage)). Tasks that finished
+before are not recorded. The endpoint needs the new rule `admins-get-usage`
+of the base config: overlays whose policies are a list (which replaces all
+rules) must add it, or admins get `403`. proTES creates the collection
+`usage` with two indexes (`finished_at`; `user_id`, `finished_at`) on its
+first start, also while accounting is off; the records are kept until you
+delete them (see [Usage records](operations.md#usage-records)).
+
 **Service clients (optional):** apps with client-credentials tokens of their
 own (e.g., a workflow engine) can now create tasks and own them, if listed
 in `security.auth.service_clients` (with their `issuer`) and mapped to the
@@ -139,10 +152,12 @@ reports then count together with a service client of the same ID.
 **Execution reports (with accounting):** admins can now get the usage
 records as execution reports of the Tool Execution Report format of ELIXIR
 Compute, version 0.0.2, without personal data (`GET /usage/reports`, see
-[Execution reports](api.md#execution-reports)). Nothing changes for
-deployments without accounting. With accounting, the records of tasks that
+[Execution reports](api.md#execution-reports)). Nothing else changes
+for deployments without accounting. With accounting, the records of tasks that
 finish from now on also hold the tool of the task (from the image of its
-first executor and its tags `biotools_id` and `rrid`), the times and total
+first executor, without version if the image is given with a digest, and
+its tags `biotools_id` and `rrid`, which are reported only while listed in
+`custom.accounting.reports.tags`, by default both), the times and total
 output size of each attempt, and the version of proTES; records of earlier
 tasks give no reports. Only tasks that completed, of images in trusted
 namespaces, are reported (by default Docker Hub's official images and BioContainers). To
@@ -314,19 +329,6 @@ of unfinished and of stored tasks of each user
 unless you set them (see [Task limits](configuration.md#task-limits)). proTES
 creates a new index on the tasks (`user_id`, `task.state`) on its first start,
 which takes a moment for large collections.
-
-**Accounting of resource usage (opt-in):** the Celery workers can now record
-the run time and requested resources of each task that finishes at its TES
-instance, with its owner, and admins get the totals per user at `GET /usage`
-(`custom.accounting.enabled`); off by default, so nothing is recorded unless
-you set it (see [Accounting of resource
-usage](configuration.md#accounting-of-resource-usage)). Tasks that finished
-before are not recorded. The endpoint needs the new rule `admins-get-usage`
-of the base config: overlays whose policies are a list (which replaces all
-rules) must add it, or admins get `403`. proTES creates the collection
-`usage` with two indexes (`finished_at`; `user_id`, `finished_at`) on its
-first start, also while accounting is off; the records are kept until you delete them (see [Usage
-records](operations.md#usage-records)).
 
 **Retention of finished tasks (opt-in):** the Celery workers can now delete
 finished tasks `custom.retention.finished_days` days after they finished,
