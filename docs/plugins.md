@@ -152,8 +152,10 @@ README](https://github.com/elixir-cloud-aai/protes/blob/dev/deployment/README.md
     task. The services see the address of the gateway and may log the
     requests; check their terms and tell your users, e.g., in your privacy
     notice. Both services are rate limited (DB-IP's free API: 500 requests
-    per day, Nominatim: one per second); the plugin caches lookups, and when
-    they can't be made, the next alternative routes the task at random.
+    per day, Nominatim: one per second); the plugin caches lookups in the
+    plugin store, limits each caller to 100 uncached lookups per day
+    (`dbip_user_daily_lookups`), and when they can't be made, the next
+    alternative routes the task at random.
     Without the opt-in, no request goes to either service.
 
 To locate addresses offline, without third-party services, use a GeoIP
@@ -243,7 +245,15 @@ available: <id>`), invalid JSON, or a choice that the admin disabled
   otherwise. Only TES instances that proTES would use anyway count
   (configured, or discovered and verified in a registry): others are
   discarded and recorded in the task's provenance, so clients can't make
-  proTES use other TES instances.
+  proTES use other TES instances. An `allow` of identifiers only (no URLs),
+  none of which names a TES instance of proTES (configured, or discovered
+  and verified), is rejected with `400 Bad Request` (problem type
+  `invalid-backends`) and not stored; one whose TES instances can't run
+  the task gets `400` as well, naming the fields (`503` while their TES
+  version is unknown; see [TES versions](tes-versions.md)), and so does a
+  pin to unknown identifiers if no TES instance can run the task; an
+  `allow` whose TES instances are all discarded leaves none, and the task
+  fails with `503 Service Unavailable`.
 
 Users (role `user`) list what they may choose with `GET /ga4gh/tes/v1/plugins`
 (the plugins that they may choose, the presets, the limits of

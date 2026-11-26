@@ -42,6 +42,20 @@ DIGEST = "sha256:" + "a" * 64
 OTHER_DIGEST = "sha256:" + "b" * 64
 
 
+def _events(workflow: dict[str, Any]) -> dict[str, Any]:
+    """Get the events that trigger a workflow.
+
+    Args:
+        workflow: The workflow.
+
+    Returns:
+        The value of its key `on` (which PyYAML parses as `True`).
+    """
+    events = {str(key): value for key, value in workflow.items()}.get("True")
+    result: dict[str, Any] = events or workflow["on"]
+    return result
+
+
 def _load(path: Path) -> dict[str, Any]:
     """Load a workflow file.
 
@@ -358,9 +372,7 @@ def test_title_job() -> None:
     runs when a pull request is edited.
     """
     workflow = _load(WORKFLOWS / "ci.yml")
-    # PyYAML parses the key `on` as `True`
-    events = {str(key): value for key, value in workflow.items()}.get("True")
-    events = events or workflow["on"]
+    events = _events(workflow)
     assert "edited" in events["pull_request"]["types"]
     job = workflow["jobs"]["title"]
     assert job["name"] == "PR title"
@@ -415,12 +427,12 @@ def test_shared_actions_release_comments() -> None:
 def test_release_chart_checked() -> None:
     """The release workflow checks the chart before attesting and signing it.
 
-    `publish` downloads the chart artifact, which any job of the run could
-    replace, so it checks that `dist/` holds exactly the file that `prepare`
-    packaged (its name and SHA-256, as outputs of `prepare`) before anything,
-    the image included, is attested or signed. Only that file is attested and
-    signed. The wiring and order of the steps are checked here, the script
-    itself by `test_release_chart_check_runs`.
+    `release-image` downloads the chart artifact, which any job of the run
+    could replace, so it checks that `dist/` holds exactly the file that
+    `prepare` packaged (its name and SHA-256, as outputs of `prepare`) before
+    anything, the image included, is attested or signed. Only that file is
+    attested and signed. The wiring and order of the steps are checked here,
+    the script itself by `test_release_chart_check_runs`.
     """
     release = _load(WORKFLOWS / "release.yml")["jobs"]
     prepare = release["prepare"]
@@ -430,7 +442,7 @@ def test_release_chart_checked() -> None:
     assert packaging["Package chart"]["id"] == "chart"
     # Re-runs of all jobs replace the chart, so its checksum is the new one
     assert packaging["Upload chart"]["with"]["overwrite"] is True
-    steps = {step["name"]: step for step in release["publish"]["steps"]}
+    steps = {step["name"]: step for step in release["release-image"]["steps"]}
     assert steps["Download chart"]["with"] == {"name": "chart", "path": "dist/"}
     check = steps["Check chart"]
     # A failed check stops the job
@@ -441,8 +453,10 @@ def test_release_chart_checked() -> None:
     chart = "dist/${{ needs.prepare.outputs.chart_file }}"
     assert steps["Attest chart provenance"]["with"]["subject-path"] == chart
     assert steps["Sign chart"]["env"]["CHART"] == chart
-    sign = steps["Sign chart"]["run"]
-    assert sign == 'cosign sign-blob --yes --bundle "${CHART}.sigstore.json" "${CHART}"'
+    sign = steps["Sign chart"]["run"].splitlines()
+    assert (
+        sign[0] == 'cosign sign-blob --yes --bundle "${CHART}.sigstore.json" "${CHART}"'
+    )
     names = list(steps)
     assert names.index("Download chart") < names.index("Check chart")
     # A rejected chart leaves the image (pushed untagged by `push`) without
@@ -451,7 +465,51 @@ def test_release_chart_checked() -> None:
     assert names.index("Check chart") < names.index("Sign image")
     assert names.index("Check chart") < names.index("Attest chart provenance")
     assert names.index("Check chart") < names.index("Sign chart")
-    assert names.index("Sign chart") < names.index("Create release")
+    assert names.index("Sign chart") < names.index("Upload chart signature")
+    # A failed chart signature leaves no tagged image without a signed chart
+    assert names.index("Upload chart signature") < names.index(
+        "Check whether this is the highest release"
+    )
+    assert names.index("Upload chart signature") < names.index("Tag image")
+
+
+def test_release_chart_signature_passed() -> None:
+    """`publish` attaches exactly the chart and the bundle of `release-image`.
+
+    `release-image` records the SHA-256 of the chart's Sigstore bundle and
+    uploads the bundle as the artifact `chart-signature`; `publish` downloads
+    it (in releases; dry runs sign nothing) next to the chart and checks
+    both, the script by `test_publish_chart_check_runs`.
+    """
+    jobs = _load(WORKFLOWS / "release.yml")["jobs"]
+    release_image = jobs["release-image"]
+    assert release_image["outputs"]["chart_bundle_sha256"] == (
+        "${{ steps.sign-chart.outputs.sha256 }}"
+    )
+    steps = _release_steps("release-image")
+    assert steps["Sign chart"]["id"] == "sign-chart"
+    assert 'sha256sum "${CHART}.sigstore.json"' in steps["Sign chart"]["run"]
+    upload = steps["Upload chart signature"]["with"]
+    assert upload["name"] == "chart-signature"
+    assert (
+        upload["path"] == "dist/${{ needs.prepare.outputs.chart_file }}.sigstore.json"
+    )
+    assert upload["overwrite"] is True
+    publish = _release_steps("publish")
+    assert publish["Download chart"]["with"] == {"name": "chart", "path": "dist/"}
+    download = publish["Download chart signature"]
+    assert download["if"] == RELEASE
+    assert download["with"] == {"name": "chart-signature", "path": "dist/"}
+    check = publish["Check chart"]
+    assert "if" not in check
+    assert check["env"] == {
+        "FILE": "${{ needs.prepare.outputs.chart_file }}",
+        "SHA256": "${{ needs.prepare.outputs.chart_sha256 }}",
+        "BUNDLE_SHA256": "${{ needs.release-image.outputs.chart_bundle_sha256 }}",
+    }
+    names = list(publish)
+    assert names.index("Download chart signature") < names.index("Check chart")
+    assert names.index("Check chart") < names.index("Create release")
 
 
 def test_release_tag_checked_first() -> None:
@@ -529,7 +587,7 @@ def test_release_chart_check_runs(
     sha256: str | None,
     passes: bool,
 ) -> None:
-    """The chart check of `publish` passes only for the chart of `prepare`.
+    """The chart check of `release-image` passes only for the chart of `prepare`.
 
     The step's script runs with the options of GitHub's default shell for
     steps without `shell:` (`bash -e`, no `pipefail`) in a directory whose
@@ -548,7 +606,7 @@ def test_release_chart_check_runs(
     """
     bash = shutil.which("bash")
     assert bash
-    steps = _load(WORKFLOWS / "release.yml")["jobs"]["publish"]["steps"]
+    steps = _load(WORKFLOWS / "release.yml")["jobs"]["release-image"]["steps"]
     script = {step["name"]: step for step in steps}["Check chart"]["run"]
     dist = tmp_path / "dist"
     dist.mkdir()
@@ -578,29 +636,110 @@ def test_release_chart_check_runs(
     assert (result.returncode == 0) == passes, result.stdout + result.stderr
 
 
+@pytest.mark.parametrize(
+    ("dry_run", "bundle", "extra", "tamper", "bundle_sha256", "passes"),
+    [
+        pytest.param(False, True, None, False, None, True, id="release"),
+        pytest.param(False, True, None, "chart", None, False, id="tampered-chart"),
+        pytest.param(True, False, None, "chart", "", False, id="dry-run-tampered"),
+        pytest.param(False, False, None, False, None, False, id="no-bundle"),
+        pytest.param(False, True, None, "bundle", None, False, id="tampered-bundle"),
+        pytest.param(False, True, None, False, "", False, id="no-bundle-hash"),
+        pytest.param(False, True, None, False, "abc", False, id="bad-bundle-hash"),
+        pytest.param(False, True, "zzz", False, None, False, id="extra"),
+        # As many files as expected, but another one than the bundle
+        pytest.param(False, False, f"{CHART}.x", False, None, False, id="other"),
+        pytest.param(True, False, None, False, "", True, id="dry-run"),
+        pytest.param(True, True, None, False, None, False, id="dry-run-bundle"),
+        pytest.param(True, False, ".hidden", False, "", False, id="dry-run-extra"),
+    ],
+)
+def test_publish_chart_check_runs(
+    tmp_path: Path,
+    dry_run: bool,
+    bundle: bool,
+    extra: str | None,
+    tamper: str | None,
+    bundle_sha256: str | None,
+    passes: bool,
+) -> None:
+    """The chart check of `publish` passes only for the files to attach.
+
+    Releases attach exactly the chart of `prepare` and its Sigstore bundle
+    from `release-image`, dry runs only the chart; the step's script runs as
+    in `test_release_chart_check_runs`.
+
+    Args:
+        tmp_path: The working directory of the step.
+        dry_run: Whether the run is a dry run.
+        bundle: Whether `dist/` holds the chart's bundle.
+        extra: A file added to `dist/`, if any.
+        tamper: The file changed after `prepare` packaged the chart and
+            `release-image` signed it (`chart` or `bundle`), if any.
+        bundle_sha256: The checksum output by `release-image` (that of the
+            bundle if None).
+        passes: Whether the check passes.
+    """
+    bash = shutil.which("bash")
+    assert bash
+    script = _release_steps("publish")["Check chart"]["run"]
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    chart = dist / CHART
+    chart.write_bytes(b"chart")
+    signature = dist / f"{CHART}.sigstore.json"
+    signature.write_bytes(b"bundle")
+    digest = hashlib.sha256(b"bundle").hexdigest()
+    if tamper == "bundle":
+        signature.write_bytes(b"other bundle")
+    if tamper == "chart":
+        chart.write_bytes(b"other chart")
+    if not bundle:
+        signature.unlink()
+    if extra:
+        (dist / extra).write_bytes(b"extra")
+    result = subprocess.run(  # noqa: S603 (fixed arguments, no shell)
+        [bash, "--noprofile", "--norc", "-e", "-c", script],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "DRY_RUN": "true" if dry_run else "false",
+            "FILE": CHART,
+            "SHA256": hashlib.sha256(b"chart").hexdigest(),
+            "BUNDLE_SHA256": digest if bundle_sha256 is None else bundle_sha256,
+        },
+        check=False,
+    )
+    assert (result.returncode == 0) == passes, result.stdout + result.stderr
+
+
 def test_release_state_checked_first() -> None:
     """A re-run that a published release rejects fails before it signs.
 
-    `publish` checks the state of the release (`release_assets.py
+    `release-image` checks the state of the release (`release_assets.py
     precheck`) and, for a published release, the digest of the `X.Y.Z`
     image tag right after the chart, before it logs in to Docker Hub,
     attests, signs or tags anything, so that a re-run of all jobs (new
     digest, new chart) leaves the tags of the published release alone.
-    "Create release" checks the release again (`state`). The script itself
-    is tested by `test_release_state_check_runs`.
+    "Create release" of `publish` checks the release again (`state`). The
+    script itself is tested by `test_release_state_check_runs`.
     """
-    publish = _load(WORKFLOWS / "release.yml")["jobs"]["publish"]
-    steps = {step["name"]: step for step in publish["steps"]}
-    names = [step["name"] for step in publish["steps"]]
+    jobs = _load(WORKFLOWS / "release.yml")["jobs"]
+    release_image = jobs["release-image"]
+    steps = {step["name"]: step for step in release_image["steps"]}
+    names = [step["name"] for step in release_image["steps"]]
     assert len(names) == len(steps)
     check = steps["Check release state"]
     assert "if" not in check
     assert "continue-on-error" not in check
-    assert check["env"]["TAG"] == "${{ github.ref_name }}"
+    release_tag = "${{ needs.prepare.outputs.release_tag }}"
+    assert release_image["env"]["RELEASE_TAG"] == release_tag
     assert check["env"]["GH_REPO"] == "${{ github.repository }}"
     assert "release_assets.py precheck" in check["run"]
     assert '--releases "${releases}" dist/*' in check["run"]
-    assert '"${IMAGE_NAME}:${VERSION}"' in check["run"]
+    assert '"${IMAGE_REF}:${VERSION}"' in check["run"]
     assert '"${actual}" != "${DIGEST}"' in check["run"]
     assert names.index("Check chart") < names.index("Check release state")
     for later in (
@@ -612,7 +751,9 @@ def test_release_state_checked_first() -> None:
         "Sign chart",
     ):
         assert names.index("Check release state") < names.index(later), later
-    assert "release_assets.py state" in steps["Create release"]["run"]
+    assert jobs["publish"]["env"]["RELEASE_TAG"] == release_tag
+    create = _release_steps("publish")["Create release"]["run"]
+    assert "release_assets.py state" in create
 
 
 @pytest.mark.parametrize(
@@ -636,7 +777,7 @@ def test_release_state_check_runs(
     tagged: str | None,
     passes: bool,
 ) -> None:
-    """The release state check of `publish` rejects re-runs of all jobs.
+    """The release state check of `release-image` rejects re-runs of all jobs.
 
     The step's script runs as in `test_release_chart_check_runs`, with
     stand-ins for `gh` (the releases) and `docker` (the digest of the image
@@ -654,7 +795,7 @@ def test_release_state_check_runs(
     """
     bash = shutil.which("bash")
     assert bash and shutil.which("jq")
-    steps = _load(WORKFLOWS / "release.yml")["jobs"]["publish"]["steps"]
+    steps = _load(WORKFLOWS / "release.yml")["jobs"]["release-image"]["steps"]
     script = {step["name"]: step for step in steps}["Check release state"]["run"]
     (tmp_path / "scripts").mkdir()
     shutil.copy(ROOT / "scripts" / "release_assets.py", tmp_path / "scripts")
@@ -691,7 +832,7 @@ def test_release_state_check_runs(
             f'cat "{tmp_path}/releases.json"'
         ),
         "docker": (
-            '[[ "$*" == "buildx imagetools inspect $IMAGE_NAME:1.2.3 '
+            '[[ "$*" == "buildx imagetools inspect $IMAGE_REF:1.2.3 '
             '--format {{ json .Manifest }}" ]] && '
             + (f'cat "{tmp_path}/manifest.json"' if tagged else "exit 1")
         ),
@@ -709,10 +850,10 @@ def test_release_state_check_runs(
             **os.environ,
             "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
             "GH_REPO": "elixir-cloud-aai/protes",
-            "TAG": "v1.2.3",
+            "RELEASE_TAG": "v1.2.3",
             "VERSION": "1.2.3",
             "DIGEST": DIGEST,
-            "IMAGE_NAME": "docker.io/elixircloud/protes",
+            "IMAGE_REF": "docker.io/elixircloud/protes",
         },
         check=False,
     )
@@ -726,6 +867,541 @@ def test_release_state_check_runs(
     # Not the error of a failed inspection (e.g., wrong `docker` arguments)
     if tagged == OTHER_DIGEST:
         assert f"points to {OTHER_DIGEST}" in result.stdout + result.stderr
+
+
+# Conditions of the steps of the release workflow: tag pushes (releases), and
+# all other events (dry runs)
+RELEASE = "github.event_name == 'push'"
+DRY_RUN = "github.event_name != 'push'"
+# The jobs of the release workflow that run in releases only: the only ones
+# that attest or sign, with the signing identity (`id-token: write`) and the
+# Docker Hub credentials, as the jobs that sign in `ci.yml`
+RELEASE_JOBS = {"release-image"}
+# The steps of the other jobs that use the Docker Hub credentials or the
+# signature: in releases only
+RELEASE_ONLY = {
+    "push": ["Log in to Docker Hub"],
+    "publish": ["Download chart signature"],
+}
+# A release commit, for the scripts of the release workflow
+SHA = "c" * 40
+
+
+def _release_steps(job_id: str) -> dict[str, dict[str, Any]]:
+    """Get the steps of a job of the release workflow by name.
+
+    Args:
+        job_id: The ID of the job.
+
+    Returns:
+        The steps of the job, by name (which are unique).
+    """
+    steps = _load(WORKFLOWS / "release.yml")["jobs"][job_id]["steps"]
+    named = {step["name"]: step for step in steps}
+    assert len(named) == len(steps)
+    return named
+
+
+def test_release_triggers() -> None:
+    """Releases run for version tags, dry runs on demand and on changes.
+
+    Dry runs run for `workflow_dispatch` (with an optional version) and for
+    pull requests that change the release workflow, its scripts or the
+    release metadata; their mode follows from the event, never from an
+    input.
+    """
+    workflow = _load(WORKFLOWS / "release.yml")
+    events = _events(workflow)
+    assert set(events) == {"push", "workflow_dispatch", "pull_request"}
+    assert events["push"] == {"tags": ["v*"]}
+    # No inputs: the version is the one in `CITATION.cff`
+    assert not events["workflow_dispatch"]
+    paths = events["pull_request"]["paths"]
+    assert ".github/workflows/release.yml" in paths
+    assert "scripts/release_*.py" in paths
+    assert "CITATION.cff" in paths
+    assert "docs/releases/**" in paths
+    assert "deployment/**" in paths
+    for path in paths:
+        if "*" not in path:
+            assert (ROOT / path).exists(), path
+    assert workflow["env"]["DRY_RUN"] == "${{ " + DRY_RUN + " }}"
+    # Pull requests from forks can't create the draft release
+    prepare = workflow["jobs"]["prepare"]
+    assert "head.repo.full_name == github.repository" in prepare["if"]
+
+
+def test_dry_run_environment() -> None:
+    """Dry runs never enter the `release` environment.
+
+    Only `push` and `release-image` run in an environment, `release`, and
+    only for tag pushes (`release-image` runs for tag pushes only).
+    """
+    jobs = _load(WORKFLOWS / "release.yml")["jobs"]
+    environments = {
+        job_id: job["environment"]
+        for job_id, job in jobs.items()
+        if "environment" in job
+    }
+    assert set(environments) == {"push", "release-image"}
+    assert environments["push"] == "${{ " + RELEASE + " && 'release' || '' }}"
+    assert environments["release-image"]["name"] == "release"
+    assert jobs["release-image"]["if"] == RELEASE
+
+
+def test_dry_run_skips_release_steps() -> None:
+    """Dry runs don't log in to Docker Hub, attest or sign.
+
+    The jobs and steps that do run for tag pushes only, and no other step of
+    any job uses a secret or attests or signs.
+    """
+    jobs = _load(WORKFLOWS / "release.yml")["jobs"]
+    for job_id, job in jobs.items():
+        if job_id in RELEASE_JOBS:
+            assert job["if"] == RELEASE, job_id
+            continue
+        # Nothing that all steps of the job inherit
+        settings = {key: value for key, value in job.items() if key != "steps"}
+        assert "secrets." not in yaml.safe_dump(settings), job_id
+        names = RELEASE_ONLY.get(job_id, [])
+        steps = _release_steps(job_id)
+        for name in names:
+            assert steps[name]["if"] == RELEASE, (job_id, name)
+        for name, step in steps.items():
+            if name in names:
+                continue
+            text = yaml.safe_dump(step)
+            assert "secrets." not in text, (job_id, name)
+            assert "attest-build-provenance" not in text, (job_id, name)
+            assert "cosign sign" not in text, (job_id, name)
+
+
+def test_dry_run_permissions() -> None:
+    """Dry runs never get the signing identity or attestation permission.
+
+    As in `ci.yml`, where only jobs for pushes sign, only the release-only
+    jobs (`RELEASE_JOBS`) may request `id-token: write` or `attestations:
+    write`. The only write permission of dry runs is `contents: write` of
+    `publish`, for the draft release.
+    """
+    workflow = _load(WORKFLOWS / "release.yml")
+    assert workflow["permissions"] == {"contents": "read"}
+    for job_id, job in workflow["jobs"].items():
+        permissions = job["permissions"]
+        signs = {"id-token", "attestations"} & {
+            scope for scope, level in permissions.items() if level == "write"
+        }
+        assert bool(signs) == (job_id in RELEASE_JOBS), job_id
+        if job_id not in RELEASE_JOBS and job_id != "publish":
+            assert "write" not in permissions.values(), job_id
+    assert workflow["jobs"]["publish"]["permissions"] == {
+        "contents": "write",
+        "pull-requests": "read",
+    }
+    assert workflow["jobs"]["release-image"]["permissions"] == {
+        "contents": "read",
+        "id-token": "write",
+        "attestations": "write",
+    }
+
+
+def test_publish_after_release_image() -> None:
+    """`publish` runs after `release-image`, or without it in dry runs only.
+
+    `release-image` runs for tag pushes only, so `publish` needs a condition
+    to run when it was skipped; in releases it needs its success. It
+    decides itself whether the release is the latest (also on a re-run of
+    `publish` alone), with the step of `release-image`.
+    """
+    publish = _load(WORKFLOWS / "release.yml")["jobs"]["publish"]
+    assert publish["needs"] == ["prepare", "push", "scan", "release-image"]
+    condition = " ".join(publish["if"].split())
+    assert condition == (
+        "!cancelled() && needs.scan.result == 'success'"
+        " && (needs.release-image.result == 'success'"
+        " || (" + DRY_RUN + " && needs.release-image.result == 'skipped'))"
+    )
+    assert "environment" not in publish
+    steps = _release_steps("publish")
+    assert steps["Create release"]["env"]["LATEST"] == (
+        "${{ steps.latest.outputs.latest }}"
+    )
+    latest = steps["Check whether this is the highest release"]
+    assert "if" not in latest
+    assert latest == _release_steps("release-image")[latest["name"]]
+
+
+@pytest.mark.parametrize(
+    ("dry_run", "passes"),
+    [
+        pytest.param("true", True, id="dry-run"),
+        pytest.param("false", False, id="release"),
+    ],
+)
+def test_ci_check_dry_run(tmp_path: Path, dry_run: str, passes: bool) -> None:
+    """Without a CI run for a push of the commit, only dry runs go on.
+
+    Args:
+        tmp_path: The working directory of the step.
+        dry_run: The value of `DRY_RUN`.
+        passes: Whether the step passes.
+    """
+    bash = shutil.which("bash")
+    assert bash
+    step = _release_steps("prepare")["Check that CI passed for the release commit"]
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    stub = bin_dir / "gh"
+    log = tmp_path / "gh.log"
+    stub.write_text(f'#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "{log}"\necho 0\n')
+    stub.chmod(0o755)
+    result = subprocess.run(  # noqa: S603 (fixed arguments, no shell)
+        [bash, "--noprofile", "--norc", "-e", "-c", step["run"]],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+            "DRY_RUN": dry_run,
+            "REPOSITORY": "elixir-cloud-aai/protes",
+            "SHA": SHA,
+        },
+        check=False,
+    )
+    assert (result.returncode == 0) == passes, result.stdout + result.stderr
+    level = "::warning::" if passes else "::error::"
+    assert level in result.stdout
+    # The CI runs of the commit were queried
+    (query,) = log.read_text().splitlines()
+    assert query.startswith(
+        "api repos/elixir-cloud-aai/protes/actions/workflows/ci.yml/runs?"
+    )
+    assert f"head_sha={SHA}" in query
+
+
+def test_dry_run_image_ref() -> None:
+    """Images are pushed, scanned and tagged at `IMAGE_REF`.
+
+    For tag pushes it is the published image (`IMAGE_NAME`, which the chart
+    names in dry runs too), otherwise the registry on the runner. Every step
+    that reaches the registry uses it, and dry runs start the registry, with
+    the storage of `push`, in each of these jobs.
+    """
+    workflow = _load(WORKFLOWS / "release.yml")
+    env = workflow["env"]
+    published = "docker.io/${{ vars.DOCKERHUB_ORG || 'elixircloud' }}/protes"
+    assert env["IMAGE_NAME"] == published
+    assert env["IMAGE_REF"] == (
+        "${{ " + RELEASE + " && format('docker.io/{0}/protes', "
+        "vars.DOCKERHUB_ORG || 'elixircloud') || 'localhost:5000/protes' }}"
+    )
+    assert re.fullmatch(
+        r"docker\.io/library/registry@sha256:[0-9a-f]{64}", env["REGISTRY_IMAGE"]
+    )
+    push = _release_steps("push")
+    build = push["Build and push image by digest"]["with"]["outputs"]
+    assert build.startswith("type=image,name=${{ env.IMAGE_REF }},push-by-digest=true")
+    assert push["Check app version of image"]["env"]["IMAGE"].startswith(
+        "${{ env.IMAGE_REF }}@"
+    )
+    scan = _release_steps("scan")
+    assert scan["Scan image"]["with"]["image"].startswith("${{ env.IMAGE_REF }}@")
+    release_image = _release_steps("release-image")
+    assert "${IMAGE_NAME}" not in release_image["Tag image"]["run"]
+    assert '"${IMAGE_REF}@${DIGEST}"' in release_image["Tag image"]["run"]
+    sign = release_image["Sign image"]["run"]
+    assert sign == 'cosign sign --yes "${IMAGE_REF}@${DIGEST}"'
+    # Dry runs, which skip `release-image`, decide `latest` and tag the image
+    # in `publish`, with the same steps
+    publish = _release_steps("publish")
+    assert publish["Tag image"]["if"] == DRY_RUN
+    assert {**publish["Tag image"], "if": None} == {
+        **release_image["Tag image"],
+        "if": None,
+    }
+    names = list(publish)
+    assert names.index("Start local registry") < names.index("Tag image")
+    assert names.index("Tag image") < names.index("Create release")
+    start = push["Start local registry"]
+    assert start["if"] == DRY_RUN
+    for job_id in ("scan", "publish"):
+        steps = _release_steps(job_id)
+        assert steps["Start local registry"] == start, job_id
+        download = steps["Download local registry"]
+        assert download["if"] == DRY_RUN
+        assert download["with"]["name"] == "registry"
+        assert download["with"]["path"] == "${{ runner.temp }}/registry"
+        names = list(steps)
+        assert names.index("Download local registry") < names.index(
+            "Start local registry"
+        )
+    upload = push["Upload local registry"]
+    assert upload["if"] == DRY_RUN
+    assert upload["with"]["name"] == "registry"
+    assert upload["with"]["path"] == "${{ runner.temp }}/registry"
+    # The directory that the registry stores its data in
+    assert '"${RUNNER_TEMP}/registry:/var/lib/registry"' in start["run"]
+    names = list(push)
+    assert names.index("Check app version of image") < names.index(
+        "Stop local registry"
+    )
+    assert names.index("Stop local registry") < names.index("Upload local registry")
+
+
+def _run_tag_check(
+    tmp_path: Path, citation: str, *, tagged: bool = False
+) -> subprocess.CompletedProcess[str]:
+    """Run the tag check of `prepare` as in a dry run.
+
+    Args:
+        tmp_path: The working directory of the step (a Git repository).
+        citation: The version in `CITATION.cff`.
+        tagged: Whether the commit has the tag of that version.
+
+    Returns:
+        The completed process; `GITHUB_OUTPUT` is `tmp_path / "output"`.
+    """
+    bash = shutil.which("bash")
+    assert bash and shutil.which("yq") and shutil.which("git")
+    script = _release_steps("prepare")["Check release tag and commit"]["run"]
+    (tmp_path / "CITATION.cff").write_text(f"cff-version: 1.2.0\nversion: {citation}\n")
+    git = ["git", "-C", str(tmp_path), "-c", "user.name=t", "-c", "user.email=t@t"]
+    git += ["-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"]
+    subprocess.run([*git, "init", "-q"], check=True)  # noqa: S603
+    subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "c"], check=True)  # noqa: S603
+    if tagged:
+        subprocess.run([*git, "tag", f"v{citation}"], check=True)  # noqa: S603
+    return subprocess.run(  # noqa: S603 (fixed arguments, no shell)
+        [bash, "--noprofile", "--norc", "-e", "-c", script],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "DRY_RUN": "true",
+            "TAG": "dev",
+            "RUN_ID": "42",
+            "GITHUB_OUTPUT": str(tmp_path / "output"),
+        },
+        check=False,
+    )
+
+
+@pytest.mark.parametrize(
+    ("citation", "tagged", "tag"),
+    [
+        pytest.param("1.2.3", False, "v1.2.3", id="release"),
+        pytest.param("2.0.0rc1", False, "v2.0.0rc1", id="pre-release"),
+        pytest.param("1.2.3", True, "v1.2.3", id="tagged"),
+        pytest.param("X.Y.Z", False, None, id="no-version"),
+        pytest.param("'1.2.3\n::warning::x'", False, None, id="injected"),
+        pytest.param("v1.2.3", False, None, id="prefixed"),
+    ],
+)
+def test_dry_run_tag(
+    tmp_path: Path, citation: str, tagged: bool, tag: str | None
+) -> None:
+    """Dry runs take the version of `CITATION.cff`.
+
+    The version tag is `v<version>`, the release tag a throwaway one with the
+    run ID; invalid versions fail and aren't echoed, and an existing tag is
+    noted (its release's notes are generated). The tag checks are skipped,
+    so the step needs no token here.
+
+    Args:
+        tmp_path: The working directory of the step.
+        citation: The version in `CITATION.cff` (YAML).
+        tagged: Whether the commit has the tag of that version.
+        tag: The expected version tag, or None if the step fails.
+    """
+    result = _run_tag_check(tmp_path, citation, tagged=tagged)
+    assert (result.returncode == 0) == (tag is not None), result.stdout + result.stderr
+    assert "::warning::x" not in result.stdout + result.stderr
+    assert ("is tagged already" in result.stdout) == tagged
+    if tag is None:
+        return
+    output = dict(
+        line.split("=", 1) for line in (tmp_path / "output").read_text().splitlines()
+    )
+    assert output["tag"] == tag
+    assert output["release_tag"] == f"dry-run-{tag}-42"
+    head = subprocess.run(  # noqa: S603 (fixed arguments, no shell)
+        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"],  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert output["sha"] == head.stdout.strip()
+
+
+def _run_create_release(
+    tmp_path: Path, *, dry_run: bool, release_tag: str
+) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    """Run the "Create release" step of `publish` with a stand-in for `gh`.
+
+    The repository has no releases, the previous release is `v1.2.2`, and
+    `dist/` holds the chart; the curated notes are absent.
+
+    Args:
+        tmp_path: The working directory of the step.
+        dry_run: Whether the run is a dry run.
+        release_tag: The tag of the GitHub release.
+
+    Returns:
+        The completed process and the `gh` commands it ran.
+    """
+    bash = shutil.which("bash")
+    assert bash
+    script = _release_steps("publish")["Create release"]["run"]
+    (tmp_path / "scripts").mkdir()
+    for name in ("release_assets.py", "release_notes.py"):
+        shutil.copy(ROOT / "scripts" / name, tmp_path / "scripts")
+    (tmp_path / "dist").mkdir()
+    (tmp_path / "dist" / CHART).write_bytes(b"chart")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "python").symlink_to(sys.executable)
+    log = tmp_path / "gh.log"
+    stub = bin_dir / "gh"
+    stub.write_text(
+        "#!/usr/bin/env bash\n"
+        f'printf "%s\\n" "$*" >> "{log}"\n'
+        'if [[ "$1 $2" == "api --paginate" ]]; then echo "[[]]"; fi\n'
+        'if [[ "$*" == *generate-notes* ]]; then echo "notes"; fi\n'
+    )
+    stub.chmod(0o755)
+    result = subprocess.run(  # noqa: S603 (fixed arguments, no shell)
+        [bash, "--noprofile", "--norc", "-e", "-c", script],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+            "GH_REPO": "elixir-cloud-aai/protes",
+            "DRY_RUN": "true" if dry_run else "false",
+            "TAG": "v1.2.3",
+            "RELEASE_TAG": release_tag,
+            "VERSION": "1.2.3",
+            "SHA": SHA,
+            "LATEST": "true",
+            "PRERELEASE": "false",
+            "PREVIOUS": "v1.2.2",
+        },
+        check=False,
+    )
+    commands = log.read_text().splitlines() if log.exists() else []
+    return result, commands
+
+
+def test_create_release_runs(tmp_path: Path) -> None:
+    """Releases create a draft of the tag, upload the assets and publish it."""
+    result, commands = _run_create_release(
+        tmp_path, dry_run=False, release_tag="v1.2.3"
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    (notes,) = [command for command in commands if "generate-notes" in command]
+    assert "tag_name=v1.2.3" in notes
+    assert "target_commitish" not in notes
+    (create,) = [c for c in commands if c.startswith("release create")]
+    assert create.startswith("release create v1.2.3 --draft --verify-tag ")
+    assert commands[-1].startswith("release edit v1.2.3 ")
+    assert commands[-1].endswith(" --draft=false")
+    assert "--latest=true" in commands[-1]
+
+
+def test_dry_run_release_never_published(tmp_path: Path) -> None:
+    """Dry runs create a draft of the dry-run tag at the commit, unpublished.
+
+    The notes are generated for the commit, as the version tag doesn't
+    exist; the draft is updated, but neither published nor marked latest.
+    """
+    tag = "dry-run-v1.2.3-42"
+    result, commands = _run_create_release(tmp_path, dry_run=True, release_tag=tag)
+    assert result.returncode == 0, result.stdout + result.stderr
+    (notes,) = [command for command in commands if "generate-notes" in command]
+    assert "tag_name=v1.2.3" in notes
+    assert f"target_commitish={SHA}" in notes
+    (create,) = [c for c in commands if c.startswith("release create")]
+    assert create.startswith(f"release create {tag} --draft --target {SHA} ")
+    assert "--verify-tag" not in create
+    assert f"release upload {tag} dist/{CHART} --clobber" in commands
+    assert commands[-1].startswith(f"release edit {tag} ")
+    assert "--draft" not in commands[-1]
+    assert "--latest" not in commands[-1]
+    assert all("--draft=false" not in command for command in commands)
+
+
+def test_dry_run_release_tag_checked(tmp_path: Path) -> None:
+    """Dry runs refuse to create a release of a version tag."""
+    result, commands = _run_create_release(tmp_path, dry_run=True, release_tag="v1.2.3")
+    assert result.returncode != 0
+    assert not [c for c in commands if c.startswith("release ")]
+
+
+@pytest.mark.parametrize(
+    ("release_tag", "deleted"),
+    [
+        pytest.param("dry-run-v1.2.3-42", ["7"], id="dry-run"),
+        pytest.param("v1.2.3", None, id="version-tag"),
+    ],
+)
+def test_dry_run_release_deleted(
+    tmp_path: Path, release_tag: str, deleted: list[str] | None
+) -> None:
+    """Dry runs delete only the drafts of their own release tag, always.
+
+    Args:
+        tmp_path: The working directory of the step.
+        release_tag: The tag of the GitHub release.
+        deleted: The IDs of the releases deleted, or None if the step fails.
+    """
+    bash = shutil.which("bash")
+    assert bash and shutil.which("jq")
+    step = _release_steps("publish")["Delete dry-run release"]
+    assert step["if"] == "always() && " + DRY_RUN
+    releases = [
+        [
+            {"id": 7, "tag_name": "dry-run-v1.2.3-42", "draft": True},
+            {"id": 8, "tag_name": "dry-run-v1.2.3-42", "draft": False},
+            {"id": 9, "tag_name": "dry-run-v1.2.3-41", "draft": True},
+            {"id": 10, "tag_name": "v1.2.3", "draft": True},
+        ]
+    ]
+    (tmp_path / "releases.json").write_text(json.dumps(releases))
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = tmp_path / "gh.log"
+    stub = bin_dir / "gh"
+    stub.write_text(
+        "#!/usr/bin/env bash\n"
+        f'printf "%s\\n" "$*" >> "{log}"\n'
+        'if [[ "$1 $2" == "api --paginate" ]]; then '
+        f'cat "{tmp_path}/releases.json"; fi\n'
+    )
+    stub.chmod(0o755)
+    result = subprocess.run(  # noqa: S603 (fixed arguments, no shell)
+        [bash, "--noprofile", "--norc", "-e", "-c", step["run"]],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        env={
+            **os.environ,
+            "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+            "GH_REPO": "elixir-cloud-aai/protes",
+            "RELEASE_TAG": release_tag,
+        },
+        check=False,
+    )
+    assert (result.returncode == 0) == (deleted is not None), (
+        result.stdout + result.stderr
+    )
+    commands = log.read_text().splitlines() if log.exists() else []
+    deletes = [
+        c.rsplit("/", 1)[1] for c in commands if c.startswith("api --method DELETE")
+    ]
+    assert deletes == (deleted or [])
 
 
 def _credential_jobs() -> list[tuple[str, str, dict[str, Any]]]:
@@ -808,6 +1484,7 @@ def test_credential_jobs_found() -> None:
         ("ci.yml", "push"),
         ("ci.yml", "publish"),
         ("release.yml", "push"),
+        ("release.yml", "release-image"),
         ("release.yml", "publish"),
     } <= found
 

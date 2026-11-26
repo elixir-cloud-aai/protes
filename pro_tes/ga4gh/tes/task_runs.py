@@ -483,7 +483,12 @@ class TaskRuns:
         # in the canonical version
         backends = get_backends()
         eligible = eligible_backends(payload, backends)
-        candidates = run.route(eligible) if eligible or not backends else []
+        # the others are known, so that the client's choice of them isn't
+        # refused as unknown (FOCA 0.23), but as not eligible (below)
+        others = [backend for backend in backends if backend not in eligible]
+        candidates = (
+            run.route(eligible, known=others) if eligible or not backends else []
+        )
         # before the task is stored: no task is left
         # (a backend without an answer may be fine again soon: `503` below)
         if (

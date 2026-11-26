@@ -89,9 +89,9 @@ the database instead (database `taskStore`, or the one in `MONGO_DBNAME`),
 e.g., with `mongosh`; the owner of a task is in `user_id` of its document in
 the collection `tasks`, and as owner roles (`g2` rules) in the collection
 `policy_rules`. Owners are subjects (`sub` claims) of the users' access
-tokens; with several trusted issuers, they are namespaced by issuer
-(`<issuer>|<sub>`, or the issuer's `namespace`; bare for an issuer with
-`namespace: ""`), so `<sub>` below stands for that form:
+tokens, namespaced by their issuer (`<issuer>|<sub>`, or the issuer's
+`namespace`), also with a single trusted issuer; they are bare for an issuer
+with `namespace: ""`. `<sub>` below stands for that form:
 
 ```js
 // tasks of a user
@@ -115,7 +115,7 @@ for resource in "/ga4gh/tes/v1/tasks/<id>" "/ga4gh/tes/v1/tasks/<id>:cancel"; do
 done
 ```
 
-and set `user_id` of the task to the user's `sub` in the database. To purge
+and set `user_id` of the task to the user's `<sub>` in the database. To purge
 tasks, delete their documents and their owner roles, e.g., those without
 owner (leave tombstones, `deleted_at`, in place: see below):
 
