@@ -76,6 +76,17 @@ What this changes:
   with a trailing newline are rejected with `400`.
 - **Plugins:** resolving plugins that cap `foca<0.23` against this image
   fails; ask their authors for a release.
+- **Routing by distance (opt-in, with `provider: dbip`):**
+  `foca-plugin-tes-routing-distance` 0.2.0 keeps the locations of
+  addresses in the plugin store (with a database, in the collection
+  `plugin_store`, shared by all replicas, as personal data with hashed
+  keys, for up to `cache_ttl` or a day) instead of per process, and limits
+  each caller to 100 uncached lookups per day (`dbip_user_daily_lookups`
+  in the plugin's `config`; `null` turns the limit off). Before upgrading,
+  set the key secret of the plugin store (`plugins.defaults.store.key_secret`;
+  with the Helm chart, `pluginStore.existingSecret`) and review `max_ttl`
+  (see [Plugins](configuration.md#plugins)). Deployments without the
+  opt-in are not affected.
 
 **Tokens per TES instance (optional):** proTES can request an access token
 of its own for each TES instance, so that TES instances (also those

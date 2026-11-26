@@ -152,8 +152,10 @@ README](https://github.com/elixir-cloud-aai/protes/blob/dev/deployment/README.md
     task. The services see the address of the gateway and may log the
     requests; check their terms and tell your users, e.g., in your privacy
     notice. Both services are rate limited (DB-IP's free API: 500 requests
-    per day, Nominatim: one per second); the plugin caches lookups, and when
-    they can't be made, the next alternative routes the task at random.
+    per day, Nominatim: one per second); the plugin caches lookups in the
+    plugin store, limits each caller to 100 uncached lookups per day
+    (`dbip_user_daily_lookups`), and when they can't be made, the next
+    alternative routes the task at random.
     Without the opt-in, no request goes to either service.
 
 To locate addresses offline, without third-party services, use a GeoIP
