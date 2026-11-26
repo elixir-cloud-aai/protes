@@ -39,7 +39,7 @@ What this changes:
           namespace: ""
   ```
 
-  proTES 0.7.0 has no tool to rewrite stored subjects: FOCA's `foca
+  This release has no tool to rewrite stored subjects: FOCA's `foca
   namespace-subjects` rewrites the owner roles only, not `user_id` of tasks
   and accounting records, so don't run it on proTES' database. Deployments
   with several trusted issuers already namespaced their subjects and are
