@@ -4,11 +4,11 @@ import logging
 from pathlib import Path
 
 from connexion import FlaskApp
-from foca import Foca, get_collection
-from foca.security.auth import require_no_service_clients
+from foca import Foca, get_collection, get_config
 
 from pro_tes.gateway import GATEWAY, add_plugin_listing
 from pro_tes.security import check_backends, check_task_ownership, check_user_groups
+from pro_tes.service_clients import check_service_audience, check_service_clients
 from pro_tes.utils.db import (
     TASK_COLLECTION,
     TASK_DB,
@@ -23,9 +23,11 @@ logger = logging.getLogger(__name__)
 def init_app() -> FlaskApp:
     """Initialize FOCA application.
 
-    Checks that only owners can access tasks, refuses service clients (FOCA's
-    `require_no_service_clients()`), as tasks are owned by users only, logs
-    the groups of the role `user` and checks the credentials of the TES
+    Checks that only owners can access tasks, checks the service clients
+    that may create and own tasks with their own tokens, if any, and the
+    audiences of their tokens before each request (cf.
+    :py:func:`pro_tes.service_clients.check_service_audience`), logs the
+    groups of the role `user` and checks the credentials of the TES
     backends, removes credentials of callers from tasks stored by earlier
     versions, and drops the index of earlier versions on the tasks. FOCA
     validates the config, e.g., that groups are only mapped with a group
@@ -41,7 +43,8 @@ def init_app() -> FlaskApp:
 
     Raises:
         RuntimeError: Access control is not enabled and enforced, service
-            clients are configured, credentials of TES backends are missing,
+            clients are configured that proTES doesn't support (e.g., acting
+            for users), credentials of TES backends are missing,
             or stored tasks share identifiers (cf.
             :py:func:`pro_tes.utils.db.check_unique_task_ids`).
         pydantic.ValidationError: The config is invalid, e.g., access control
@@ -65,9 +68,11 @@ def init_app() -> FlaskApp:
     except ValueError as exc:
         check_unique_task_ids(foca=foca, exc=exc)
         raise
-    require_no_service_clients(app.app)
     with app.app.app_context():
         check_task_ownership()
+        check_service_clients()
+        if get_config().security.auth.service_clients:
+            app.app.before_request(check_service_audience)
         check_user_groups()
         check_backends()
         collection = get_collection(TASK_DB, TASK_COLLECTION)

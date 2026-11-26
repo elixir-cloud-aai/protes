@@ -204,13 +204,14 @@ def test_service_clients(
     app_env: None,
     security: dict[str, object],
 ) -> None:
-    """The app refuses to start with service clients (not supported yet).
+    """The app refuses to start with service clients it doesn't support.
 
-    Tasks are owned by users, but service clients are enforced as clients.
+    Service clients must name their issuer and have the role `user`, and
+    can't act for users (cf. `tests/ga4gh/tes/test_service_clients.py`).
     """
     overlay = write_overlay(tmp_path / "overlay.yaml", {"security": security})
     set_overlays(monkeypatch, overlay)
-    with pytest.raises(RuntimeError, match="Service clients"):
+    with pytest.raises(RuntimeError, match="Service client"):
         init_app()
 
 
