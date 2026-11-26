@@ -13,7 +13,14 @@ from pymongo import MongoClient
 
 from pro_tes.config_models import CustomConfig
 from pro_tes.limits import TaskLimits
-from tests.conftest import ADMIN_USER, DB, OTHER_USER, USER, make_headers
+from tests.conftest import (
+    ADMIN_USER,
+    DB,
+    OTHER_USER,
+    USER,
+    make_headers,
+    subject,
+)
 from tests.ga4gh.tes.conftest import BASE_PATH, TASK, FakeBackend, relayed, set_state
 
 
@@ -72,7 +79,7 @@ def test_create_task_stored_limit(
     response = client.post(f"{BASE_PATH}/tasks", json=TASK)
     assert response.status_code == 429
     assert "`max_stored`" in response.get_json()["detail"]
-    assert mongo_client[DB]["tasks"].count_documents({"user_id": USER}) == 1
+    assert mongo_client[DB]["tasks"].count_documents({"user_id": subject(USER)}) == 1
 
 
 def test_create_task_exempt(

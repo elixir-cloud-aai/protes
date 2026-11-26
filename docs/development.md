@@ -544,7 +544,8 @@ errors, which fail the CI run that the release workflow requires for the
 release commit. The image scan of the release workflow can
 still fail after the tag, e.g., on a vulnerability published since CI last
 scanned the image of the commit; check the code scanning alerts before
-tagging.
+tagging. A [dry run](#dry-runs-of-the-release) of the release workflow on the
+commit runs the rest of the release without publishing anything.
 
 The tag must be annotated and signed (`git tag -s`), with a key that GitHub can
 verify (added to the tagger's GitHub account). The [release
@@ -566,17 +567,19 @@ After approval in the `release` environment, it builds the image and pushes
 it by digest (untagged, with SBOM and provenance attestations) and checks
 that the app reports the release version; it then scans exactly that digest
 for vulnerabilities, in a job without credentials. After a second approval
-in the `release` environment (once the scan passed), it checks that the
-chart it downloads is the one it packaged (a single file with the name and
+in the `release` environment (once the scan passed), the job `release-image`
+checks that the chart it downloads is the one it packaged (a single file with the name and
 SHA-256 recorded when packaging; if not, the job fails before it attests,
 signs or tags anything), attests the build provenance of the scanned digest
 and signs it (see [Verifying images and
-charts](operations.md#verifying-images-and-charts)), tags exactly that image
-`X.Y.Z` (and `latest`, if it is the highest stable release on `main`),
-attests and signs the chart, and creates a GitHub release with the chart
-(`.tgz`), its Sigstore bundle (`.tgz.sigstore.json`) and the release notes
-(see below). Releases are immutable (see the repository settings below):
-once published, their assets can't be added, replaced or deleted. The
+charts](operations.md#verifying-images-and-charts)), attests and signs the
+chart, and only then tags exactly that image `X.Y.Z` (and `latest`, if it is
+the highest stable release on `main`). A last job, `publish`, without
+environment, credentials and signing identity (only permission to write the
+repository's contents), checks the chart and its Sigstore bundle again and
+creates a GitHub release with the chart (`.tgz`), its Sigstore bundle
+(`.tgz.sigstore.json`) and the release notes (see below). Releases are
+immutable (see the repository settings below): once published, their assets can't be added, replaced or deleted. The
 workflow therefore creates the release as a draft, uploads the assets and
 publishes it last. A re-run finishes a draft left by an earlier attempt; if
 the release is already published (e.g., by hand), it uploads nothing and
@@ -584,7 +587,8 @@ fails unless the release has exactly the assets that the run built
 (only the Sigstore bundles may differ, as every attempt signs anew). It
 checks this twice: right after the chart, before it attests, signs or tags
 anything (for a published release, the image tag `X.Y.Z` must also point to
-the run's digest already), and again before it creates the release. The
+the run's digest already), and again before it creates the release (job
+`publish`). The
 error says what to do: a new patch version, or, if releases are not
 immutable, deleting the release and re-running. Add curated notes to the
 [changelog](changelog.md) in `mkdocs.yml` (`nav`; the docs build fails
@@ -769,8 +773,8 @@ stays signed. Re-running only the failed jobs reuses the digest already
 pushed. Re-running all jobs also packages the chart again and replaces the
 chart artifact; the release checks the new chart against its new SHA-256.
 Once the GitHub release is published, re-running all jobs fails in
-`publish` (step "Check release state") before it attests, signs or tags the
-new digest, so that `X.Y.Z` and `latest` keep pointing to the published
+`release-image` (step "Check release state") before it attests, signs or
+tags the new digest, so that `X.Y.Z` and `latest` keep pointing to the published
 image; re-running the failed jobs of a published release still passes, as
 it reuses the digest and the chart. Re-runs use the workflow of the tagged
 commit, so releases tagged before this step was added don't have it (check
@@ -779,3 +783,59 @@ the step's name in the run): never re-run all jobs of their runs.
 The release workflow installs a fixed Helm version (`version:` of
 `azure/setup-helm` in `release.yml`). Dependabot updates the action, but not
 that version: bump it by hand.
+
+### Dry runs of the release
+
+The release workflow also runs as a dry run, without a tag and without
+publishing anything: on demand (`workflow_dispatch`, e.g., on the branch
+that prepares the release, right before tagging) and for pull requests from
+branches of this repository that change the release workflow, its scripts,
+`CITATION.cff`, `docs/releases/` or the chart (`deployment/`; pull requests
+from forks skip it):
+
+```bash
+gh workflow run release.yml --repo elixir-cloud-aai/protes --ref <branch>
+```
+
+A dry run is any run that wasn't triggered by a pushed tag; no input can
+turn it into a release. It runs the jobs and commands of a release for
+the version `X.Y.Z` in `CITATION.cff` (which the release checks require
+anyway; if `vX.Y.Z` is tagged already, as on `dev` between releases, the
+generated notes are those of that release), with these differences:
+
+- the checks that need a tag (annotated, signed, on `main`) are skipped, and
+  a missing CI run for a push of the commit is a warning;
+- it never enters the `release` environment (no approvals), never logs
+  in to Docker Hub and never gets the signing identity (`id-token: write`)
+  or the permission to attest: the job that has them, `release-image`, runs
+  for tag pushes only, as the jobs that sign images in the CI workflow run
+  for pushes to `dev` only. The image is pushed by digest to a registry on
+  the runner (`localhost:5000/protes`, whose storage the jobs pass on as the
+  artifact `registry`), checked and scanned there, and tagged there by
+  `publish`, with the steps of `release-image`. The only permission to
+  write of a dry run is that of `publish` to the repository's contents, for
+  the draft release;
+- the chart is packaged and checked as for the release (with the published
+  image as its default);
+- nothing is attested by GitHub or signed (both would add entries to the
+  public Sigstore transparency log); the build still adds its SBOM and
+  provenance attestations to the image in the registry on the runner; and
+  the release state is checked only before the draft is created (not
+  before signing, as in `release-image`);
+- the GitHub release is created as a draft of the tag
+  `dry-run-vX.Y.Z-<run ID>` at the commit (no Git tag is created for
+  drafts), with the release notes and the chart, but never published or
+  marked as the latest release, and is deleted at the end of the run, also
+  if it fails.
+
+So a dry run tests the release workflow end to end except for the tag
+checks, the approvals, the Docker Hub login and the job `release-image`
+(attestations, signatures and the release state check before them), whose
+tagging and `latest` steps `publish` runs instead. Run one after every
+change to the release workflow and before tagging a release.
+
+Runs for pull requests appear as checks of the pull request (they don't
+block merging) and run on its merge commit. The result is the run itself:
+its annotations name the version, the skipped checks and the draft (which
+is gone from the releases page once the run ends); the artifact `registry`
+is kept for one day.

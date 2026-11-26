@@ -88,6 +88,7 @@ config (snake_case), as a JSON object.
   "recordFailed" "record_failed"
   "secretHeaders" "secret_headers"
   "maxEntrySize" "max_entry_size"
+  "maxNamespaceSize" "max_namespace_size"
   "maxTtl" "max_ttl"
 ) -}}
 {{- end -}}

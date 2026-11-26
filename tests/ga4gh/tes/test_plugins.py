@@ -29,7 +29,7 @@ import yaml
 
 from pro_tes.app import init_app
 from pro_tes.config_models import CustomConfig
-from tests.conftest import DB, USER, set_overlays
+from tests.conftest import DB, USER, set_overlays, subject
 from tests.ga4gh.tes.conftest import (
     BACKENDS,
     BASE_PATH,
@@ -204,7 +204,7 @@ def test_request_plugin(
     assert inbound.path == f"{BASE_PATH}/tasks"
     assert "Authorization" not in inbound.headers
     assert "Cookie" not in inbound.headers
-    assert principal.subject == USER
+    assert principal.subject == subject(USER)
     ((_, task),) = relayed(backend)
     assert task.name == "renamed"
     document = stored(mongo_client, response.get_json()["id"])
