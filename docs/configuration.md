@@ -82,7 +82,9 @@ By default, all TES instances with `auth: client_credentials` get the same
 access token of proTES; with `client_credentials.audience_parameter`
 (`resource` or `audience`), each gets a token for its own audience: the
 `audience` of its entry, or else its URL (see [Tokens per TES
-instance](access-control.md#tokens-per-tes-instance)).
+instance](access-control.md#tokens-per-tes-instance)). Entries with the same
+`audience` share a token, so give each TES instance an audience of its own
+if they must not accept each other's tokens.
 
 URLs are normalized (e.g., lowercase host, without default port and trailing
 slashes) and must use one of the schemes of the entry's `url_schemes`
