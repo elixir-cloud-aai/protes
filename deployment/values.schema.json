@@ -820,6 +820,11 @@
                     "minimum": 1,
                     "description": "Maximum size of values, in bytes of compact JSON (max_entry_size)"
                   },
+                  "maxNamespaceSize": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Maximum size of the entries of the plugin's namespace, in bytes (max_namespace_size)"
+                  },
                   "maxTtl": {
                     "type": "number",
                     "minimum": 0.001,

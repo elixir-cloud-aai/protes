@@ -30,6 +30,7 @@ from tests.ga4gh.tes.conftest import (
     stored,
 )
 from tests.ga4gh.tes.test_plugins import Rename, step
+from tests.ga4gh.tes.test_server import NEEDS_11
 
 # Plugins of the tests, by identifier
 PLUGINS = {"test.rename": Rename}
@@ -207,18 +208,61 @@ def test_pin_to_one_tes_instance(
     assert [url for url, _ in relayed(backend)] == [BACKENDS[0], BACKENDS[1]]
 
 
-@pytest.mark.parametrize("pin", ["site-3", "https://tes3.example.org"])
+@pytest.mark.parametrize(
+    ("pin", "status", "problem"),
+    [
+        ("site-3", 400, "invalid-backends"),
+        ("https://tes3.example.org", 503, "no-backend-available"),
+    ],
+)
 def test_pin_to_unknown_tes_instance(
     with_plugins: PluginClient,
     backend: type[FakeBackend],
     mongo_client: MongoClient[dict[str, Any]],
     pin: str,
+    status: int,
+    problem: str,
 ) -> None:
-    """A pin to an unknown TES instance fails (`503`): no task, no fallback."""
+    """A pin to an unknown TES instance fails: no task, no fallback.
+
+    A pin by an identifier that names no TES instance is refused (`400`,
+    `invalid-backends`, FOCA 0.23); one by an unknown URL leaves no TES
+    instance (`503`, `no-backend-available`).
+    """
     client = with_plugins({})
     named(client)
     selection = json.dumps({"type": "allow", "backends": [pin]})
-    assert submit(client, gateway__backends=selection).status_code == 503
+    response = submit(client, gateway__backends=selection)
+    assert response.status_code == status
+    assert response.get_json()["problem_type"].endswith(f"#{problem}")
+    assert not relayed(backend)
+    assert mongo_client[DB]["tasks"].count_documents({}) == 0
+
+
+def test_pin_to_ineligible_tes_instance(
+    with_plugins: PluginClient,
+    backend: type[FakeBackend],
+    mongo_client: MongoClient[dict[str, Any]],
+) -> None:
+    """A pin by `id` to a TES instance that can't run the task gets `400`.
+
+    The instance is known, though left out for its TES version: the reason
+    is the task (proTES's problem type `tes-versions/#routing`, naming the
+    field), not an unknown choice (`invalid-backends`, FOCA 0.23 without
+    `known`).
+    """
+    client = with_plugins({})
+    named(client)
+    backend.versions[BACKENDS[0]] = "1.0"
+    selection = json.dumps({"type": "allow", "backends": ["site-1"]})
+    response = client.post(
+        f"{BASE_PATH}/tasks",
+        json={**NEEDS_11, "tags": {"gateway.backends": selection}},
+    )
+    assert response.status_code == 400
+    body = response.get_json()
+    assert body["problem_type"].endswith("/tes-versions/#routing")
+    assert "ignore_error" in body["detail"]
     assert not relayed(backend)
     assert mongo_client[DB]["tasks"].count_documents({}) == 0
 
