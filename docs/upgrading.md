@@ -129,6 +129,26 @@ rules) must add it, or admins get `403`. proTES creates the collection
 first start, also while accounting is off; the records are kept until you
 delete them (see [Usage records](operations.md#usage-records)).
 
+**Service clients (optional):** apps with client-credentials tokens of their
+own (e.g., a workflow engine) can now create tasks and own them, if listed
+in `security.auth.service_clients` (with their `issuer`) and mapped to the
+role `user` in `security.access_control.client_mapping` (see [Service
+clients](access-control.md#service-clients)). Nothing changes without them.
+Configs that list service clients without `issuer` or without the role
+`user` still don't start, now with a message that says what is missing; the
+header naming users (`security.auth.on_behalf_of_header`) and clients acting
+for users (`on_behalf_of`) are still refused. If a client's identity
+provider puts only the client's own ID into `aud`, add that ID to
+`security.auth.audience`: proTES accepts it for that client's own service
+tokens only. Tasks of service clients belong to `client:<client ID>`
+(`user_id` of their documents, and their owner roles). So users whose
+subject starts with `client:` (possible only with an issuer whose subjects
+are not namespaced) can no longer create tasks (`401`), also without service
+clients, as they couldn't be told apart from clients; check for tasks of
+such users before upgrading (see [Task owners](operations.md#task-owners));
+their earlier tasks and usage records keep their `user_id`, which usage and
+reports then count together with a service client of the same ID.
+
 **Execution reports (with accounting):** admins can now get the usage
 records as execution reports of the Tool Execution Report format of ELIXIR
 Compute, version 0.0.2, without personal data (`GET /usage/reports`, see

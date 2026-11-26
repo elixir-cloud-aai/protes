@@ -121,10 +121,11 @@ creating or listing tasks loads them a few more times), so the time of each
 request grows with the number of tasks (see FOCA's notes on
 [scaling](https://foca.readthedocs.io/en/latest/access-control/#scaling)).
 
-Ownership is taken from the caller's own token only: proTES doesn't support
-service clients, also acting for users, yet, and refuses to start if
-`security.auth.service_clients`, `security.auth.on_behalf_of_header` or
-`security.access_control.client_mapping` is set.
+Ownership is taken from the caller's own token only: a user's token makes
+the user the owner, and a service client's own token the client (see
+[Service clients](#service-clients)). Nobody can create tasks for someone
+else: proTES refuses to start if `security.auth.on_behalf_of_header` is set,
+or a service client may act for users (`on_behalf_of`).
 
 New tasks never get the identifier of a stored task, or of a task that
 owner roles are left on (e.g., of a deleted task), so that nobody gets
@@ -135,6 +136,89 @@ the stored ones atomically on each startup; if an overlay leaves no rules,
 the stored ones are removed.
 The role `admin` comes only from groups in `group_mapping`: the startup
 check doesn't count `g` rules of the policies or of the permissions API.
+
+## Service clients
+
+Apps that run tasks for themselves, not for a user (e.g., a workflow engine
+with a client-credentials token of its own, or automated tests), can be
+allowed as service clients. This is off by default: without
+`security.auth.service_clients`, tokens of clients are handled as before,
+and their own client IDs are not accepted audiences. Each allowed client is
+listed explicitly, by its issuer and client ID, and gets the role `user`,
+e.g., for a client `my-engine` of the identity provider of the example
+below (see [Deployment settings](#deployment-settings)):
+
+```yaml
+security:
+  auth:
+    audience:
+      - my-portal-client-id
+      # if the identity provider puts only the client's own ID into `aud`
+      # of its client-credentials tokens
+      - my-engine
+    service_clients:
+      - client_id: my-engine
+        issuer: https://login.example.org/oidc/
+  access_control:
+    client_mapping:
+      my-engine: user
+```
+
+A token is the service token of a listed client if it was issued by the
+client's issuer (`iss`), to the client (`client_id`, or `azp` without it),
+and its subject (`sub`) is the client ID (or the client's `subject`, see
+[FOCA's authentication
+options](https://foca.readthedocs.io/en/latest/configuration/auth/)). With
+such a token, the client:
+
+- creates tasks, and becomes their owner as a client (`client:<client
+  ID>`: owner roles such as `g2, client:my-engine, owner,
+  /ga4gh/tes/v1/tasks/<id>`, and `user_id: "client:my-engine"` in the task
+  document);
+- lists, reads and cancels its own tasks, and reads their provenance;
+- sees no tasks of others, and others (users, other clients, admins) don't
+  see its tasks; a user whose `sub` equals a client ID is another owner;
+- gets nothing beyond: no admin rights, and no user it could act for.
+
+Its tasks are relayed to the TES instances as all tasks, with proTES' own
+credentials (see [Credentials of TES
+instances](#credentials-of-tes-instances)); the client's token is not
+passed on. Limits of the tasks per user count the tasks of each client as
+those of `client:<client ID>`, and accounting records them under that owner.
+
+**Audience.** Some identity providers put only the client's own ID into the
+audience (`aud`) of its client-credentials tokens, so that ID must be an
+accepted audience (`security.auth.audience`, or the `audience` of the
+client's issuer); proTES warns on startup for clients whose ID isn't. As
+that audience would also accept other tokens for the client, e.g., users'
+tokens obtained by it (by login, or by token exchange, after which some
+identity providers keep the exchanging client in `aud`), proTES accepts the
+ID of a service client as audience only for that client's own service
+tokens: other tokens whose only accepted audiences are IDs of service
+clients are rejected on all endpoints (`401`, with an `invalid_token`
+challenge). Tokens for the other audiences are not affected.
+
+**Groups.** Service tokens with groups (in the group claim,
+`claim_groups`) are rejected likewise (`401`), also without audience
+validation, as the roles of their groups (`group_mapping`) would be added
+to the role `user` of the client, e.g., `admin`; proTES logs a warning
+naming the client and the claim. Many identity providers put no groups into
+client-credentials tokens, and proTES doesn't request user info for them.
+Where they do (e.g., for groups of a client's service account), remove the
+groups from the client's tokens at the identity provider (its group
+memberships or the mapper of the claim) before listing the client.
+
+proTES refuses to start if a service client has no explicit `issuer` (client
+IDs are unique per issuer only), isn't mapped to the role `user` or is
+mapped to another role, may act for users (`on_behalf_of`), or is proTES'
+own client (`PROTES_CLIENT_ID`), whose tokens TES instances get. The allowed
+clients are logged on startup.
+
+Clients acting for users are not supported: tasks belong to the caller of
+their token. To pass users on (e.g., from a workflow engine), token exchange
+(RFC 8693) is the way: a user's token exchanged for proTES' audience is a
+user token, so its tasks belong to the user, and the service client role
+isn't needed for it.
 
 ## Permissions API
 

@@ -925,7 +925,11 @@ startup.
 The TES API requires access tokens of the trusted issuers
 (`security.auth`), and roles from groups (`security.access_control`); the
 issuers, the audience and the groups are deployment settings without
-defaults. See [Access control](access-control.md).
+defaults. Service clients, which create and own tasks with their own tokens,
+are off by default (`security.auth.service_clients` and
+`security.access_control.client_mapping`, see [Service
+clients](access-control.md#service-clients)). See [Access
+control](access-control.md).
 
 ## Request size limit
 
