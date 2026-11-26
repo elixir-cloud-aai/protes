@@ -37,6 +37,7 @@ from tests.conftest import (
     make_headers,
     make_token,
     set_overlays,
+    subject,
 )
 from tests.ga4gh.tes.conftest import BASE_PATH, TASK, FakeBackend, relayed
 
@@ -367,6 +368,24 @@ def test_owner_stored(
 
 
 @pytest.mark.usefixtures("backend")
+def test_owner_stored_beside_users(
+    service_client: FlaskClient, mongo_client: MongoClient[dict[str, Any]]
+) -> None:
+    """Users own tasks namespaced by their issuer, clients by prefix only.
+
+    FOCA 0.23 namespaces the subjects of users, also with a single issuer,
+    but not clients (`client:<client ID>`).
+    """
+    client_task = create(service_client, client_headers())
+    user_task = create(service_client, make_headers(USER))
+    owners = {
+        document["task"]["id"]: document["user_id"]
+        for document in mongo_client[DB]["tasks"].find()
+    }
+    assert owners == {client_task: CLIENT_OWNER, user_task: subject(USER)}
+
+
+@pytest.mark.usefixtures("backend")
 def test_separate_from_users(service_client: FlaskClient) -> None:
     """Tasks of service clients and of users are invisible to each other."""
     client_task = create(service_client, client_headers())
@@ -451,7 +470,8 @@ def test_owner_of_client(
     with service_app.app.test_request_context():
         assert ownership.get_owner() == CLIENT_OWNER
     assert ownership.owner_subject(CLIENT_OWNER) == ("client", CLIENT)
-    assert ownership.owner_subject(USER) == ("user", USER)
+    # users are namespaced by their issuer (FOCA 0.23), clients are not
+    assert ownership.owner_subject(subject(USER)) == ("user", subject(USER))
 
 
 # Audiences of service clients
