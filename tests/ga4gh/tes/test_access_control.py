@@ -18,12 +18,14 @@ from tests.conftest import (
     ADMIN,
     ADMIN_USER,
     DB,
+    ISSUER,
     OTHER_USER,
     OUTSIDER,
     USER,
     make_headers,
     reset_gateway,
     set_overlays,
+    subject,
 )
 from tests.ga4gh.tes.conftest import (
     BACKENDS,
@@ -169,7 +171,7 @@ def test_owner_without_role(
     # the owner roles are given to a user without role (as for an owner who
     # left the groups with the role `user`)
     rules = mongo_client[DB]["policy_rules"]
-    rules.update_many({"ptype": "g2"}, {"$set": {"v0": f"user:{OUTSIDER}"}})
+    rules.update_many({"ptype": "g2"}, {"$set": {"v0": f"user:{subject(OUTSIDER)}"}})
     mark_rules_changed(client)
     headers = make_headers(OUTSIDER)
     for method, path in task_item_operations(task_id):
@@ -197,7 +199,11 @@ def test_admin_grants_owner(client: FlaskClient, task_id: str) -> None:
             PERMISSIONS,
             json={
                 "policy_type": "g2",
-                "rule": {"v0": f"user:{OTHER_USER}", "v1": "owner", "v2": resource},
+                "rule": {
+                    "v0": f"user:{subject(OTHER_USER)}",
+                    "v1": "owner",
+                    "v2": resource,
+                },
             },
             headers=headers,
         )
@@ -299,12 +305,43 @@ def test_owner_stored(
     The roles are on the task and on its cancellation, which is not a
     sub-path of the task.
     """
-    assert stored(mongo_client, task_id)["user_id"] == USER
+    assert stored(mongo_client, task_id)["user_id"] == subject(USER)
     rules = mongo_client[DB]["policy_rules"].find({"ptype": "g2"})
     assert sorted((rule["v0"], rule["v1"], rule["v2"]) for rule in rules) == [
-        (f"user:{USER}", "owner", f"{BASE_PATH}/tasks/{task_id}"),
-        (f"user:{USER}", "owner", f"{BASE_PATH}/tasks/{task_id}:cancel"),
+        (f"user:{subject(USER)}", "owner", f"{BASE_PATH}/tasks/{task_id}"),
+        (f"user:{subject(USER)}", "owner", f"{BASE_PATH}/tasks/{task_id}:cancel"),
     ]
+
+
+def test_owner_stored_bare(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    app_env: None,
+    backend: type[FakeBackend],
+    mongo_client: MongoClient[dict[str, Any]],
+) -> None:
+    """With the issuer's `namespace: ""`, owners are stored bare.
+
+    As before FOCA 0.23, so that single-issuer deployments keep the owners of
+    their stored tasks (see the upgrade notes of 0.7.0).
+    """
+    overlay = tmp_path / "bare.yaml"
+    overlay.write_text(
+        yaml.safe_dump(
+            {"security": {"auth": {"issuers": [{"issuer": ISSUER, "namespace": ""}]}}}
+        ),
+        encoding="utf-8",
+    )
+    set_overlays(monkeypatch, overlay)
+    reset_gateway()
+    client = init_app().app.test_client()
+    response = client.post(f"{BASE_PATH}/tasks", json=TASK, headers=make_headers())
+    assert response.status_code == 200
+    task_id = response.get_json()["id"]
+    assert stored(mongo_client, task_id)["user_id"] == USER
+    rules = mongo_client[DB]["policy_rules"].find({"ptype": "g2"})
+    assert {rule["v0"] for rule in rules} == {f"user:{USER}"}
+    assert list_ids(client, USER) == [task_id]
 
 
 def test_owner_failed_task(client: FlaskClient, backend: type[FakeBackend]) -> None:

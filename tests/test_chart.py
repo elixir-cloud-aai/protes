@@ -1659,7 +1659,8 @@ def test_plugins_keys() -> None:
 
     With the conversion of `protes.pluginKeys`, the keys of the schema are
     those of FOCA's model, except those set in `config.plugins` (`defaults`,
-    `gateway_id`); the conversion has no other keys.
+    `gateway_id`) and the limits of files of WES runs (`attachments`, which
+    TES gateways don't get); the conversion has no other keys.
     """
     helpers = (CHART / "templates" / "_helpers.tpl").read_text()
     block = re.search(
@@ -1672,7 +1673,9 @@ def test_plugins_keys() -> None:
     keys = _schema_keys(schema["properties"]["plugins"])
     assert set(conversion) <= keys
     assert all(key.islower() for key in keys - set(conversion))
-    expected = _model_keys(PluginsConfig, frozenset({"defaults", "gateway_id"}))
+    expected = _model_keys(
+        PluginsConfig, frozenset({"defaults", "gateway_id", "attachments"})
+    )
     assert {conversion.get(key, key) for key in keys} == expected
 
 
