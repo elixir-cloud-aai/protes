@@ -180,17 +180,19 @@ The TES backends of `tes.backends`, with the keys of the app config
   "registryAllowPrivateAddresses" "registry_allow_private_addresses"
   "usernameEnv" "username_env"
   "passwordEnv" "password_env"
+  "apiKey" "api_key"
+  "keyEnv" "key_env"
 -}}
 {{- $entries := list -}}
 {{- range $entry := get (.Values.tes | default dict) "backends" | default list -}}
 {{- $converted := dict -}}
 {{- range $key, $value := $entry -}}
-{{- if and (eq $key "basic") (kindIs "map" $value) -}}
-{{- $basic := dict -}}
-{{- range $name, $env := $value -}}
-{{- $_ := set $basic (get $keys $name | default $name) $env -}}
+{{- if and (has $key (list "basic" "apiKey")) (kindIs "map" $value) -}}
+{{- $credentials := dict -}}
+{{- range $name, $setting := $value -}}
+{{- $_ := set $credentials (get $keys $name | default $name) $setting -}}
 {{- end -}}
-{{- $value = $basic -}}
+{{- $value = $credentials -}}
 {{- end -}}
 {{- $_ := set $converted (get $keys $key | default $key) $value -}}
 {{- end -}}
