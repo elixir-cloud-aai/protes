@@ -10,7 +10,7 @@ from typing import Any, ClassVar
 
 from connexion import FlaskApp
 from foca import get_custom_config
-from foca.plugins import Backend
+from foca.plugins import Backend, Headers, OutboundRequest
 from foca.plugins.backends import BackendListConfig
 import pydantic
 import pytest
@@ -30,6 +30,7 @@ from pro_tes.config_models import (
 from pro_tes.exceptions import BackendAuthError
 from pro_tes.ga4gh.tes import backends
 from pro_tes.ga4gh.tes.backends import backend_versions
+from pro_tes.gateway import RESERVED_HEADERS
 from pro_tes.security import check_backends
 from tests.conftest import set_overlays
 
@@ -115,6 +116,7 @@ def test_config_custom_header() -> None:
         key_entry(header="Content-Type"),
         key_entry(header="Cookie"),
         key_entry(header="Proxy-Authorization"),
+        *[key_entry(header=name.title()) for name in sorted(RESERVED_HEADERS)],
         {**key_entry(), "audience": "urn:example:tes"},
         {
             "type": "ga4gh-service-registry",
@@ -235,6 +237,10 @@ def test_api_key_auth() -> None:
     custom = backends.ApiKeyAuth(header="X-API-Key", key=KEY)
     assert bearer(prepared).headers["Authorization"] == f"Bearer {KEY}"
     assert custom(prepared).headers["X-API-Key"] == KEY
+    same = backends.ApiKeyAuth(header="Authorization", key=KEY)
+    assert bearer == same
+    assert hash(bearer) == hash(same)
+    assert len({bearer, same, custom}) == 2
     assert KEY not in repr(bearer)
     assert KEY not in repr(custom)
     assert "X-API-Key" in repr(custom)
@@ -329,7 +335,7 @@ class KeyRequiringHandler(BaseHTTPRequestHandler):
 
     Requires `KEY` in the header `header`, as a bearer token in
     `Authorization`; records the headers of each request. `/redirect`
-    redirects to the same server.
+    redirects to a task on the same server.
     """
 
     header: ClassVar[str] = "Authorization"
@@ -360,6 +366,11 @@ class KeyRequiringHandler(BaseHTTPRequestHandler):
         self.rfile.read(length)
         if self.headers.get(self.header) != self._expected():
             self._send(401, {"msg": "API key required"})
+        elif self.path == "/redirect":
+            self.send_response(302)
+            self.send_header("Location", "/ga4gh/tes/v1/tasks/remote-1")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
         elif self.path.endswith("/service-info"):
             self._send(
                 200,
@@ -429,23 +440,37 @@ def test_backend_requires_api_key(
 ) -> None:
     """Tasks are created, got and canceled at a backend that requires a key.
 
-    Each request carries the key; the key is not logged.
+    Tasks are forwarded as plugins forward them, whose header of the same
+    name the key replaces. Each request carries the key, also after a
+    redirect on the same host; the key is not logged.
     """
     monkeypatch.setattr(KeyRequiringHandler, "header", header)
     kwargs = {} if header == "Authorization" else {"header": header}
     client = use_backend(key_server, **kwargs)
     caplog.set_level(logging.DEBUG)
     task = tes.Task(executors=[tes.Executor(image="alpine", command=["true"])])
-    assert client.create_task(task) == "remote-1"
+    outbound = OutboundRequest(
+        backend=client.backend,
+        method="POST",
+        path="/ga4gh/tes/v1/tasks",
+        headers=Headers({header: "plugin-value"}),
+    )
+    task_id, _ = client.forward(outbound, task)
+    assert task_id == "remote-1"
     assert client.get_task("remote-1").state == "COMPLETE"
     client.cancel_task("remote-1")
     assert client.service_info()["id"] == "poiesis"
+    params = client._request_params()
+    redirected = client._request("GET", f"{key_server}/redirect", **params)
+    assert redirected.json()["state"] == "COMPLETE"
     expected = f"Bearer {KEY}" if header == "Authorization" else KEY
     assert [request[:2] for request in KeyRequiringHandler.received] == [
         ("POST", "/ga4gh/tes/v1/tasks"),
         ("GET", "/ga4gh/tes/v1/tasks/remote-1?view=BASIC"),
         ("POST", "/ga4gh/tes/v1/tasks/remote-1:cancel"),
         ("GET", "/ga4gh/tes/v1/service-info"),
+        ("GET", "/redirect"),
+        ("GET", "/ga4gh/tes/v1/tasks/remote-1"),
     ]
     assert all(
         request[2].get(header) == expected for request in KeyRequiringHandler.received
@@ -484,11 +509,22 @@ def test_check_backends_api_key(
     assert KEY not in caplog.text
 
 
-def test_check_backends_api_key_missing(monkeypatch: pytest.MonkeyPatch) -> None:
-    """On startup, missing keys are named with the other missing credentials."""
+def test_check_backends_api_key_missing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """On startup, missing keys are named with the other missing credentials.
+
+    Also keys of empty files.
+    """
     monkeypatch.delenv(KEY_ENV, raising=False)
     monkeypatch.delenv(f"{KEY_ENV}_FILE", raising=False)
-    with pytest.raises(RuntimeError, match=f"environment variables {KEY_ENV}$"):
+    expected = f"environment variables {KEY_ENV} .or {KEY_ENV}_FILE.$"
+    with pytest.raises(RuntimeError, match=expected):
+        check_backends(tes_config(key_entry()))
+    empty = tmp_path / "key"
+    empty.write_text("")
+    monkeypatch.setenv(f"{KEY_ENV}_FILE", str(empty))
+    with pytest.raises(RuntimeError, match=expected):
         check_backends(tes_config(key_entry()))
 
 

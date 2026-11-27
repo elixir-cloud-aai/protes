@@ -364,21 +364,28 @@ API_KEY_HEADER = "Authorization"
 TesAuth = Literal["client_credentials", "basic", "api_key", "none"]
 """Credentials of proTES for TES instances (`auth` of their entries)."""
 
-# Names of environment variables, as POSIX shells accept them
+# Names of environment variables, as POSIX shells accept them (a string, as
+# pydantic's `Field(pattern=...)` takes it)
 _ENV_NAME = r"^[A-Za-z_][A-Za-z0-9_]*$"
 # Header names (RFC 9110, section 5.6.2: tokens)
 _HEADER_NAME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
-# Headers that can't carry API keys: set by `requests` or proTES for the
-# request itself, or credentials of proxies and cookies
+# Headers that can't carry API keys: those that plugins can't set either
+# (`pro_tes.gateway.RESERVED_HEADERS`, which imports this module), as they
+# change where or how requests are sent; headers that `requests` or proTES
+# set for the request itself; and cookies
 _RESERVED_HEADERS = frozenset(
     {
         "connection",
         "content-length",
         "content-type",
         "cookie",
+        "expect",
         "host",
         "proxy-authorization",
+        "te",
+        "trailer",
         "transfer-encoding",
+        "upgrade",
     }
 )
 

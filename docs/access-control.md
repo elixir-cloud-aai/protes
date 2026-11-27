@@ -545,9 +545,9 @@ custom:
   file named in the variable `<key_env>_FILE` (e.g.,
   `TES_POIESIS_API_KEY_FILE=/run/secrets/poiesis-api-key`, a mounted
   Secret), as FOCA reads its own credentials; setting both is an error. A
-  final line break is dropped (e.g., of a Secret created from a file). proTES reads the key for each request, and never
-  writes it to the config, the logs, the database or the task documents, nor
-  passes it to plugins. Keys must be visible ASCII characters (no spaces or
+  final line break is dropped (e.g., of a Secret created from a file).
+  proTES reads the key for each request, and never writes it to the config,
+  the logs, the database or the task documents, nor passes it to plugins. Keys must be visible ASCII characters (no spaces or
   line breaks). Unknown keys of `api_key` (e.g., the key itself as a value)
   stop the app on startup, and the error doesn't show their values.
 - **Checks on startup:** the app and the Celery worker refuse to start if
@@ -580,9 +580,10 @@ custom:
   deploy/protes deploy/protes-worker -n <namespace>`); with
   `<key_env>_FILE`, the file is read for each request, so the new key is
   used once the file is updated. Then revoke the old key at the TES
-  instance (in Poiesis, `DELETE /poiesis/v1/api-keys/<id>`, which takes
-  effect at once). Keys of Poiesis expire: rotate them in time, as requests
-  with an expired key fail with `401 Unauthorized` (new tasks then go to
+  instance (see its docs, e.g., [Poiesis' API
+  keys](https://poiesis.jaeaeich.com/docs/concepts/api-keys.html)). Keys
+  may expire: rotate them in time, as requests with an expired key fail
+  with `401 Unauthorized` (new tasks then go to
   other TES instances, and the tasks at that TES instance can't be tracked
   or canceled until a valid key is set).
 

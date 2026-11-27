@@ -4,11 +4,10 @@ import logging
 import os
 
 from foca import get_config, get_custom_config
-from foca.config.environment import get_env
 from foca.plugins.backends import BackendList, RegistryEntry, ServiceEntry
 
 from pro_tes.config_models import CustomConfig, Tes, TesServiceEntry
-from pro_tes.exceptions import BackendAuthError
+from pro_tes.exceptions import ApiKeyNotSet, BackendAuthError
 from pro_tes.ga4gh.tes.backends import CLIENT_ID_ENV, CLIENT_SECRET_ENV, read_api_key
 
 logger = logging.getLogger(__name__)
@@ -151,8 +150,9 @@ def _check_api_key(entry: ServiceEntry) -> list[str]:
             api_key`.
 
     Returns:
-        The environment variable of its API key, if neither it nor the
-        variable with the name of its file (`<key_env>_FILE`) is set.
+        The environment variable of its API key, and the one with the name
+        of its file (`<key_env>_FILE`), if neither is set (or the file is
+        empty).
 
     Raises:
         RuntimeError: The backend has no `api_key`, or its key can't be used
@@ -177,10 +177,11 @@ def _check_api_key(entry: ServiceEntry) -> list[str]:
     )
     name = api_key.key_env
     try:
-        if not get_env(name):
-            return [name]
         read_api_key(name)
-    except (ValueError, BackendAuthError) as exc:
+    except ApiKeyNotSet:
+        # also if the file is empty
+        return [f"{name} (or {name}_FILE)"]
+    except BackendAuthError as exc:
         # the messages name the variables, never the key
         raise RuntimeError(f"TES backend {entry.url}: {exc}") from None
     return []

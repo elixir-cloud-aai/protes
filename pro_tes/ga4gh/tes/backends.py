@@ -107,6 +107,7 @@ from pro_tes.config_models import (
     split_server_url,
 )
 from pro_tes.exceptions import (
+    ApiKeyNotSet,
     BackendAddressNotAllowed,
     BackendAuthError,
     BackendNotConfigured,
@@ -221,10 +222,12 @@ def read_api_key(name: str) -> str:
         The API key, without a final line break.
 
     Raises:
-        pro_tes.exceptions.BackendAuthError: Neither variable is set (or
-            they are empty), both are, the file can't be read, or the key
-            has characters other than visible ASCII (e.g., spaces or line
-            breaks, which can't be sent in headers).
+        pro_tes.exceptions.ApiKeyNotSet: Neither variable is set (or they
+            are empty).
+        pro_tes.exceptions.BackendAuthError: Both variables are set, the
+            file can't be read, or the key has characters other than visible
+            ASCII (e.g., spaces or line breaks, which can't be sent in
+            headers).
     """
     try:
         key = foca_get_env(name)
@@ -235,9 +238,7 @@ def read_api_key(name: str) -> str:
     # Secret created from a file), as FOCA reads files
     key = (key or "").removesuffix("\n").removesuffix("\r")
     if not key:
-        raise BackendAuthError(
-            f"Environment variable {name} (or {name}_FILE) is not set"
-        )
+        raise ApiKeyNotSet(f"Environment variable {name} (or {name}_FILE) is not set")
     if not _API_KEY.fullmatch(key):
         raise BackendAuthError(
             f"API key of {name}: characters other than visible ASCII"
@@ -1364,7 +1365,9 @@ class BackendSession(requests.Session):
         """Create a session."""
         super().__init__()
         self.auth = NO_CREDENTIALS
-        # headers with credentials, dropped on redirects to other hosts
+        # headers with credentials, dropped on redirects to other hosts;
+        # API key headers are added as requests are prepared, so a session
+        # is used for one request only (cf. `backend_request`)
         self._credential_headers = {"Authorization"}
 
     def prepare_request(self, request: requests.Request) -> requests.PreparedRequest:
