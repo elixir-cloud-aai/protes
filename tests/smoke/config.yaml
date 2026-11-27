@@ -48,6 +48,17 @@ custom:
         url_schemes:
           - http
         auth: none
+      # Requires an API key instead of access tokens, as Poiesis does (the key
+      # of proTES in `SMOKE_TES_API_KEY`, or the file of
+      # `SMOKE_TES_API_KEY_FILE`, see `compose.yaml`); only for tasks that
+      # choose it, as the backends before it accept all others
+      - type: ga4gh-tes
+        url: http://fake-tes-key:8080
+        url_schemes:
+          - http
+        auth: api_key
+        api_key:
+          key_env: SMOKE_TES_API_KEY
     url_schemes:
       - http
     client_credentials:

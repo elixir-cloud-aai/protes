@@ -103,6 +103,25 @@ held_v1="$(jq -r .id "${body}")"
 await_state "${held_v1}" RUNNING
 check POST "/tasks/${held_v1}:cancel" 200 '. == {}'
 await_state "${held_v1}" CANCELED
+# A backend that requires an API key instead of tokens (`auth: api_key`, as
+# for Poiesis): the app creates and cancels the task with the key of the
+# variable, the worker tracks it with the key of the file
+# (`compose.yaml`); the key is neither in the task nor in the logs
+api_key="$(cat "$(dirname "$0")/api-key.txt")"
+only_key='"tags": {"gateway.backends":
+    "{\"type\": \"allow\", \"backends\": [\"http://fake-tes-key:8080\"]}"'
+check POST /tasks 200 '.id | length > 0' \
+  "{${only_key}, \"fake.hold\": \"true\"}, \"executors\": [{\"image\": \"alpine\", \"command\": [\"true\"]}]}"
+held_key="$(jq -r .id "${body}")"
+await_state "${held_key}" RUNNING
+check POST "/tasks/${held_key}:cancel" 200 '. == {}'
+await_state "${held_key}" CANCELED
+check GET "/tasks/${held_key}?view=FULL" 200 \
+  ".tags[\"gateway.backend\"] == \"http://fake-tes-key:8080\" and (tostring | contains(\"${api_key}\") | not)"
+if docker compose logs protes protes-worker 2>&1 | grep -qF "${api_key}"; then
+  echo "::error::The API key of fake-tes-key is in the logs of the app or the worker"
+  exit 1
+fi
 # The logs of TES instances, in the view `FULL` only
 check GET "/tasks/${id_11}?view=FULL" 200 \
   '.logs[0].logs[0].stdout == "fake stdout" and .logs[0].logs[0].stderr == "fake stderr" and .logs[0].system_logs == ["fake system log"]'
