@@ -358,6 +358,75 @@ def _is_resource(value: str) -> bool:
     return bool(parts.netloc or parts.path)
 
 
+API_KEY_HEADER = "Authorization"
+"""Header of API keys by default, which carries them as bearer tokens."""
+
+TesAuth = Literal["client_credentials", "basic", "api_key", "none"]
+"""Credentials of proTES for TES instances (`auth` of their entries)."""
+
+# Names of environment variables, as POSIX shells accept them
+_ENV_NAME = r"^[A-Za-z_][A-Za-z0-9_]*$"
+# Header names (RFC 9110, section 5.6.2: tokens)
+_HEADER_NAME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
+# Headers that can't carry API keys: set by `requests` or proTES for the
+# request itself, or credentials of proxies and cookies
+_RESERVED_HEADERS = frozenset(
+    {
+        "connection",
+        "content-length",
+        "content-type",
+        "cookie",
+        "host",
+        "proxy-authorization",
+        "transfer-encoding",
+    }
+)
+
+
+class ApiKey(ConfigModel):
+    """API key of proTES for a TES backend (`auth: api_key`).
+
+    The key itself is never part of the config: it is read for each request
+    from the environment variable `key_env`, or from the file named in the
+    variable `<key_env>_FILE` (e.g., a mounted Secret), cf.
+    :py:func:`pro_tes.ga4gh.tes.backends.read_api_key`.
+
+    Args:
+        key_env: Name of the environment variable with the key.
+        header: Header that carries the key: `Authorization` (the default),
+            as a bearer token (`Bearer <key>`), or another header (e.g.,
+            `X-API-Key`), as it is.
+
+    Attributes:
+        key_env: Name of the environment variable with the key.
+        header: Header that carries the key.
+    """
+
+    key_env: str = Field(pattern=_ENV_NAME)
+    header: str = API_KEY_HEADER
+
+    @field_validator("header")
+    @classmethod
+    def check_header(cls, value: str) -> str:
+        """Check that the header can carry an API key.
+
+        Args:
+            value: Name of the header.
+
+        Returns:
+            The name of the header.
+
+        Raises:
+            ValueError: The name is not a valid header name, or that of a
+                header that requests set themselves, or of other credentials.
+        """
+        if not _HEADER_NAME.fullmatch(value):
+            raise ValueError(f"Invalid header name: {value!r}")
+        if value.lower() in _RESERVED_HEADERS:
+            raise ValueError(f"Header {value!r} can't carry API keys")
+        return value
+
+
 class TesServiceEntry(ServiceEntry):
     """TES instance of `custom.tes.backends`, with the settings of proTES.
 
@@ -368,7 +437,13 @@ class TesServiceEntry(ServiceEntry):
         audience: Audience of the access tokens of proTES for the TES
             instance, requested with `client_credentials.audience_parameter`
             (e.g., the client ID of the TES instance); by default, its URL.
-        **data: Fields of :py:class:`foca.plugins.backends.ServiceEntry`.
+        auth: Credentials for the TES instance, as of
+            :py:class:`foca.plugins.backends.ServiceEntry`, or an API key of
+            proTES (`api_key`, cf. `api_key`).
+        api_key: API key of proTES for the TES instance; set if, and only
+            if, `auth` is `api_key`.
+        **data: Other fields of
+            :py:class:`foca.plugins.backends.ServiceEntry`.
 
     Attributes:
         api_path: Path of the TES API, relative to `url`, without trailing
@@ -376,10 +451,34 @@ class TesServiceEntry(ServiceEntry):
         audience: Audience of the access tokens of proTES for the TES
             instance, requested with `client_credentials.audience_parameter`
             (e.g., the client ID of the TES instance); by default, its URL.
+        auth: Credentials for the TES instance.
+        api_key: API key of proTES for the TES instance, if any.
     """
 
     api_path: str = DEFAULT_API_PATH
     audience: str | None = Field(default=None, min_length=1)
+    # FOCA's values, and API keys of TES instances (not of registries, whose
+    # TES instances would all get the same key)
+    auth: TesAuth = "client_credentials"  # type: ignore[assignment]
+    api_key: ApiKey | None = None
+
+    @model_validator(mode="after")
+    def check_api_key(self) -> Self:
+        """Check that `api_key` is set with, and only with, `auth: api_key`.
+
+        Returns:
+            The entry.
+
+        Raises:
+            ValueError: `api_key` is missing for `auth: api_key`, or set
+                otherwise.
+        """
+        if (self.auth == "api_key") != (self.api_key is not None):
+            raise ValueError(
+                f"Backend {self.id!r}: `api_key` is needed with, and only with,"
+                " `auth: api_key`"
+            )
+        return self
 
     @field_validator("api_path")
     @classmethod

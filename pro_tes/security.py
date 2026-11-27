@@ -4,10 +4,12 @@ import logging
 import os
 
 from foca import get_config, get_custom_config
+from foca.config.environment import get_env
 from foca.plugins.backends import BackendList, RegistryEntry, ServiceEntry
 
-from pro_tes.config_models import CustomConfig, Tes
-from pro_tes.ga4gh.tes.backends import CLIENT_ID_ENV, CLIENT_SECRET_ENV
+from pro_tes.config_models import CustomConfig, Tes, TesServiceEntry
+from pro_tes.exceptions import BackendAuthError
+from pro_tes.ga4gh.tes.backends import CLIENT_ID_ENV, CLIENT_SECRET_ENV, read_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -115,11 +117,12 @@ def _check_service(entry: ServiceEntry) -> list[str]:
         entry: Configured backend of `custom.tes.backends`.
 
     Returns:
-        The environment variables with its HTTP Basic credentials that are
-        not set, if any.
+        The environment variables with its HTTP Basic credentials or its API
+        key that are not set, if any.
 
     Raises:
-        RuntimeError: The backend has `auth: basic`, but no `basic`.
+        RuntimeError: The backend has `auth: basic`, but no `basic`; or its
+            API key can't be used (cf. :py:func:`_check_api_key`).
     """
     if entry.auth == "basic":
         logger.warning(
@@ -133,8 +136,53 @@ def _check_service(entry: ServiceEntry) -> list[str]:
                 f"TES backend {entry.url}: `auth: basic` without `basic`"
             )
         return _missing_env(entry.basic.username_env, entry.basic.password_env)
+    if entry.auth == "api_key":
+        return _check_api_key(entry)
     if entry.auth == "none":
         logger.warning("TES backend %s: no authentication (`auth: none`)", entry.url)
+    return []
+
+
+def _check_api_key(entry: ServiceEntry) -> list[str]:
+    """Log that a configured backend gets an API key, and check the key.
+
+    Args:
+        entry: Configured backend of `custom.tes.backends`, with `auth:
+            api_key`.
+
+    Returns:
+        The environment variable of its API key, if neither it nor the
+        variable with the name of its file (`<key_env>_FILE`) is set.
+
+    Raises:
+        RuntimeError: The backend has no `api_key`, or its key can't be used
+            (both variables are set, the file can't be read, or the key has
+            characters that headers can't carry); the message names the
+            variables, not the key.
+    """
+    api_key = entry.api_key if isinstance(entry, TesServiceEntry) else None
+    if api_key is None:
+        # prevented by validation, unless the config was changed later
+        raise RuntimeError(
+            f"TES backend {entry.url}: `auth: api_key` without `api_key`"
+        )
+    # names the header (config), not the key
+    # nosemgrep  # logger-credential-disclosure: see above
+    logger.warning(
+        "TES backend %s: API key (`auth: api_key`, header %s), a transitional"
+        " mode for backends that don't accept tokens of proTES; tasks there are"
+        " owned by the account of the key at the backend",
+        entry.url,
+        api_key.header,
+    )
+    name = api_key.key_env
+    try:
+        if not get_env(name):
+            return [name]
+        read_api_key(name)
+    except (ValueError, BackendAuthError) as exc:
+        # the messages name the variables, never the key
+        raise RuntimeError(f"TES backend {entry.url}: {exc}") from None
     return []
 
 
@@ -159,8 +207,9 @@ def check_backends(conf: Tes | None = None, public_url: str | None = None) -> No
             below the public URL (which are never used). Or environment
             variables with credentials are not set: the client ID and secret
             of proTES if a backend has (or discovered backends get) `auth:
-            client_credentials`, or the HTTP Basic credentials of a backend
-            with `auth: basic`.
+            client_credentials`, the HTTP Basic credentials of a backend
+            with `auth: basic`, or the API key of a backend with `auth:
+            api_key`. Or the API key of a backend can't be used.
     """
     if conf is None:
         conf = get_custom_config(CustomConfig).tes
