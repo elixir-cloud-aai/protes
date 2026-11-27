@@ -34,6 +34,9 @@ With the environment variable `FAKE_TES_BASE_PATH=/v1`, it serves the TES API at
 that path only, and requires no access tokens, as TESP does (behind no rewriting
 proxy, and as those of the identity provider of another instance can't be
 checked).
+
+With the environment variable `FAKE_TES_API_KEY`, it requires that API key
+instead of access tokens (`Authorization: Bearer <key>`), as Poiesis does.
 """
 
 import base64
@@ -74,6 +77,8 @@ GROUPS = {
 KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 # TES version of this instance
 TES_10 = os.environ.get("FAKE_TES_VERSION") == "1.0"
+# API key that this instance requires instead of access tokens, if any
+API_KEY = os.environ.get("FAKE_TES_API_KEY")
 SERVICE_INFO = {
     "id": "org.example.fake-tes",
     "name": "Fake TES",
@@ -256,13 +261,19 @@ class Handler(BaseHTTPRequestHandler):
         )
 
     def _authorized(self) -> bool:
-        """Check that the request has an access token of proTES.
+        """Check that the request has an access token of proTES, or the API key.
 
         Sends `401` if not.
 
         Returns:
-            Whether the request has a valid access token of proTES.
+            Whether the request has a valid access token of proTES, or the
+            API key if this instance requires one (`API_KEY`).
         """
+        if API_KEY is not None:
+            if self.headers.get("Authorization") != f"Bearer {API_KEY}":
+                self._send(HTTPStatus.UNAUTHORIZED, {"msg": "API key required"})
+                return False
+            return True
         if TES_10 or "FAKE_TES_BASE_PATH" in os.environ:
             return True
         token = (self.headers.get("Authorization") or "").removeprefix("Bearer ")

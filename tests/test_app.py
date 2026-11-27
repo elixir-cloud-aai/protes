@@ -245,16 +245,25 @@ def test_smoke_test_config(
     It relays tasks to the fake TES backends only: the one of TES 1.0, which
     needs no access tokens, first, then the one of TES 1.1, with access tokens
     of proTES (client ID and secret as in the Compose override), then the one
-    with an API path of its own, for tasks that choose it.
+    with an API path of its own, and the one that requires an API key, for
+    tasks that choose them.
     """
     monkeypatch.setenv("FOCA_CONFIG_OVERLAY", str(SMOKE_CONFIG))
     smoke = yaml.safe_load(SMOKE_COMPOSE.read_text())
-    for name in (CLIENT_ID_ENV, CLIENT_SECRET_ENV):
-        monkeypatch.setenv(name, smoke["services"]["protes"]["environment"][name])
+    app_env = smoke["services"]["protes"]["environment"]
+    for name in (CLIENT_ID_ENV, CLIENT_SECRET_ENV, "SMOKE_TES_API_KEY"):
+        monkeypatch.setenv(name, app_env[name])
     app = init_app()
     with app.app.app_context():
         custom = get_custom_config(CustomConfig)
-    (entry_10, entry, entry_v1) = custom.tes.backends.root
+    (entry_10, entry, entry_v1, entry_key) = custom.tes.backends.root
+    assert isinstance(entry_key, TesServiceEntry)
+    assert entry_key.url == "http://fake-tes-key:8080"
+    assert entry_key.auth == "api_key"
+    assert entry_key.api_key is not None
+    assert entry_key.api_key.key_env == "SMOKE_TES_API_KEY"
+    key = smoke["services"]["fake-tes-key"]["environment"]["FAKE_TES_API_KEY"]
+    assert app_env["SMOKE_TES_API_KEY"] == key
     assert entry_10.url == "http://fake-tes-10:8080"
     assert entry_10.auth == "none"
     assert entry.url == "http://fake-tes:8080"
@@ -271,11 +280,15 @@ def test_smoke_test_config(
     assert [alt.plugin for step in pipeline for alt in step.alternatives] == [
         "foca.routing.ordered"
     ]
-    # the Celery worker has the same client
-    assert (
-        smoke["services"]["protes-worker"]["environment"]
-        == smoke["services"]["protes"]["environment"]
-    )
+    # the Celery worker has the same client, and the same API key, from the
+    # file named in `SMOKE_TES_API_KEY_FILE` (as mounted at `/smoke`)
+    worker_env = dict(smoke["services"]["protes-worker"]["environment"])
+    path = worker_env.pop("SMOKE_TES_API_KEY_FILE")
+    key_file = SMOKE_CONFIG.parent / path.removeprefix("/smoke/")
+    assert key_file.read_text().removesuffix("\n") == key
+    assert worker_env == {
+        name: value for name, value in app_env.items() if name != "SMOKE_TES_API_KEY"
+    }
 
 
 def test_run_app(app: FlaskApp, monkeypatch: pytest.MonkeyPatch) -> None:

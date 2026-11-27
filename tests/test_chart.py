@@ -1246,6 +1246,12 @@ CHART_BACKENDS = [
         "registryAllowPrivateAddresses": True,
         "labels": {"source": "registry"},
     },
+    {
+        "type": "ga4gh-tes",
+        "url": "https://poiesis.example.org",
+        "auth": "api_key",
+        "apiKey": {"keyEnv": "TES_POIESIS_API_KEY", "header": "X-API-Key"},
+    },
 ]
 CONFIG_BACKENDS = [
     {
@@ -1272,6 +1278,12 @@ CONFIG_BACKENDS = [
         "allow_private_addresses": True,
         "registry_allow_private_addresses": True,
         "labels": {"source": "registry"},
+    },
+    {
+        "type": "ga4gh-tes",
+        "url": "https://poiesis.example.org",
+        "auth": "api_key",
+        "api_key": {"key_env": "TES_POIESIS_API_KEY", "header": "X-API-Key"},
     },
 ]
 WITH_BACKENDS = ("--set-json", f"tes.backends={json.dumps(CHART_BACKENDS)}")
@@ -1342,6 +1354,50 @@ def test_tes_backends_default() -> None:
                 "type": "ga4gh-service-registry",
                 "url": "https://registry.example.org",
                 "auth": "basic",
+            },
+            "/tes/backends/0",
+        ),
+        (
+            {
+                "type": "ga4gh-service-registry",
+                "url": "https://registry.example.org",
+                "auth": "api_key",
+            },
+            "/tes/backends/0",
+        ),
+        (
+            {
+                "type": "ga4gh-tes",
+                "url": "https://tes.example.org",
+                "auth": "api_key",
+                "apiKey": {"header": "X-API-Key"},
+            },
+            "/tes/backends/0",
+        ),
+        (
+            {
+                "type": "ga4gh-tes",
+                "url": "https://tes.example.org",
+                "auth": "api_key",
+                "apiKey": {"keyEnv": "TES_API_KEY", "key": "secret"},
+            },
+            "/tes/backends/0",
+        ),
+        (
+            {
+                "type": "ga4gh-tes",
+                "url": "https://tes.example.org",
+                "auth": "api_key",
+                "apiKey": {"keyEnv": "TES-API-KEY"},
+            },
+            "/tes/backends/0",
+        ),
+        (
+            {
+                "type": "ga4gh-tes",
+                "url": "https://tes.example.org",
+                "auth": "api_key",
+                "apiKey": {"keyEnv": "TES_API_KEY", "header": "X API Key"},
             },
             "/tes/backends/0",
         ),
