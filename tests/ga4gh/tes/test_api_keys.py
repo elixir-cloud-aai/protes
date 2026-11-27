@@ -27,7 +27,7 @@ from pro_tes.config_models import (
     Tes,
     TesServiceEntry,
 )
-from pro_tes.exceptions import BackendAuthError
+from pro_tes.exceptions import BackendAuthError, BackendOutcomeUnknown
 from pro_tes.ga4gh.tes import backends
 from pro_tes.ga4gh.tes.backends import backend_versions
 from pro_tes.gateway import RESERVED_HEADERS
@@ -232,11 +232,14 @@ def test_api_key_auth() -> None:
 
     Their representation names the header only.
     """
-    prepared = requests.Request("GET", BACKEND_URL).prepare()
     bearer = backends.ApiKeyAuth(header="authorization", key=KEY)
     custom = backends.ApiKeyAuth(header="X-API-Key", key=KEY)
-    assert bearer(prepared).headers["Authorization"] == f"Bearer {KEY}"
-    assert custom(prepared).headers["X-API-Key"] == KEY
+    with_bearer = bearer(requests.Request("GET", BACKEND_URL).prepare()).headers
+    assert with_bearer["Authorization"] == f"Bearer {KEY}"
+    assert "X-API-Key" not in with_bearer
+    with_custom = custom(requests.Request("GET", BACKEND_URL).prepare()).headers
+    assert with_custom["X-API-Key"] == KEY
+    assert "Authorization" not in with_custom
     same = backends.ApiKeyAuth(header="Authorization", key=KEY)
     assert bearer == same
     assert hash(bearer) == hash(same)
@@ -374,7 +377,14 @@ class KeyRequiringHandler(BaseHTTPRequestHandler):
         elif self.path.endswith("/service-info"):
             self._send(
                 200,
-                {"id": "poiesis", "type": {"artifact": "tes", "version": "1.1.0"}},
+                {
+                    "id": "poiesis",
+                    "type": {
+                        "group": "org.ga4gh",
+                        "artifact": "tes",
+                        "version": "1.1.0",
+                    },
+                },
             )
         elif self.command == "POST" and self.path.endswith(":cancel"):
             self._send(200, {})
@@ -483,7 +493,11 @@ def test_backend_refuses_wrong_key(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A refused key fails the request, without the key in the error or logs."""
+    """A refused key fails the request, without the key in the error or logs.
+
+    Refused tasks count as not accepted (an error of `requests`, not an
+    unknown outcome), so that the next backend is tried.
+    """
     monkeypatch.setenv(KEY_ENV, "poi_wrong-key")
     client = use_backend(key_server)
     caplog.set_level(logging.DEBUG)
@@ -491,7 +505,29 @@ def test_backend_refuses_wrong_key(
         client.get_task("remote-1")
     assert exc_info.value.response.status_code == 401
     assert "poi_wrong-key" not in str(exc_info.value)
+    outbound = OutboundRequest(
+        backend=client.backend, method="POST", path="/ga4gh/tes/v1/tasks"
+    )
+    task = tes.Task(executors=[tes.Executor(image="alpine", command=["true"])])
+    with pytest.raises(requests.HTTPError) as forward_info:
+        client.forward(outbound, task)
+    assert forward_info.value.response.status_code == 401
+    assert not isinstance(forward_info.value, BackendOutcomeUnknown)
+    assert "poi_wrong-key" not in str(forward_info.value)
     assert "poi_wrong-key" not in caplog.text
+
+
+def test_probe_with_api_key(key_server: str) -> None:
+    """With `probe_with_token`, service infos are read with the API key."""
+    conf = get_custom_config(CustomConfig).tes
+    conf.backends = tes_config(key_entry(key_server)).backends
+    conf.probe_with_token = True
+    client = backends.create_client(host=key_server)
+    assert str(backends.backend_version(client.backend)) == "1.1"
+    assert [request[:2] for request in KeyRequiringHandler.received] == [
+        ("GET", "/ga4gh/tes/v1/service-info")
+    ]
+    assert KeyRequiringHandler.received[0][2]["Authorization"] == f"Bearer {KEY}"
 
 
 def test_check_backends_api_key(
