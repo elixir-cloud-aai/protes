@@ -69,7 +69,8 @@ The TES instances that tasks are forwarded to are listed in `tes.backends`,
 in order, with the keys of the app's `custom.tes.backends` in camelCase
 (e.g., `apiPath`, `urlSchemes`, `refreshInterval`, `maxStale`,
 `allowPrivateAddresses`, `registryAllowPrivateAddresses`,
-`basic.usernameEnv` and `basic.passwordEnv`; the keys of `labels` are kept), which the chart renders
+`basic.usernameEnv`, `basic.passwordEnv`, and `apiKey` with `keyEnv` and
+`header`; the keys of `labels` are kept), which the chart renders
 into the config (see [TES
 instances](https://protes.readthedocs.io/en/latest/configuration/#tes-instances)):
 TES instances (`type: ga4gh-tes`) and service registries whose verified TES
@@ -199,7 +200,8 @@ config:
 tes:
   # TES instances that tasks are distributed to, in order; proTES
   # authenticates at them with its own access token (`auth:
-  # client_credentials`, the default), unless `auth` is `basic` or `none`
+  # client_credentials`, the default), unless `auth` is `basic`, `api_key`
+  # or `none`
   backends:
     - type: ga4gh-tes
       url: "https://tes.example.org"
@@ -207,6 +209,13 @@ tes:
     - type: ga4gh-tes
       url: "https://tesp.example.org"
       apiPath: /v1
+    # A TES instance that accepts API keys, not tokens, e.g., Poiesis; the
+    # key comes from a Secret (see Secrets)
+    - type: ga4gh-tes
+      url: "https://poiesis.example.net"
+      auth: api_key
+      apiKey:
+        keyEnv: TES_POIESIS_API_KEY
     # Verified TES instances of a service registry, in its place
     - type: ga4gh-service-registry
       url: "https://registry.example.org/ga4gh/registry/v1"
@@ -305,13 +314,15 @@ never appear in values files or ConfigMaps.
 containers (Kubernetes `EnvVar`s), e.g., credentials of proTES for the TES
 instances from a Secret of your own; rendering fails for the variables that
 the chart sets itself. Credentials of proTES for TES instances (client
-credentials of an identity provider, or HTTP Basic credentials, see
-[Credentials of TES
+credentials of an identity provider, HTTP Basic credentials, or API keys,
+see [Credentials of TES
 instances](https://github.com/elixir-cloud-aai/protes/blob/dev/docs/access-control.md#credentials-of-tes-instances))
 are read from environment variables: `PROTES_CLIENT_ID` and
 `PROTES_CLIENT_SECRET` for TES instances with `auth: client_credentials`,
-and those named in `basic.username_env` and `basic.password_env` for TES
-instances with `auth: basic`, e.g.:
+those named in `basic.username_env` and `basic.password_env` for TES
+instances with `auth: basic`, and the one named in `apiKey.keyEnv` for each
+TES instance with `auth: api_key` (one key per TES instance, e.g., in a
+Secret per TES instance, or a key of its own in a shared Secret), e.g.:
 
 ```yaml
 protes:
@@ -326,7 +337,23 @@ protes:
       secretKeyRef:
         name: protes-tes-credentials
         key: client-secret
+  # API key of proTES at a TES instance with `apiKey.keyEnv:
+  # TES_POIESIS_API_KEY`
+  - name: TES_POIESIS_API_KEY
+    valueFrom:
+      secretKeyRef:
+        name: protes-poiesis-api-key
+        key: api-key
 ```
+
+Create such a Secret with, e.g., `kubectl create secret generic
+protes-poiesis-api-key --from-file=api-key=<file with the key> -n
+<namespace>`, so that the key doesn't show up in the shell's history. To
+rotate a key, create a new one at the TES instance, update the Secret,
+restart the app and the worker (see below), then revoke the old key at the
+TES instance (see [API keys of TES
+instances](https://github.com/elixir-cloud-aai/protes/blob/dev/docs/access-control.md#api-keys-of-tes-instances),
+also on task ownership at the TES instance).
 
 Set `pluginStore.existingSecret` if plugins keep their store in the
 database and it holds personal data: `ctx.store.key_for()` then keys its

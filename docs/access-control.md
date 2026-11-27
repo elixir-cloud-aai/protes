@@ -329,6 +329,13 @@ the registry's entry, `client_credentials` or `none`):
   names are set in `basic` (`username_env`, `password_env`). This is a
   transitional mode for TES instances that don't accept tokens yet, and will
   be removed once all of them do;
+- `api_key`: with an API key of proTES at the TES instance, for TES
+  instances that don't accept tokens of proTES' client, but API keys, e.g.,
+  [Poiesis](https://poiesis.jaeaeich.com/docs/concepts/api-keys.html) (see
+  [API keys of TES instances](#api-keys-of-tes-instances)). For configured
+  TES instances only: registries can't hand one key to all the TES
+  instances that they list. This is a transitional mode too, until proTES
+  exchanges the tokens of its users per TES instance;
 - `none`: without credentials, e.g., for TES instances on an internal
   network that need none.
 
@@ -337,18 +344,20 @@ file of the environment (`~/.netrc`, or the file of `NETRC`), which
 `requests` would otherwise add to requests without credentials, put in
 place of proTES' access token, and look up again after redirects. Redirects
 within the same host and port keep the credentials, as do redirects from
-`http` to `https` on the default ports; all other redirects drop them.
+`http` to `https` on the default ports; all other redirects drop them (also
+API keys in headers other than `Authorization`).
 Proxies and CA certificates of the environment (e.g., `HTTPS_PROXY`,
 `REQUESTS_CA_BUNDLE`) still apply to configured TES instances. Requests to
 the identity provider of proTES don't get credentials from `.netrc` either,
 except after redirects of its discovery document.
 
 The client ID and secret of proTES are read from the environment variables
-`PROTES_CLIENT_ID` and `PROTES_CLIENT_SECRET`, and Basic credentials from
-the variables named in the config, e.g., set from Kubernetes Secrets; they
-are never part of the config or the database. The app refuses to start if
-one of them is not set for a TES instance that needs it, and warns of each
-TES instance with `basic` or `none`. Set the TES instances and the identity
+`PROTES_CLIENT_ID` and `PROTES_CLIENT_SECRET`, and Basic credentials and API
+keys from the variables named in the config, e.g., set from Kubernetes
+Secrets; they are never part of the config or the database. The app refuses
+to start if one of them is not set for a TES instance that needs it, and
+warns of each TES instance with `basic`, `api_key` or `none`. Set the TES
+instances and the identity
 provider of proTES in a [config overlay](configuration.md), e.g.:
 
 ```yaml
@@ -363,6 +372,11 @@ custom:
         basic:
           username_env: TES_EXAMPLE_COM_USERNAME
           password_env: TES_EXAMPLE_COM_PASSWORD
+      - type: ga4gh-tes
+        url: https://poiesis.example.net
+        auth: api_key
+        api_key:
+          key_env: TES_POIESIS_API_KEY
     client_credentials:
       # The token endpoint is that of the issuer's OpenID Connect discovery
       # document (`token_endpoint` sets it instead)
@@ -501,3 +515,78 @@ proTES doesn't check the audience of the tokens it gets, which may be
 opaque to it. Test the setup before relying on it: decode a token of the
 identity provider for one TES instance, and check that the other TES
 instances refuse it.
+
+### API keys of TES instances
+
+Some TES instances don't accept tokens of proTES' client, but API keys: e.g.,
+[Poiesis](https://poiesis.jaeaeich.com/docs/concepts/api-keys.html), which
+checks an entitlement claim that client-credentials tokens don't carry. For
+these, an entry with `auth: api_key` gives proTES an API key of an account
+at the TES instance; `api_key` says where proTES reads it, and how it sends
+it:
+
+```yaml
+custom:
+  tes:
+    backends:
+      - type: ga4gh-tes
+        url: https://poiesis.example.net
+        auth: api_key
+        api_key:
+          # Environment variable with the key (or `<key_env>_FILE`, see below)
+          key_env: TES_POIESIS_API_KEY
+          # Header of the key (default): `Authorization: Bearer <key>`, as
+          # Poiesis expects it; other headers (e.g., `X-API-Key`) carry the
+          # key as it is
+          header: Authorization
+```
+
+- **Where the key comes from:** the environment variable `key_env`, or the
+  file named in the variable `<key_env>_FILE` (e.g.,
+  `TES_POIESIS_API_KEY_FILE=/run/secrets/poiesis-api-key`, a mounted
+  Secret), as FOCA reads its own credentials; setting both is an error. A
+  final line break is dropped (e.g., of a Secret created from a file). proTES reads the key for each request, and never
+  writes it to the config, the logs, the database or the task documents, nor
+  passes it to plugins. Keys must be visible ASCII characters (no spaces or
+  line breaks). Unknown keys of `api_key` (e.g., the key itself as a value)
+  stop the app on startup, and the error doesn't show their values.
+- **Checks on startup:** the app and the Celery worker refuse to start if
+  neither variable is set for a TES instance with `auth: api_key` (named
+  with the other missing credentials), or if the key can't be used (both
+  set, the file can't be read, or invalid characters); the messages name
+  the variables, never the key. Each TES instance with an API key is logged
+  with a warning (``TES backend <url>: API key (`auth: api_key`, header
+  <header>) ...``).
+- **Which requests:** every request to the TES instance: creating, getting
+  and canceling tasks (also by the Celery worker, which polls them), and its
+  service info if `custom.tes.probe_with_token` is set (otherwise service
+  infos are read without credentials). Redirects to other hosts or ports
+  drop the key, in any header.
+- **Only configured TES instances:** registry entries can't have `auth:
+  api_key`, as every TES instance that a registry lists would get the key.
+  Give each TES instance a key of its own, so that a TES instance can't use
+  the key at another one.
+- **Task ownership at the TES instance:** the TES instance sees all tasks
+  of proTES as tasks of the key's account (in Poiesis, a key acts as the
+  user who minted it), not of the users who created them. Users still only
+  see their own tasks in proTES (see [Task ownership](#task-ownership)),
+  but quotas, accounting and access control of the TES instance apply to
+  the key's account as a whole, and anyone with access to that account at
+  the TES instance sees all tasks that proTES sent there. Use an account
+  that is meant for proTES, not a personal one.
+- **Rotating the key:** create a new key at the TES instance, update the
+  Secret, and restart the app and the Celery worker if the key comes from
+  the environment variable (with the Helm chart, `kubectl rollout restart
+  deploy/protes deploy/protes-worker -n <namespace>`); with
+  `<key_env>_FILE`, the file is read for each request, so the new key is
+  used once the file is updated. Then revoke the old key at the TES
+  instance (in Poiesis, `DELETE /poiesis/v1/api-keys/<id>`, which takes
+  effect at once). Keys of Poiesis expire: rotate them in time, as requests
+  with an expired key fail with `401 Unauthorized` (new tasks then go to
+  other TES instances, and the tasks at that TES instance can't be tracked
+  or canceled until a valid key is set).
+
+API keys are a transitional mode until proTES exchanges the tokens of its
+users for tokens of each TES instance (OAuth 2.0 token exchange, [RFC
+8693](https://www.rfc-editor.org/rfc/rfc8693)); TES instances then see the
+users again, and no shared key is needed.

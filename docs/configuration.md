@@ -49,8 +49,10 @@ entry is either a TES instance (`type: ga4gh-tes`), with its base URL
 (`url`, without the API path `/ga4gh/tes/v1`; see [API paths](#api-paths) for
 TES instances that serve it elsewhere) and how proTES authenticates
 at it (`auth`: with its own access token, the default, with HTTP Basic
-credentials from environment variables, or not at all; see [Credentials of
-TES instances](access-control.md#credentials-of-tes-instances)), or a
+credentials from environment variables, with an API key from an environment
+variable, or not at all; see [Credentials of TES
+instances](access-control.md#credentials-of-tes-instances) and [API keys of
+TES instances](access-control.md#api-keys-of-tes-instances)), or a
 service registry, whose verified TES instances are used in its place (`type:
 ga4gh-service-registry`, see [Discovery in a service
 registry](#discovery-in-a-service-registry)). The base config lists none;
@@ -72,6 +74,14 @@ custom:
       - type: ga4gh-tes
         url: https://tesp.example.org
         api_path: /v1
+      # A TES instance that accepts API keys, not tokens, e.g., Poiesis: the
+      # key comes from the variable `TES_POIESIS_API_KEY` (or the file of
+      # `TES_POIESIS_API_KEY_FILE`), sent as `Authorization: Bearer <key>`
+      - type: ga4gh-tes
+        url: https://poiesis.example.net
+        auth: api_key
+        api_key:
+          key_env: TES_POIESIS_API_KEY
     # Identity provider of proTES, for the TES instances with
     # `auth: client_credentials` (the default)
     client_credentials:
@@ -397,6 +407,19 @@ describe it; CI doesn't run it yet:
   evicted) is `PREEMPTED`.
 - Tasks with inputs, outputs or volumes need a default storage class, or the
   chart's value `storageClass`.
+
+[Poiesis](https://github.com/JaeAeich/poiesis), as its [docs on API
+keys](https://poiesis.jaeaeich.com/docs/concepts/api-keys.html) describe it;
+CI doesn't run it yet:
+
+- It accepts no client-credentials tokens of proTES (it requires an
+  entitlement claim that they don't carry), but API keys: set `auth:
+  api_key` with the default header, as it takes keys as `Authorization:
+  Bearer <key>` (see [API keys of TES
+  instances](access-control.md#api-keys-of-tes-instances)).
+- Tasks created with a key belong to the user who minted it, so all tasks
+  of proTES there belong to that account.
+- Keys expire; rotate them in time.
 
 In general, if no selected TES instance accepts a task, clients get a generic
 `503 Service Unavailable`, without the reason of the refusal.
