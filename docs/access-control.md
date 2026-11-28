@@ -139,7 +139,9 @@ ingress if your identity providers issue tokens for proTES to many people.
 also tokens of clients that are not [service clients](#service-clients),
 proTES' own client among them, and, with
 `security.auth.verify_audience: false`, tokens issued for other services.
-Such callers own no tasks, so they get an empty list.
+Such callers see only the tasks of their own subject: none, unless that
+subject created tasks (e.g., a user whose token was issued for another
+service).
 
 Ownership is taken from the caller's own token only: a user's token makes
 the user the owner, and a service client's own token the client (see
