@@ -50,8 +50,8 @@ def check_task_ownership() -> None:
         )
 
 
-RENAMED_RULES = {
-    "users-create-list-tasks": "users-create-tasks` and `authenticated-list-tasks",
+RENAMED_RULES: dict[str, tuple[str, ...]] = {
+    "users-create-list-tasks": ("users-create-tasks", "authenticated-list-tasks"),
 }
 
 
@@ -73,8 +73,9 @@ def check_renamed_rules(config: Config) -> None:
     policies = config.security.access_control.named_policies or {}
     for old, new in RENAMED_RULES.items():
         if old in policies:
+            names = " and ".join(f"`{name}`" for name in new)
             raise RuntimeError(
-                f"Access control rule `{old}` was renamed to `{new}`, so "
+                f"Access control rule `{old}` was renamed to {names}, so "
                 "a rule under the old name would be added next to them, not "
                 "change them: rename it in your config (see the upgrade "
                 "notes in `docs/upgrading.md`)"

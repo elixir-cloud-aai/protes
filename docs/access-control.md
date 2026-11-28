@@ -135,6 +135,11 @@ request grows with the number of tasks (see FOCA's notes on
 [scaling](https://foca.readthedocs.io/en/latest/access-control/#scaling)).
 As every authenticated caller may list tasks, limit request rates at the
 ingress if your identity providers issue tokens for proTES to many people.
+"Authenticated" means any valid token with a subject from a trusted issuer:
+also tokens of clients that are not [service clients](#service-clients),
+proTES' own client among them, and, with
+`security.auth.verify_audience: false`, tokens issued for other services.
+Such callers own no tasks, so they get an empty list.
 
 Ownership is taken from the caller's own token only: a user's token makes
 the user the owner, and a service client's own token the client (see

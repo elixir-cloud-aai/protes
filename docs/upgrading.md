@@ -27,7 +27,9 @@ start (before it stores any rule, so running instances keep theirs): a
 rule under the old name would be added next to the new ones, not change
 them, so the overlay that earlier versions documented to stop task
 creation (`users-create-list-tasks` with `(GET)|(HEAD)` only) would let
-users create tasks again. Rename it; to stop task creation, set
+users create tasks again. An overlay that removes it
+(`users-create-list-tasks: null`) stops the start too, with FOCA's error
+naming the unknown rule. Rename it; to stop task creation, set
 `users-create-tasks: null`. To keep listing for the role `user` only, set
 `authenticated-list-tasks: null` and add a rule of your own, e.g.,
 `users-list-tasks: [p, user, /ga4gh/tes/v1/tasks, (GET)|(HEAD)]`. Every
