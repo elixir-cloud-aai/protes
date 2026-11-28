@@ -136,10 +136,11 @@ request grows with the number of tasks (see FOCA's notes on
 As every authenticated caller may list tasks, limit request rates at the
 ingress if your identity providers issue tokens for proTES to many people.
 
-Ownership is taken from the caller's own token only: proTES doesn't support
-service clients, also acting for users, yet, and refuses to start if
-`security.auth.service_clients`, `security.auth.on_behalf_of_header` or
-`security.access_control.client_mapping` is set.
+Ownership is taken from the caller's own token only: a user's token makes
+the user the owner, and a service client's own token the client (see
+[Service clients](#service-clients)). Nobody can create tasks for someone
+else: proTES refuses to start if `security.auth.on_behalf_of_header` is set,
+or a service client may act for users (`on_behalf_of`).
 
 New tasks never get the identifier of a stored task, or of a task that
 owner roles are left on (e.g., of a deleted task), so that nobody gets
@@ -150,6 +151,89 @@ the stored ones atomically on each startup; if an overlay leaves no rules,
 the stored ones are removed.
 The role `admin` comes only from groups in `group_mapping`: the startup
 check doesn't count `g` rules of the policies or of the permissions API.
+
+## Service clients
+
+Apps that run tasks for themselves, not for a user (e.g., a workflow engine
+with a client-credentials token of its own, or automated tests), can be
+allowed as service clients. This is off by default: without
+`security.auth.service_clients`, tokens of clients are handled as before,
+and their own client IDs are not accepted audiences. Each allowed client is
+listed explicitly, by its issuer and client ID, and gets the role `user`,
+e.g., for a client `my-engine` of the identity provider of the example
+below (see [Deployment settings](#deployment-settings)):
+
+```yaml
+security:
+  auth:
+    audience:
+      - my-portal-client-id
+      # if the identity provider puts only the client's own ID into `aud`
+      # of its client-credentials tokens
+      - my-engine
+    service_clients:
+      - client_id: my-engine
+        issuer: https://login.example.org/oidc/
+  access_control:
+    client_mapping:
+      my-engine: user
+```
+
+A token is the service token of a listed client if it was issued by the
+client's issuer (`iss`), to the client (`client_id`, or `azp` without it),
+and its subject (`sub`) is the client ID (or the client's `subject`, see
+[FOCA's authentication
+options](https://foca.readthedocs.io/en/latest/configuration/auth/)). With
+such a token, the client:
+
+- creates tasks, and becomes their owner as a client (`client:<client
+  ID>`: owner roles such as `g2, client:my-engine, owner,
+  /ga4gh/tes/v1/tasks/<id>`, and `user_id: "client:my-engine"` in the task
+  document);
+- lists, reads and cancels its own tasks, and reads their provenance;
+- sees no tasks of others, and others (users, other clients, admins) don't
+  see its tasks; a user whose `sub` equals a client ID is another owner;
+- gets nothing beyond: no admin rights, and no user it could act for.
+
+Its tasks are relayed to the TES instances as all tasks, with proTES' own
+credentials (see [Credentials of TES
+instances](#credentials-of-tes-instances)); the client's token is not
+passed on. Limits of the tasks per user count the tasks of each client as
+those of `client:<client ID>`, and accounting records them under that owner.
+
+**Audience.** Some identity providers put only the client's own ID into the
+audience (`aud`) of its client-credentials tokens, so that ID must be an
+accepted audience (`security.auth.audience`, or the `audience` of the
+client's issuer); proTES warns on startup for clients whose ID isn't. As
+that audience would also accept other tokens for the client, e.g., users'
+tokens obtained by it (by login, or by token exchange, after which some
+identity providers keep the exchanging client in `aud`), proTES accepts the
+ID of a service client as audience only for that client's own service
+tokens: other tokens whose only accepted audiences are IDs of service
+clients are rejected on all endpoints (`401`, with an `invalid_token`
+challenge). Tokens for the other audiences are not affected.
+
+**Groups.** Service tokens with groups (in the group claim,
+`claim_groups`) are rejected likewise (`401`), also without audience
+validation, as the roles of their groups (`group_mapping`) would be added
+to the role `user` of the client, e.g., `admin`; proTES logs a warning
+naming the client and the claim. Many identity providers put no groups into
+client-credentials tokens, and proTES doesn't request user info for them.
+Where they do (e.g., for groups of a client's service account), remove the
+groups from the client's tokens at the identity provider (its group
+memberships or the mapper of the claim) before listing the client.
+
+proTES refuses to start if a service client has no explicit `issuer` (client
+IDs are unique per issuer only), isn't mapped to the role `user` or is
+mapped to another role, may act for users (`on_behalf_of`), or is proTES'
+own client (`PROTES_CLIENT_ID`), whose tokens TES instances get. The allowed
+clients are logged on startup.
+
+Clients acting for users are not supported: tasks belong to the caller of
+their token. To pass users on (e.g., from a workflow engine), token exchange
+(RFC 8693) is the way: a user's token exchanged for proTES' audience is a
+user token, so its tasks belong to the user, and the service client role
+isn't needed for it.
 
 ## Permissions API
 
@@ -199,9 +283,11 @@ security:
 
 Issuers may also be maps of the issuer (`issuer`) and settings of their own
 (FOCA's `IssuerConfig`): the namespace of their users' subjects
-(`namespace`, see [Task owners](operations.md#task-owners)), and an
-`audience`, a group claim (`claim_groups`) and `userinfo_claims` that
-replace the global ones for the issuer's tokens (unless unset or null), e.g.:
+(`namespace`; by default the issuer, also if only one issuer is
+trusted; `""` keeps the subjects bare; see [Task
+owners](operations.md#task-owners)), and an `audience`, a group claim
+(`claim_groups`) and `userinfo_claims` that replace the global ones for
+the issuer's tokens (unless unset or null), e.g.:
 
 ```yaml
 security:
@@ -258,6 +344,13 @@ the registry's entry, `client_credentials` or `none`):
   names are set in `basic` (`username_env`, `password_env`). This is a
   transitional mode for TES instances that don't accept tokens yet, and will
   be removed once all of them do;
+- `api_key`: with an API key of proTES at the TES instance, for TES
+  instances that don't accept tokens of proTES' client, but API keys, e.g.,
+  [Poiesis](https://poiesis.jaeaeich.com/docs/concepts/api-keys.html) (see
+  [API keys of TES instances](#api-keys-of-tes-instances)). For configured
+  TES instances only: registries can't hand one key to all the TES
+  instances that they list. This is a transitional mode too, until proTES
+  exchanges the tokens of its users per TES instance;
 - `none`: without credentials, e.g., for TES instances on an internal
   network that need none.
 
@@ -266,18 +359,20 @@ file of the environment (`~/.netrc`, or the file of `NETRC`), which
 `requests` would otherwise add to requests without credentials, put in
 place of proTES' access token, and look up again after redirects. Redirects
 within the same host and port keep the credentials, as do redirects from
-`http` to `https` on the default ports; all other redirects drop them.
+`http` to `https` on the default ports; all other redirects drop them (also
+API keys in headers other than `Authorization`).
 Proxies and CA certificates of the environment (e.g., `HTTPS_PROXY`,
 `REQUESTS_CA_BUNDLE`) still apply to configured TES instances. Requests to
 the identity provider of proTES don't get credentials from `.netrc` either,
 except after redirects of its discovery document.
 
 The client ID and secret of proTES are read from the environment variables
-`PROTES_CLIENT_ID` and `PROTES_CLIENT_SECRET`, and Basic credentials from
-the variables named in the config, e.g., set from Kubernetes Secrets; they
-are never part of the config or the database. The app refuses to start if
-one of them is not set for a TES instance that needs it, and warns of each
-TES instance with `basic` or `none`. Set the TES instances and the identity
+`PROTES_CLIENT_ID` and `PROTES_CLIENT_SECRET`, and Basic credentials and API
+keys from the variables named in the config, e.g., set from Kubernetes
+Secrets; they are never part of the config or the database. The app refuses
+to start if one of them is not set for a TES instance that needs it, and
+warns of each TES instance with `basic`, `api_key` or `none`. Set the TES
+instances and the identity
 provider of proTES in a [config overlay](configuration.md), e.g.:
 
 ```yaml
@@ -292,6 +387,11 @@ custom:
         basic:
           username_env: TES_EXAMPLE_COM_USERNAME
           password_env: TES_EXAMPLE_COM_PASSWORD
+      - type: ga4gh-tes
+        url: https://poiesis.example.net
+        auth: api_key
+        api_key:
+          key_env: TES_POIESIS_API_KEY
     client_credentials:
       # The token endpoint is that of the issuer's OpenID Connect discovery
       # document (`token_endpoint` sets it instead)
@@ -430,3 +530,87 @@ proTES doesn't check the audience of the tokens it gets, which may be
 opaque to it. Test the setup before relying on it: decode a token of the
 identity provider for one TES instance, and check that the other TES
 instances refuse it.
+
+### API keys of TES instances
+
+Some TES instances don't accept tokens of proTES' client, but API keys: e.g.,
+[Poiesis](https://poiesis.jaeaeich.com/docs/concepts/api-keys.html), which
+checks an entitlement claim that client-credentials tokens don't carry. For
+these, an entry with `auth: api_key` gives proTES an API key of an account
+at the TES instance; `api_key` says where proTES reads it, and how it sends
+it:
+
+```yaml
+custom:
+  tes:
+    backends:
+      - type: ga4gh-tes
+        url: https://poiesis.example.net
+        auth: api_key
+        api_key:
+          # Environment variable with the key (or `<key_env>_FILE`, see below)
+          key_env: TES_POIESIS_API_KEY
+          # Header of the key (default): `Authorization: Bearer <key>`, as
+          # Poiesis expects it; other headers (e.g., `X-API-Key`) carry the
+          # key as it is
+          header: Authorization
+```
+
+- **Where the key comes from:** the environment variable `key_env`, or the
+  file named in the variable `<key_env>_FILE` (e.g.,
+  `TES_POIESIS_API_KEY_FILE=/run/secrets/poiesis-api-key`, a mounted
+  Secret), as FOCA reads its own credentials; setting both is an error. A
+  final line break is dropped (e.g., of a Secret created from a file).
+  proTES reads the key for each request, and never writes it to the config,
+  the logs, the database or the task documents, nor passes it to plugins.
+  Keys must be visible ASCII characters (no spaces or line breaks). Unknown
+  keys of `api_key` (e.g., the key itself as a value) stop the app on
+  startup, and the error doesn't show their values.
+- **Checks on startup:** the app and the Celery worker refuse to start if
+  neither variable is set for a TES instance with `auth: api_key` (named
+  with the other missing credentials), or if the key can't be used (both
+  set, the file can't be read, or invalid characters). The messages name
+  the TES instance by its URL, never the key, nor the names of the
+  variables (a key pasted as `key_env` by mistake may be a valid variable
+  name): look up `key_env` of that TES instance in the config. Missing keys
+  are listed as ``the API keys of TES backends <url> (the variables that
+  their `key_env` names, or their `_FILE` variables)``, keys that can't be
+  used as ``TES backend <url>: API key: ...``; requests that find no usable
+  key fail with ``TES backend <url>: API key ...``. Each TES instance with
+  an API key is logged with a warning (``TES backend <url>: API key
+  (`auth: api_key`, header <header>) ...``).
+- **Which requests:** every request to the TES instance: creating, getting
+  and canceling tasks (also by the Celery worker, which polls them), and its
+  service info if `custom.tes.probe_with_token` is set (otherwise service
+  infos are read without credentials). Redirects to other hosts or ports
+  drop the key, in any header.
+- **Only configured TES instances:** registry entries can't have `auth:
+  api_key`, as every TES instance that a registry lists would get the key.
+  Give each TES instance a key of its own, so that a TES instance can't use
+  the key at another one.
+- **Task ownership at the TES instance:** the TES instance sees all tasks
+  of proTES as tasks of the key's account (in Poiesis, a key acts as the
+  user who minted it), not of the users who created them. Users still only
+  see their own tasks in proTES (see [Task ownership](#task-ownership)),
+  but quotas, accounting and access control of the TES instance apply to
+  the key's account as a whole, and anyone with access to that account at
+  the TES instance sees all tasks that proTES sent there. Use an account
+  that is meant for proTES, not a personal one.
+- **Rotating the key:** create a new key at the TES instance, update the
+  Secret, and restart the app and the Celery worker if the key comes from
+  the environment variable (with the Helm chart, `kubectl rollout restart
+  deploy/<app> deploy/<app>-worker -n <namespace>`, `<app>` as in its
+  README, Names and labels, e.g., `protes` for the release `protes`); with
+  `<key_env>_FILE`, the file is read for each request, so the new key is
+  used once the file is updated. Then revoke the old key at the TES
+  instance (see its docs, e.g., [Poiesis' API
+  keys](https://poiesis.jaeaeich.com/docs/concepts/api-keys.html)). Keys
+  may expire: rotate them in time, as requests with an expired key fail
+  with `401 Unauthorized` (new tasks then go to other TES instances, and
+  the tasks at that TES instance can't be tracked or canceled until a valid
+  key is set).
+
+API keys are a transitional mode until proTES exchanges the tokens of its
+users for tokens of each TES instance (OAuth 2.0 token exchange, [RFC
+8693](https://www.rfc-editor.org/rfc/rfc8693)); TES instances then see the
+users again, and no shared key is needed.

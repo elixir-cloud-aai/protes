@@ -89,13 +89,19 @@ the database instead (database `taskStore`, or the one in `MONGO_DBNAME`),
 e.g., with `mongosh`; the owner of a task is in `user_id` of its document in
 the collection `tasks`, and as owner roles (`g2` rules) in the collection
 `policy_rules`. Owners are subjects (`sub` claims) of the users' access
-tokens; with several trusted issuers, they are namespaced by issuer
-(`<issuer>|<sub>`, or the issuer's `namespace`; bare for an issuer with
-`namespace: ""`), so `<sub>` below stands for that form:
+tokens, namespaced by their issuer (`<issuer>|<sub>`, or the issuer's
+`namespace`), also with a single trusted issuer; they are bare for an issuer
+with `namespace: ""`. `<sub>` below stands for that form. Tasks of [service
+clients](access-control.md#service-clients) belong to `client:<client ID>`
+(`user_id`, and `v0` of their owner roles):
 
 ```js
 // tasks of a user
 db.tasks.find({ user_id: "<sub>" }, { "task.id": 1, "task.state": 1 })
+// tasks of a service client (or, before 0.7.0, of a user whose subject
+// starts with `client:`)
+db.tasks.find({ user_id: "client:<client ID>" }, { "task.id": 1, "task.state": 1 })
+db.tasks.find({ user_id: /^client:/ }, { user_id: 1, "task.id": 1 })
 // tasks without owner, e.g., created by earlier versions (not tombstones)
 db.tasks.find(
   { user_id: { $exists: false }, deleted_at: { $exists: false } },
@@ -115,7 +121,7 @@ for resource in "/ga4gh/tes/v1/tasks/<id>" "/ga4gh/tes/v1/tasks/<id>:cancel"; do
 done
 ```
 
-and set `user_id` of the task to the user's `sub` in the database. To purge
+and set `user_id` of the task to the user's `<sub>` in the database. To purge
 tasks, delete their documents and their owner roles, e.g., those without
 owner (leave tombstones, `deleted_at`, in place: see below):
 

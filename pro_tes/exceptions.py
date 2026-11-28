@@ -42,6 +42,14 @@ class BackendAuthError(RuntimeError):
     """
 
 
+class ApiKeyNotSet(BackendAuthError):
+    """Raised when the API key of a TES backend is not set.
+
+    Neither its environment variable nor the one with the name of its file
+    (`<key_env>_FILE`) is set.
+    """
+
+
 class BackendRequestNotSent(requests.ConnectionError):
     """Raised when a request to a discovered TES backend was certainly not sent.
 

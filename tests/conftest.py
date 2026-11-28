@@ -72,6 +72,8 @@ ADMIN = "admin@example.org"
 ADMIN_USER = "carol@example.org"
 # Member of no group with a role
 OUTSIDER = "eve@example.org"
+
+
 # Groups mapped to the roles `user` and `admin` in the test overlay
 USER_GROUP = "compute-users"
 ADMIN_GROUP = "urn:example:group:compute-admins#login.example.org"
@@ -85,6 +87,22 @@ GROUPS = {
     OUTSIDER: ["other-group"],
 }
 KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+
+def subject(user: str) -> str:
+    """Return a user's subject as proTES stores it (FOCA's `namespace_subject`).
+
+    Subjects are namespaced by their issuer (`<issuer>|<sub>`), also with a
+    single trusted issuer, as the test overlay has (FOCA 0.23).
+
+    Args:
+        user: Subject as issued (`sub` claim), e.g., `USER`.
+
+    Returns:
+        The subject, namespaced by `ISSUER`.
+    """
+    return f"{ISSUER}|{user}"
+
 
 # The Celery app (`pro_tes.celery_worker`) is created, with its MongoDB
 # client, when its module is imported (e.g., with the controllers), so the
@@ -366,7 +384,11 @@ def mock_get(
         token = headers["Authorization"].removeprefix("Bearer ")
         try:
             claims = jwt.decode(
-                token, KEY.public_key(), algorithms=["RS256"], audience=AUDIENCE
+                token,
+                KEY.public_key(),
+                algorithms=["RS256"],
+                # any audience, as identity providers' user info endpoints do
+                options={"verify_aud": False},
             )
         except jwt.InvalidTokenError:
             return MockResponse({"error": "invalid_token"}, status_code=401)

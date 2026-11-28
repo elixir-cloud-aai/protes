@@ -565,9 +565,28 @@
                     "enum": [
                       "client_credentials",
                       "basic",
+                      "api_key",
                       "none"
                     ],
                     "description": "Credentials of proTES for the backend"
+                  },
+                  "apiKey": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "keyEnv"
+                    ],
+                    "properties": {
+                      "keyEnv": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                      },
+                      "header": {
+                        "type": "string",
+                        "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"
+                      }
+                    },
+                    "description": "Environment variable with the API key of proTES (keyEnv; set it from a Secret via protes.extraEnv), and the header that carries it (header; default Authorization, as Bearer <key>) (auth: api_key)"
                   },
                   "basic": {
                     "type": "object",
@@ -819,6 +838,11 @@
                     "type": "integer",
                     "minimum": 1,
                     "description": "Maximum size of values, in bytes of compact JSON (max_entry_size)"
+                  },
+                  "maxNamespaceSize": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Maximum size of the entries of the plugin's namespace, in bytes (max_namespace_size)"
                   },
                   "maxTtl": {
                     "type": "number",

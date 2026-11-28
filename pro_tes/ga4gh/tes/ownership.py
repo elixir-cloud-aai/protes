@@ -2,9 +2,16 @@
 
 The user creating a task (the subject of its access token, cf.
 :py:func:`foca.security.access_control.get_current_subject`) becomes its
-owner, and only owners may read and cancel it (enforced by the policies, cf.
-`security.access_control` in `config.yaml`); listings only show the tasks of
-the caller. Tasks are not shared, and admins don't see the tasks of others.
+owner, or, with its own token, the service client creating it (cf.
+:py:mod:`pro_tes.service_clients`); only owners may read and cancel it
+(enforced by the policies, cf. `security.access_control` in `config.yaml`);
+listings only show the tasks of the caller. Tasks are not shared, and admins
+don't see the tasks of others.
+
+Owners are identified by a string, as stored with the task (`user_id`): the
+subject of a user, or the client ID of a service client with the prefix
+`client:` (cf. :py:func:`owner_subject`), so that users and clients of the
+same identifier are different owners.
 
 Ownership is stored as resource-scoped roles of FOCA (`g2` rules) on the
 request paths of a task, so that FOCA enforces it: the task itself (e.g.,
@@ -13,14 +20,17 @@ request paths of a task, so that FOCA enforces it: the task itself (e.g.,
 so that roles on the task don't apply to it.
 """
 
+from typing import Literal
+
 from foca.security.access_control import (
     add_owner,
+    get_current_client,
     get_current_subject,
     list_resource_roles,
     list_subject_roles,
     remove_resource_role,
 )
-from foca.security.access_control.constants import OWNER_ROLE
+from foca.security.access_control.constants import CLIENT_PREFIX, OWNER_ROLE
 
 from pro_tes.exceptions import Unauthorized
 
@@ -32,17 +42,38 @@ def get_owner() -> str:
     """Get the owner of a task created by the current request.
 
     Returns:
-        The user of the current request (cf.
+        The service client of the current request, prefixed with `client:`
+        (cf. :py:func:`foca.security.access_control.get_current_client`),
+        or else its user (cf.
         :py:func:`foca.security.access_control.get_current_subject`).
 
     Raises:
         pro_tes.exceptions.Unauthorized: The request has no identified user,
-            e.g., because its token lacks the identity claim.
+            e.g., because its token lacks the identity claim, or the user's
+            subject starts with `client:`, as owners that are clients do.
     """
+    client = get_current_client()
+    if client is not None:
+        return f"{CLIENT_PREFIX}{client}"
     owner = get_current_subject()
-    if owner is None:
+    if owner is None or owner.startswith(CLIENT_PREFIX):
         raise Unauthorized("User could not be identified")
     return owner
+
+
+def owner_subject(owner: str) -> tuple[Literal["user", "client"], str]:
+    """Get the subject of the access control rules of an owner.
+
+    Args:
+        owner: Owner of a task (cf. :py:func:`get_owner`).
+
+    Returns:
+        The type of the subject (`client` for owners prefixed with
+        `client:`, else `user`), and the subject, without prefix.
+    """
+    if owner.startswith(CLIENT_PREFIX):
+        return "client", owner.removeprefix(CLIENT_PREFIX)
+    return "user", owner
 
 
 def task_resources(collection: str, task_id: str) -> list[str]:
@@ -81,31 +112,39 @@ def task_has_roles(collection: str, task_id: str) -> bool:
 
 
 def add_task_owner(collection: str, task_id: str, owner: str) -> None:
-    """Make a user the owner of a task.
+    """Make a user or service client the owner of a task.
 
     Args:
         collection: Request path of the tasks (e.g., `/ga4gh/tes/v1/tasks`).
         task_id: Identifier of the task.
-        owner: User identifier, without prefix (cf. :py:func:`get_owner`).
+        owner: Owner (cf. :py:func:`get_owner`): a user identifier, or a
+            client ID prefixed with `client:`.
     """
+    subject_type, subject = owner_subject(owner)
     for resource in task_resources(collection=collection, task_id=task_id):
-        add_owner(resource=resource, subject=owner)
+        add_owner(resource=resource, subject=subject, subject_type=subject_type)
 
 
 def remove_task_owner(collection: str, task_id: str, owner: str) -> None:
-    """Revoke the owner role of a user on a task (cf. :py:func:`add_task_owner`).
+    """Revoke the owner role of an owner on a task (cf. :py:func:`add_task_owner`).
 
     Args:
         collection: Request path of the tasks (e.g., `/ga4gh/tes/v1/tasks`).
         task_id: Identifier of the task.
-        owner: User identifier, without prefix.
+        owner: Owner (cf. :py:func:`get_owner`).
     """
+    subject_type, subject = owner_subject(owner)
     for resource in task_resources(collection=collection, task_id=task_id):
-        remove_resource_role(subject=owner, role=OWNER_ROLE, resource=resource)
+        remove_resource_role(
+            subject=subject,
+            role=OWNER_ROLE,
+            resource=resource,
+            subject_type=subject_type,
+        )
 
 
 def owned_tasks_filter(collection: str) -> dict[str, dict[str, list[str]]]:
-    """Get a MongoDB filter for the tasks of the current user.
+    """Get a MongoDB filter for the tasks of the caller (user or service client).
 
     Unlike :py:func:`foca.security.access_control.resource_filter`, the
     filter is not empty for admins: they only see their own tasks, too.

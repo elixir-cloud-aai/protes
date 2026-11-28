@@ -22,6 +22,12 @@ their registry entry):
   get the same;
 - `basic`: HTTP Basic credentials of the environment variables named in the
   config (a transitional mode, for backends that don't accept tokens yet);
+- `api_key`: an API key of proTES at the backend, from the environment
+  variable named in the config (`api_key.key_env`, or the file named in
+  `<key_env>_FILE`), in `Authorization` as a bearer token or in another
+  header (`api_key.header`); for configured backends only (a transitional
+  mode, for backends that don't accept proTES' tokens, until users' tokens
+  are exchanged per backend);
 - `none`: no credentials.
 
 Credentials are looked up for each request, so that long-running Celery
@@ -64,6 +70,7 @@ from http import HTTPStatus
 from inspect import signature
 import logging
 import os
+import re
 import ssl
 import threading
 import time
@@ -71,6 +78,7 @@ from typing import Any, NamedTuple
 from urllib.parse import quote, quote_plus
 
 from foca import get_config, get_custom_config
+from foca.config.environment import get_env as foca_get_env
 from foca.plugins import Backend, BackendResponse, Headers, OutboundRequest
 from foca.plugins import api as plugins_api
 from foca.plugins.backends import BackendList, RegistryEntry, ServiceEntry
@@ -90,6 +98,7 @@ from tes.utils import camel_to_snake, unmarshal
 from urllib3.exceptions import ConnectTimeoutError, HTTPError, NewConnectionError
 
 from pro_tes.config_models import (
+    API_KEY_HEADER,
     DEFAULT_API_PATH,
     ClientCredentials,
     CustomConfig,
@@ -98,6 +107,7 @@ from pro_tes.config_models import (
     split_server_url,
 )
 from pro_tes.exceptions import (
+    ApiKeyNotSet,
     BackendAddressNotAllowed,
     BackendAuthError,
     BackendNotConfigured,
@@ -132,6 +142,9 @@ CONNECT_TIMEOUT = 5
 # Maximum size of the parts in which responses of configured backends are
 # read, in bytes
 RESPONSE_CHUNK_SIZE = 64 * 1024
+# API keys: visible ASCII only (no spaces or line breaks), as headers carry
+# them, also as bearer tokens (RFC 6750, section 2.1)
+_API_KEY = re.compile(r"[\x21-\x7e]+")
 # Label of a backend with its TES version, which wins over its service info
 TES_VERSION_LABEL = "tes.version"
 # Timeout of reading the service info of a backend, in seconds; short, as
@@ -191,6 +204,118 @@ def get_env(name: str) -> str:
     if not value:
         raise BackendAuthError(f"Environment variable {name} is not set")
     return value
+
+
+def read_api_key(name: str) -> str:
+    """Read an API key of proTES for a TES backend.
+
+    From the environment variable, or from the file named in `<name>_FILE`
+    (e.g., a mounted Secret), as FOCA reads its own credentials (cf.
+    :py:func:`foca.config.environment.get_env`); the file is read on each
+    call, so that rotated keys are used at once. Messages name neither the
+    key nor the variables, as a key pasted as `key_env` by mistake may be a
+    valid variable name; callers name the backend.
+
+    Args:
+        name: Name of the environment variable (`key_env` of the backend).
+
+    Returns:
+        The API key, without a final line break.
+
+    Raises:
+        pro_tes.exceptions.ApiKeyNotSet: Neither variable is set (or they
+            are empty).
+        pro_tes.exceptions.BackendAuthError: Both variables are set, the
+            file can't be read, or the key has characters other than visible
+            ASCII (e.g., spaces or line breaks, which can't be sent in
+            headers).
+    """
+    if os.environ.get(name) and os.environ.get(f"{name}_FILE"):
+        # FOCA's message would name the variables
+        raise BackendAuthError(
+            "API key: the variable that `key_env` names and its `_FILE`"
+            " variable must not both be set"
+        )
+    try:
+        key = foca_get_env(name)
+    except ValueError:
+        # the file can't be read; FOCA's message would name the variable
+        raise BackendAuthError(
+            "API key: the file named in the `_FILE` variable of `key_env`"
+            " could not be read"
+        ) from None
+    # without a final line break, also in the variable (e.g., set from a
+    # Secret created from a file), as FOCA reads files
+    key = (key or "").removesuffix("\n").removesuffix("\r")
+    if not key:
+        raise ApiKeyNotSet(
+            "API key not set (neither the variable that `key_env` names nor"
+            " its `_FILE` variable)"
+        )
+    if not _API_KEY.fullmatch(key):
+        raise BackendAuthError("API key: characters other than visible ASCII")
+    return key
+
+
+class ApiKeyAuth(requests.auth.AuthBase):
+    """API key of a request to a TES backend, as a `requests` auth object.
+
+    In `Authorization`, as a bearer token (`Bearer <key>`); in other headers,
+    as it is. Its representation names the header only. Sessions of
+    configured backends drop the header on redirects to other hosts (cf.
+    :py:class:`BackendSession`).
+
+    Attributes:
+        header: Header that carries the key.
+    """
+
+    def __init__(self, header: str, key: str) -> None:
+        """Create the auth object.
+
+        Args:
+            header: Header that carries the key.
+            key: The API key.
+        """
+        self.header = header
+        bearer = header.lower() == API_KEY_HEADER.lower()
+        self._value = f"Bearer {key}" if bearer else key
+
+    def __call__(self, request: requests.PreparedRequest) -> requests.PreparedRequest:
+        """Set the header of a request.
+
+        Args:
+            request: The request.
+
+        Returns:
+            The request, with the header.
+        """
+        request.headers[self.header] = self._value
+        return request
+
+    def __eq__(self, other: object) -> bool:
+        """Compare with other auth objects by header and value.
+
+        Args:
+            other: Another object.
+
+        Returns:
+            Whether `other` is an `ApiKeyAuth` with the same header and
+            value (headers compared case-insensitively).
+        """
+        if not isinstance(other, ApiKeyAuth):
+            return NotImplemented
+        return (self.header.lower(), self._value) == (
+            other.header.lower(),
+            other._value,
+        )
+
+    def __hash__(self) -> int:
+        """Hash by header and value, as compared."""
+        return hash((self.header.lower(), self._value))
+
+    def __repr__(self) -> str:
+        """Represent the auth object without the key."""
+        return f"ApiKeyAuth(header={self.header!r})"
 
 
 class TokenKey(NamedTuple):
@@ -1143,7 +1268,8 @@ class TesClient(tes.HTTPClient):
             data: JSON body of the request.
             params: Query parameters of the request.
             auth: Name of the credentials to use (`client_credentials`,
-                `basic` or `none`); `None` for those of the backend.
+                `basic`, `api_key` or `none`); `None` for those of the
+                backend.
 
         Returns:
             Keyword arguments of the request (`requests`), with the timeouts
@@ -1174,6 +1300,21 @@ class TesClient(tes.HTTPClient):
                 # prevented by the config validation
                 raise BackendAuthError(f"No Basic credentials of {self.backend.url}")
             kwargs["auth"] = (get_env(basic.username_env), get_env(basic.password_env))
+        elif auth == "api_key":
+            api_key = (
+                self.entry.api_key if isinstance(self.entry, TesServiceEntry) else None
+            )
+            if api_key is None:
+                # prevented by the config validation (also for other
+                # backends, as plugins can't choose credentials)
+                raise BackendAuthError(f"No API key of {self.backend.url}")
+            try:
+                key = read_api_key(api_key.key_env)
+            except BackendAuthError as exc:
+                # the messages name neither the key nor the variables; both
+                # classes take a message only
+                raise type(exc)(f"TES backend {self.backend.url}: {exc}") from None
+            kwargs["auth"] = ApiKeyAuth(header=api_key.header, key=key)
         elif auth != "none":
             raise BackendAuthError(
                 f"Unknown credentials {auth!r} of {self.backend.url}"
@@ -1230,13 +1371,32 @@ class BackendSession(requests.Session):
     redirect. This session never does: requests get only the credentials of
     their backend. Other settings of the environment, such as proxies and CA
     certificates, still apply. Credentials are dropped on redirects to other
-    hosts or ports, and from `https` to `http`, as `requests` does.
+    hosts or ports, and from `https` to `http`, as `requests` does: those in
+    `Authorization`, and API keys in other headers (cf.
+    :py:class:`ApiKeyAuth`).
     """
 
     def __init__(self) -> None:
         """Create a session."""
         super().__init__()
         self.auth = NO_CREDENTIALS
+        # headers with credentials, dropped on redirects to other hosts;
+        # API key headers are added as requests are prepared, so a session
+        # is used for one request only (cf. `backend_request`)
+        self._credential_headers = {"Authorization"}
+
+    def prepare_request(self, request: requests.Request) -> requests.PreparedRequest:
+        """Prepare a request, and note the header of its API key, if any.
+
+        Args:
+            request: The request.
+
+        Returns:
+            The prepared request.
+        """
+        if isinstance(request.auth, ApiKeyAuth):
+            self._credential_headers.add(request.auth.header)
+        return super().prepare_request(request)
 
     def rebuild_auth(
         self, prepared_request: requests.PreparedRequest, response: requests.Response
@@ -1248,10 +1408,9 @@ class BackendSession(requests.Session):
             response: The response with the redirect.
         """
         headers = prepared_request.headers
-        if "Authorization" in headers and self.should_strip_auth(
-            str(response.request.url), str(prepared_request.url)
-        ):
-            del headers["Authorization"]
+        if self.should_strip_auth(str(response.request.url), str(prepared_request.url)):
+            for name in self._credential_headers:
+                headers.pop(name, None)
 
 
 def backend_request(method: str, url: str, **kwargs: Any) -> requests.Response:

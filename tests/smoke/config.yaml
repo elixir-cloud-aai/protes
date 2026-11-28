@@ -2,20 +2,28 @@
 # tasks go to the fake TES backends only (no public TES instances), with an
 # explicit plugin pipeline (ordered failover), so to the one of TES 1.0 first,
 # unless they need TES 1.1; the fake backend of TES 1.1 is also the identity
-# provider (`fake_tes.py`)
+# provider (`fake_tes.py`). A service client creates tasks with its own
+# tokens, which are for its own audience (its client ID), as some identity
+# providers issue client-credentials tokens
 security:
   auth:
     issuers:
       - http://fake-tes:8080/oidc/
     audience:
       - smoke-client
+      - smoke-engine
     userinfo_claims:
       - groups
+    service_clients:
+      - client_id: smoke-engine
+        issuer: http://fake-tes:8080/oidc/
   access_control:
     claim_groups: groups
     group_mapping:
       smoke-users: user
       smoke-admins: admin
+    client_mapping:
+      smoke-engine: user
 custom:
   # proTES authenticates at the fake backend with its own access token of the
   # fake identity provider (client ID and secret in `compose.yaml`), over
@@ -40,6 +48,17 @@ custom:
         url_schemes:
           - http
         auth: none
+      # Requires an API key instead of access tokens, as Poiesis does (the key
+      # of proTES in `SMOKE_TES_API_KEY`, or the file of
+      # `SMOKE_TES_API_KEY_FILE`, see `compose.yaml`); only for tasks that
+      # choose it, as the backends before it accept all others
+      - type: ga4gh-tes
+        url: http://fake-tes-key:8080
+        url_schemes:
+          - http
+        auth: api_key
+        api_key:
+          key_env: SMOKE_TES_API_KEY
     url_schemes:
       - http
     client_credentials:

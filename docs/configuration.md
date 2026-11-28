@@ -49,8 +49,10 @@ entry is either a TES instance (`type: ga4gh-tes`), with its base URL
 (`url`, without the API path `/ga4gh/tes/v1`; see [API paths](#api-paths) for
 TES instances that serve it elsewhere) and how proTES authenticates
 at it (`auth`: with its own access token, the default, with HTTP Basic
-credentials from environment variables, or not at all; see [Credentials of
-TES instances](access-control.md#credentials-of-tes-instances)), or a
+credentials from environment variables, with an API key from an environment
+variable, or not at all; see [Credentials of TES
+instances](access-control.md#credentials-of-tes-instances) and [API keys of
+TES instances](access-control.md#api-keys-of-tes-instances)), or a
 service registry, whose verified TES instances are used in its place (`type:
 ga4gh-service-registry`, see [Discovery in a service
 registry](#discovery-in-a-service-registry)). The base config lists none;
@@ -72,6 +74,14 @@ custom:
       - type: ga4gh-tes
         url: https://tesp.example.org
         api_path: /v1
+      # A TES instance that accepts API keys, not tokens, e.g., Poiesis: the
+      # key comes from the variable `TES_POIESIS_API_KEY` (or the file of
+      # `TES_POIESIS_API_KEY_FILE`), sent as `Authorization: Bearer <key>`
+      - type: ga4gh-tes
+        url: https://poiesis.example.net
+        auth: api_key
+        api_key:
+          key_env: TES_POIESIS_API_KEY
     # Identity provider of proTES, for the TES instances with
     # `auth: client_credentials` (the default)
     client_credentials:
@@ -82,7 +92,9 @@ By default, all TES instances with `auth: client_credentials` get the same
 access token of proTES; with `client_credentials.audience_parameter`
 (`resource` or `audience`), each gets a token for its own audience: the
 `audience` of its entry, or else its URL (see [Tokens per TES
-instance](access-control.md#tokens-per-tes-instance)).
+instance](access-control.md#tokens-per-tes-instance)). Entries with the same
+`audience` share a token, so give each TES instance an audience of its own
+if they must not accept each other's tokens.
 
 URLs are normalized (e.g., lowercase host, without default port and trailing
 slashes) and must use one of the schemes of the entry's `url_schemes`
@@ -396,6 +408,19 @@ describe it; CI doesn't run it yet:
 - Tasks with inputs, outputs or volumes need a default storage class, or the
   chart's value `storageClass`.
 
+[Poiesis](https://github.com/JaeAeich/poiesis), as its [docs on API
+keys](https://poiesis.jaeaeich.com/docs/concepts/api-keys.html) describe it;
+CI doesn't run it yet:
+
+- It accepts no client-credentials tokens of proTES (it requires an
+  entitlement claim that they don't carry), but API keys: set `auth:
+  api_key` with the default header, as it takes keys as `Authorization:
+  Bearer <key>` (see [API keys of TES
+  instances](access-control.md#api-keys-of-tes-instances)).
+- Tasks created with a key belong to the user who minted it, so all tasks
+  of proTES there belong to that account.
+- Keys expire; rotate them in time.
+
 In general, if no selected TES instance accepts a task, clients get a generic
 `503 Service Unavailable`, without the reason of the refusal.
 
@@ -538,10 +563,13 @@ settings apply to all plugins (`plugins.defaults.store`), or to one plugin
 whether the plugin keeps its entries in the database (`enabled`, by
 default `true`; with `false`, each process keeps them in memory, so
 counters and caches hold per process only), the maximum size of values
-(`max_entry_size`, bytes of compact JSON, by default 4096) and the maximum
-time to live of entries (`max_ttl`, in seconds, by default 30 days, at
-most 10 years); set the same `enabled` for all plugins of a distribution,
-which share their entries. For example:
+(`max_entry_size`, bytes of compact JSON, by default 4096), the maximum
+size of all entries of a namespace (shared by the plugins of one
+distribution; `max_namespace_size`, in bytes, by default 16 MiB; writes
+beyond it raise FOCA's `StoreFullError`), and the maximum time to live of
+entries (`max_ttl`, in seconds, by default 30 days, at most 10 years); set
+the same `enabled` for all plugins of a distribution, which share their
+entries. For example:
 
 ```yaml
 plugins:
@@ -810,8 +838,9 @@ owner of the task (`user_id`, as in the task document, see [Task
 owners](operations.md#task-owners)), the task identifier, the URL of the TES
 instance, the final state, the times, the requested resources and the
 products above, and, for [execution reports](#execution-reports), the tool
-(name, version and identifiers, from the image of the first executor and the
-tags `biotools_id` and `rrid` of the task), the start, end and total size of
+(name, version and identifiers, from the image of the first executor, with
+no version if it is given with a digest, and the tags `biotools_id` and
+`rrid` of the task), the start, end and total size of
 the outputs of each attempt (task log), and the version of proTES; nothing
 else of the task (no commands, environment variables, URLs or paths of inputs
 and outputs, or other tags). The records are kept when tasks
@@ -864,6 +893,10 @@ custom:
         - biocontainers
         - quay.io/biocontainers
         - registry.example.org/tools
+      # tags of tasks whose values are reported as identifiers of the tool
+      # (default: both known ones), here bio.tools identifiers only
+      tags:
+        - biotools_id
       # most tasks that one request may cover (1 to 1000000)
       max_records: 10000
 ```
@@ -894,6 +927,15 @@ custom:
   exist; a TES instance that runs images built locally under names of a
   trusted namespace (e.g., a one-component name, which counts as `library`)
   would still report those names, so don't trust such namespaces there.
+- `tags`: the tags of tasks whose values are reported as identifiers of the
+  tool (`tool_identifier`): `biotools_id` (a bio.tools identifier, reported
+  as `https://bio.tools/<id>`) and `rrid` (an RRID of software,
+  `SCR_<digits>`), both by default; other tag names are invalid. The user
+  who creates a task chooses its tags, and their values are only checked
+  against the patterns of such identifiers, not looked up: a value that
+  fits (e.g., a name in the form of a bio.tools identifier) is reported as
+  it is. Leave out a tag (or set `[]`) to report only the image repository
+  (`docker://<repository>`), which is always reported.
 - `max_records`: the most tasks that one request may cover (completed
   tasks with a recorded tool, also those of untrusted images, whatever their
   number of attempts); requests for more get `400 Bad Request`.
@@ -908,15 +950,20 @@ startup.
 The TES API requires access tokens of the trusted issuers
 (`security.auth`), and roles from groups (`security.access_control`); the
 issuers, the audience and the groups are deployment settings without
-defaults. See [Access control](access-control.md).
+defaults. Service clients, which create and own tasks with their own tokens,
+are off by default (`security.auth.service_clients` and
+`security.access_control.client_mapping`, see [Service
+clients](access-control.md#service-clients)). See [Access
+control](access-control.md).
 
 ## Request size limit
 
 Request bodies are limited to `server.max_content_length` bytes (default:
 1048576, i.e., 1 MiB), by FOCA: larger requests, also chunked ones, are
-rejected with `413 Content Too Large` before they are authenticated and
-parsed. The inline content of each input (`inputs[].content`) has a lower
-limit of its own (`custom.controllers.post_task.max_inline_content`, see
+rejected with `413 Content Too Large` before they are parsed; on
+endpoints that require a token, the token is checked first, so requests
+without a valid one get `401 Unauthorized` instead. The inline content
+of each input (`inputs[].content`) has a lower limit of its own (`custom.controllers.post_task.max_inline_content`, see
 [Tasks](#tasks)), as contents are stored with each task: raise both if
 tasks with large inline contents must be accepted. Prefer inputs with URLs.
 

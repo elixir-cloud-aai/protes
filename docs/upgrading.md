@@ -2,7 +2,8 @@
 
 The [release notes](changelog.md) list the breaking changes of each release.
 This page describes how existing setups and data are affected, and what to
-change: first for upgrades from 0.6.0 ([To version
+change: first for upgrades from 0.7.0 ([To version
+0.8.0](#to-version-080)), then from 0.6.0 ([To version
 0.7.0](#to-version-070)), then from 0.5.0 ([To version
 0.6.0](#to-version-060)), then from 0.4.0 ([To version
 0.5.0](#to-version-050)), then for upgrades from 0.3.0 ([To version
@@ -10,7 +11,7 @@ change: first for upgrades from 0.6.0 ([To version
 images tagged by date, on FOCA 0.12 ([From versions before
 0.3.0](#from-versions-before-030)), which apply the steps of both parts.
 
-## To version 0.7.0
+## To version 0.8.0
 
 **Listing tasks without the role `user` (behaviour change, rules
 renamed):** `GET /tasks` is now allowed for every authenticated caller, also
@@ -22,8 +23,9 @@ caller), so that owners who lost the role `user` (e.g., whose group
 membership was revoked) still list their tasks, as they could already read
 and cancel them; the list still shows only the caller's own tasks. If a
 config overlay of yours names `users-create-list-tasks`, proTES refuses to
-start (before it stores any rule, so running instances keep theirs): a rule under the old name would be added next to the new ones, not
-change them, so the overlay that earlier versions documented to stop task
+start (before it stores any rule, so running instances keep theirs): a
+rule under the old name would be added next to the new ones, not change
+them, so the overlay that earlier versions documented to stop task
 creation (`users-create-list-tasks` with `(GET)|(HEAD)` only) would let
 users create tasks again. Rename it; to stop task creation, set
 `users-create-tasks: null`. To keep listing for the role `user` only, set
@@ -34,6 +36,100 @@ listing, which costs more than a refusal (see
 [Task ownership](access-control.md#task-ownership)): with a broad identity
 provider, limit request rates at the ingress, or list for the role `user`
 only as above.
+
+**API keys for TES instances (optional):** this release adds API keys for
+TES instances (`auth: api_key`), opt-in; apart from the task listing above,
+configurations, values and stored data of 0.7.0 work unchanged. To reach
+a TES instance that accepts API keys but no tokens of proTES (e.g.,
+Poiesis), see [API keys of TES
+instances](access-control.md#api-keys-of-tes-instances), and with the Helm
+chart its README (`tes.backends`, Secrets).
+
+**Tested TES implementations:** CI tested this release against Funnel
+0.12.3 (TES 1.1, by the label `tes.version` and from its service info),
+TESP-API 0.2.0 with Pulsar 0.14.16 (TES 1.0) and tesk-api 1.1.0 with the
+taskmaster and filer v0.10.6 (TES 1.0), as in [Notes on TES
+implementations](configuration.md#notes-on-tes-implementations). Not tested:
+tesk-api 2.0.0 (TES 1.1) and Poiesis (CI checks API keys against a
+stand-in TES instance only).
+
+## To version 0.7.0
+
+**FOCA 0.23 (all deployments):** proTES now requires FOCA 0.23.0, on the FOCA
+0.23.0 image, with the release train `foca-plugins` 0.4.0 (was 0.3.0; its
+plugins `foca-plugin-generic-routing-random` and
+`foca-plugin-tes-routing-distance` 0.2.0 allow FOCA 0.19 to 0.23; see FOCA's
+[release notes of 0.23.0](https://github.com/elixir-cloud-aai/foca/releases/tag/v0.23.0)
+and its [migration guide to 0.23](https://foca.readthedocs.io/en/v0.23.0/migration-0.23/)).
+What this changes:
+
+- **Owners with one trusted issuer (action needed):** users are now
+  namespaced by their issuer (`<issuer>|<sub>`) also if only one issuer is
+  trusted. Until now, deployments with a single issuer stored bare subjects:
+  as owners of tasks (`user_id` and the owner roles), in the counts of
+  [task limits](configuration.md#task-limits) and in accounting records. Without
+  action, users would no longer see or cancel their earlier tasks, and
+  limits and usage would count them as new users. Keep the subjects bare
+  with `namespace: ""` for the issuer, a map instead of the URL in
+  `security.auth.issuers` (with the Helm chart, in
+  `config.security.auth.issuers`):
+
+  ```yaml
+  security:
+    auth:
+      issuers:
+        - issuer: https://login.example.org/oidc/
+          namespace: ""
+  ```
+
+  This release has no tool to rewrite stored subjects: FOCA's `foca
+  namespace-subjects` rewrites the owner roles only, not `user_id` of tasks
+  and accounting records, so don't run it on proTES' database. Deployments
+  with several trusted issuers already namespaced their subjects and are
+  not affected. Rules of your overlays that name bare users (`user:<sub>`)
+  stop the start unless the issuer keeps them bare. An issuer that is its
+  own namespace (no `namespace` set) must not contain `|`, `,` or line
+  breaks, nor be longer than 256 characters, or the app doesn't start.
+- **Pins to unknown TES instances:** a task whose `gateway.backends` is an
+  `allow` of identifiers only, none of which names a TES instance of
+  proTES (configured, or discovered and verified), is now rejected with
+  `400 Bad Request` (problem type `invalid-backends`) instead of `503
+  Service Unavailable` (see [Choices of
+  clients](plugins.md#choices-of-clients)). Pins to TES instances that
+  can't run the task still get `400` naming its fields.
+- **Request bodies:** on endpoints that require a token, the token is
+  checked before the body is read, so anonymous requests with bodies larger
+  than `server.max_content_length` get `401` instead of `413`.
+- **Plugin store:** the entries of each namespace (the plugins of one
+  distribution share one) are limited to 16 MiB in all
+  (`max_namespace_size` of `plugins.defaults.store` or
+  `plugins.available.<id>.store`; with the Helm chart,
+  `plugins.available.<id>.store.maxNamespaceSize`; see
+  [Plugins](configuration.md#plugins)). Their sizes are kept in the new
+  collection `plugin_store_sizes`: a database user whose roles are limited
+  to certain collections needs it too.
+- **Admin scripts:** users in rules, in the permissions API and in the
+  `user_id` filter of usage reports are now namespaced (`<issuer>|<sub>`,
+  URL-encoded in queries) unless the issuer keeps them bare; the
+  permissions API answers invalid rules, identifiers and pages with
+  problems of type `invalid-request` that list the invalid fields
+  (`errors`).
+- **Patterns:** a `$` at the end of a `pattern` of the API specification (or
+  of your patches of it) matches only at the end of the value, so values
+  with a trailing newline are rejected with `400`.
+- **Plugins:** resolving plugins that cap `foca<0.23` against this image
+  fails; ask their authors for a release.
+- **Routing by distance (opt-in, with `provider: dbip`):**
+  `foca-plugin-tes-routing-distance` 0.2.0 keeps the locations of
+  addresses in the plugin store (with a database, in the collection
+  `plugin_store`, shared by all replicas, as personal data with hashed
+  keys, for up to `cache_ttl` or a day) instead of per process, and limits
+  each caller to 100 uncached lookups per day (`dbip_user_daily_lookups`
+  in the plugin's `config`; `null` turns the limit off). Before upgrading,
+  set the key secret of the plugin store (`plugins.defaults.store.key_secret`;
+  with the Helm chart, `pluginStore.existingSecret`) and review `max_ttl`
+  (see [Plugins](configuration.md#plugins)). Deployments without the
+  opt-in are not affected.
 
 **Tokens per TES instance (optional):** proTES can request an access token
 of its own for each TES instance, so that TES instances (also those
@@ -63,13 +159,48 @@ See [Tokens per TES
 instance](access-control.md#tokens-per-tes-instance) for what to check
 before relying on it.
 
+**Accounting of resource usage (opt-in):** the Celery workers can now record
+the run time and requested resources of each task that finishes at its TES
+instance, with its owner, and admins get the totals per user at `GET /usage`
+(`custom.accounting.enabled`); off by default, so nothing is recorded unless
+you set it (see [Accounting of resource
+usage](configuration.md#accounting-of-resource-usage)). Tasks that finished
+before are not recorded. The endpoint needs the new rule `admins-get-usage`
+of the base config: overlays whose policies are a list (which replaces all
+rules) must add it, or admins get `403`. proTES creates the collection
+`usage` with two indexes (`finished_at`; `user_id`, `finished_at`) on its
+first start, also while accounting is off; the records are kept until you
+delete them (see [Usage records](operations.md#usage-records)).
+
+**Service clients (optional):** apps with client-credentials tokens of their
+own (e.g., a workflow engine) can now create tasks and own them, if listed
+in `security.auth.service_clients` (with their `issuer`) and mapped to the
+role `user` in `security.access_control.client_mapping` (see [Service
+clients](access-control.md#service-clients)). Nothing changes without them.
+Configs that list service clients without `issuer` or without the role
+`user` still don't start, now with a message that says what is missing; the
+header naming users (`security.auth.on_behalf_of_header`) and clients acting
+for users (`on_behalf_of`) are still refused. If a client's identity
+provider puts only the client's own ID into `aud`, add that ID to
+`security.auth.audience`: proTES accepts it for that client's own service
+tokens only. Tasks of service clients belong to `client:<client ID>`
+(`user_id` of their documents, and their owner roles). So users whose
+subject starts with `client:` (possible only with an issuer whose subjects
+are not namespaced) can no longer create tasks (`401`), also without service
+clients, as they couldn't be told apart from clients; check for tasks of
+such users before upgrading (see [Task owners](operations.md#task-owners));
+their earlier tasks and usage records keep their `user_id`, which usage and
+reports then count together with a service client of the same ID.
+
 **Execution reports (with accounting):** admins can now get the usage
 records as execution reports of the Tool Execution Report format of ELIXIR
 Compute, version 0.0.2, without personal data (`GET /usage/reports`, see
-[Execution reports](api.md#execution-reports)). Nothing changes for
-deployments without accounting. With accounting, the records of tasks that
+[Execution reports](api.md#execution-reports)). Nothing else changes
+for deployments without accounting. With accounting, the records of tasks that
 finish from now on also hold the tool of the task (from the image of its
-first executor and its tags `biotools_id` and `rrid`), the times and total
+first executor, without version if the image is given with a digest, and
+its tags `biotools_id` and `rrid`, which are reported only while listed in
+`custom.accounting.reports.tags`, by default both), the times and total
 output size of each attempt, and the version of proTES; records of earlier
 tasks give no reports. Only tasks that completed, of images in trusted
 namespaces, are reported (by default Docker Hub's official images and BioContainers). To
@@ -104,6 +235,13 @@ your values:
 - With an external broker whose Celery transport has no remote control
   (e.g., Amazon SQS), the ping gets no answer: set both probes to `null`
   or replace them.
+
+**Tested TES implementations:** CI tested this release against Funnel
+0.12.3 (TES 1.1, by the label `tes.version` and from its service info),
+TESP-API 0.2.0 with Pulsar 0.14.16 (TES 1.0) and tesk-api 1.1.0 with the
+taskmaster and filer v0.10.6 (TES 1.0), as in [Notes on TES
+implementations](configuration.md#notes-on-tes-implementations). Not tested:
+tesk-api 2.0.0 (TES 1.1).
 
 ## To version 0.6.0
 
@@ -241,19 +379,6 @@ of unfinished and of stored tasks of each user
 unless you set them (see [Task limits](configuration.md#task-limits)). proTES
 creates a new index on the tasks (`user_id`, `task.state`) on its first start,
 which takes a moment for large collections.
-
-**Accounting of resource usage (opt-in):** the Celery workers can now record
-the run time and requested resources of each task that finishes at its TES
-instance, with its owner, and admins get the totals per user at `GET /usage`
-(`custom.accounting.enabled`); off by default, so nothing is recorded unless
-you set it (see [Accounting of resource
-usage](configuration.md#accounting-of-resource-usage)). Tasks that finished
-before are not recorded. The endpoint needs the new rule `admins-get-usage`
-of the base config: overlays whose policies are a list (which replaces all
-rules) must add it, or admins get `403`. proTES creates the collection
-`usage` with two indexes (`finished_at`; `user_id`, `finished_at`) on its
-first start, also while accounting is off; the records are kept until you delete them (see [Usage
-records](operations.md#usage-records)).
 
 **Retention of finished tasks (opt-in):** the Celery workers can now delete
 finished tasks `custom.retention.finished_days` days after they finished,
@@ -876,8 +1001,8 @@ Remove the keys that had no effect from config overlays: all of
 
 API specifications (`api.specs`) and access control rules
 (`security.access_control.policies`) of the base config are named entries
-(the spec `tes`; rules `users-create-list-tasks` (split in 0.7.0, see
-[To version 0.7.0](#to-version-070)),
+(the spec `tes`; rules `users-create-list-tasks` (split in 0.8.0, see
+[To version 0.8.0](#to-version-080)),
 `owners-get-cancel-tasks`, `owners-get-provenance`, `admins-get-provenance`,
 `users-list-plugins`, `users-get-plugins`, `admins-list-add-permissions`
 and `admins-manage-permissions`), which overlays change by name (see

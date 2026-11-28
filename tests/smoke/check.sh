@@ -103,6 +103,25 @@ held_v1="$(jq -r .id "${body}")"
 await_state "${held_v1}" RUNNING
 check POST "/tasks/${held_v1}:cancel" 200 '. == {}'
 await_state "${held_v1}" CANCELED
+# A backend that requires an API key instead of tokens (`auth: api_key`, as
+# for Poiesis): the app creates and cancels the task with the key of the
+# variable, the worker tracks it with the key of the file
+# (`compose.yaml`); the key is neither in the task nor in the logs
+api_key="$(cat "$(dirname "$0")/api-key.txt")"
+only_key='"tags": {"gateway.backends":
+    "{\"type\": \"allow\", \"backends\": [\"http://fake-tes-key:8080\"]}"'
+check POST /tasks 200 '.id | length > 0' \
+  "{${only_key}, \"fake.hold\": \"true\"}, \"executors\": [{\"image\": \"alpine\", \"command\": [\"true\"]}]}"
+held_key="$(jq -r .id "${body}")"
+await_state "${held_key}" RUNNING
+check POST "/tasks/${held_key}:cancel" 200 '. == {}'
+await_state "${held_key}" CANCELED
+check GET "/tasks/${held_key}?view=FULL" 200 \
+  ".tags[\"gateway.backend\"] == \"http://fake-tes-key:8080\" and (tostring | contains(\"${api_key}\") | not)"
+if docker compose logs protes protes-worker 2>&1 | grep -qF "${api_key}"; then
+  echo "::error::The API key of fake-tes-key is in the logs of the app or the worker"
+  exit 1
+fi
 # The logs of TES instances, in the view `FULL` only
 check GET "/tasks/${id_11}?view=FULL" 200 \
   '.logs[0].logs[0].stdout == "fake stdout" and .logs[0].logs[0].stderr == "fake stderr" and .logs[0].system_logs == ["fake system log"]'
@@ -149,6 +168,41 @@ check GET "/tasks/${id}" 403 '.status == 403'
 check POST "/tasks/${id}:cancel" 403 '.status == 403'
 auth="$(token admin)"
 check GET "/tasks/${id}" 403 '.status == 403'
+# A service client (`config.yaml`) creates a task with its own token, for its
+# own audience, and owns it; the task goes to the fake backend that requires
+# proTES' token, so proTES relays it with its own. Users and the client don't
+# see each other's tasks, and tokens of users for the client's audience are
+# rejected as invalid
+auth="$(docker compose exec -T fake-tes python -c \
+  "import base64, json, sys, urllib.request; \
+  sys.path.insert(0, '/smoke'); \
+  from fake_tes import SERVICE_CLIENT_ID as ID, SERVICE_CLIENT_SECRET as SECRET; \
+  basic = base64.b64encode(f'{ID}:{SECRET}'.encode()).decode(); \
+  request = urllib.request.Request('http://localhost:8080/oidc/token', \
+    data=b'grant_type=client_credentials', headers={'Authorization': f'Basic {basic}'}); \
+  print(json.load(urllib.request.urlopen(request))['access_token'])")"
+check POST /tasks 200 '.id | length > 0' \
+  '{"tags": {"fake.hold": "true", "gateway.backends":
+    "{\"type\": \"allow\", \"backends\": [\"http://fake-tes:8080\"]}"},
+    "executors": [{"image": "alpine", "command": ["true"]}]}'
+client_task="$(jq -r .id "${body}")"
+await_state "${client_task}" RUNNING
+check GET "/tasks/${client_task}?view=FULL" 200 \
+  '.tags["gateway.backend"] == "http://fake-tes:8080"'
+check GET '/tasks?view=MINIMAL' 200 \
+  "any(.tasks[]; .id == \"${client_task}\") and all(.tasks[]; .id != \"${id}\")"
+check GET "/tasks/${id}" 403 '.status == 403'
+check POST "/tasks/${client_task}:cancel" 200 '. == {}'
+await_state "${client_task}" CANCELED
+auth="$(token alice)"
+check GET '/tasks?view=MINIMAL' 200 "all(.tasks[]; .id != \"${client_task}\")"
+check GET "/tasks/${client_task}" 403 '.status == 403'
+auth="$(token 'alice&client_id=smoke-engine&aud=smoke-engine')"
+check GET /tasks 401 '.status == 401'
+# ... by proTES, not by the identity provider: the same user's token of the
+# client for proTES' audience is accepted
+auth="$(token 'alice&client_id=smoke-engine')"
+check GET '/tasks?view=MINIMAL' 200 "all(.tasks[]; .id != \"${client_task}\")"
 # The fake backend got the task (and those of earlier runs, if not
 # restarted), with the access token of proTES (which it requires); listed
 # with a token of proTES' client

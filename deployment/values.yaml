@@ -126,8 +126,10 @@ tes:
   # place (`type: ga4gh-service-registry`). proTES authenticates at them with
   # its own access token (`auth: client_credentials`, the default; see
   # `config.custom.tes.client_credentials`), with HTTP Basic credentials from
-  # environment variables (`auth: basic`, set via `protes.extraEnv`) or not
-  # at all (`auth: none`); see deployment/README.md, Configuration. TES
+  # environment variables (`auth: basic`, set via `protes.extraEnv`), with an
+  # API key from an environment variable (`auth: api_key`, TES instances
+  # only, set via `protes.extraEnv`, e.g., for Poiesis) or not at all (`auth:
+  # none`); see deployment/README.md, Configuration and Secrets. TES
   # instances that serve the TES API elsewhere than at `/ga4gh/tes/v1` set
   # `apiPath` (e.g., TESP: `/v1`). With
   # `config.custom.tes.client_credentials.audience_parameter`, each TES
@@ -146,6 +148,13 @@ tes:
   #     basic:
   #       usernameEnv: TES_EXAMPLE_COM_USERNAME
   #       passwordEnv: TES_EXAMPLE_COM_PASSWORD
+  #   - type: ga4gh-tes
+  #     url: "https://poiesis.example.net"
+  #     auth: api_key
+  #     apiKey:
+  #       # `Authorization: Bearer <key>` (header `Authorization`, the
+  #       # default); other headers (e.g., `X-API-Key`) carry the key as it is
+  #       keyEnv: TES_POIESIS_API_KEY
 
 # Plugins that process new tasks (FOCA's plugin engine; see docs/plugins.md
 # and deployment/README.md, Configuration), rendered into the `plugins`
@@ -164,10 +173,11 @@ plugins:
   # Installed plugins that may be used, by identifier (FOCA's built-in
   # plugins, `foca.*`, always are), with their admin settings
   # (`config`), the roles that may choose them (`roles`), the settings of
-  # their key-value store (`store`: `enabled`, `maxEntrySize`, `maxTtl`;
-  # defaults in `config.plugins.defaults.store`; plugins of one
-  # distribution share their entries, so give them the same `enabled`, else
-  # the app warns at startup) and more
+  # their key-value store (`store`: `enabled`, `maxEntrySize`,
+  # `maxNamespaceSize`, `maxTtl`; defaults in
+  # `config.plugins.defaults.store`; plugins of one distribution share
+  # their entries, so give them the same `enabled`, else the app warns at
+  # startup) and more
   # Plugins other than FOCA's must be installed in the image (`protes.image`,
   # see docs/plugin-images.md); the random routing plugin of foca-plugins of
   # the default pipeline is available as well (merged with what you list

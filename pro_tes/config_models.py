@@ -1,7 +1,7 @@
 """Custom app config models."""
 
 import re
-from typing import Annotated, Literal, Self
+from typing import Annotated, Any, Literal, Self
 from urllib.parse import SplitResult, urlsplit
 
 from foca.plugins.backends import BackendListConfig, ServiceEntry
@@ -10,6 +10,8 @@ from pydantic import (
     ConfigDict,
     Field,
     PositiveInt,
+    SerializationInfo,
+    field_serializer,
     field_validator,
     model_validator,
 )
@@ -330,9 +332,6 @@ DEFAULT_API_PATH = "/ga4gh/tes/v1"
 """Path of the TES API, relative to the URL of a backend, as the TES
 specification has it; that of the API of proTES too."""
 
-# Absolute paths of unreserved characters (RFC 3986, section 2.3)
-_API_PATH = re.compile(r"(?:/[A-Za-z0-9._~-]+)+")
-
 # Absolute URIs without query and fragment (RFC 3986, sections 3 and 4.3):
 # a scheme, then unreserved, reserved (but `?`, `#`) and percent-encoded
 # characters only
@@ -361,6 +360,82 @@ def _is_resource(value: str) -> bool:
     return bool(parts.netloc or parts.path)
 
 
+API_KEY_HEADER = "Authorization"
+"""Header of API keys by default, which carries them as bearer tokens."""
+
+TesAuth = Literal["client_credentials", "basic", "api_key", "none"]
+"""Credentials of proTES for TES instances (`auth` of their entries)."""
+
+# Names of environment variables, as POSIX shells accept them (a string, as
+# pydantic's `Field(pattern=...)` takes it)
+_ENV_NAME = r"^[A-Za-z_][A-Za-z0-9_]*$"
+# Header names (RFC 9110, section 5.6.2: tokens)
+_HEADER_NAME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
+# Headers that can't carry API keys: those that plugins can't set either
+# (`pro_tes.gateway.RESERVED_HEADERS`, which imports this module), as they
+# change where or how requests are sent; headers that `requests` or proTES
+# set for the request itself; and cookies
+_RESERVED_HEADERS = frozenset(
+    {
+        "connection",
+        "content-length",
+        "content-type",
+        "cookie",
+        "expect",
+        "host",
+        "proxy-authorization",
+        "te",
+        "trailer",
+        "transfer-encoding",
+        "upgrade",
+    }
+)
+
+
+class ApiKey(ConfigModel):
+    """API key of proTES for a TES backend (`auth: api_key`).
+
+    The key itself is never part of the config: it is read for each request
+    from the environment variable `key_env`, or from the file named in the
+    variable `<key_env>_FILE` (e.g., a mounted Secret), cf.
+    :py:func:`pro_tes.ga4gh.tes.backends.read_api_key`.
+
+    Args:
+        key_env: Name of the environment variable with the key.
+        header: Header that carries the key: `Authorization` (the default),
+            as a bearer token (`Bearer <key>`), or another header (e.g.,
+            `X-API-Key`), as it is.
+
+    Attributes:
+        key_env: Name of the environment variable with the key.
+        header: Header that carries the key.
+    """
+
+    key_env: str = Field(pattern=_ENV_NAME)
+    header: str = API_KEY_HEADER
+
+    @field_validator("header")
+    @classmethod
+    def check_header(cls, value: str) -> str:
+        """Check that the header can carry an API key.
+
+        Args:
+            value: Name of the header.
+
+        Returns:
+            The name of the header.
+
+        Raises:
+            ValueError: The name is not a valid header name, or that of a
+                header that requests set themselves, or of other credentials.
+        """
+        if not _HEADER_NAME.fullmatch(value):
+            raise ValueError(f"Invalid header name: {value!r}")
+        if value.lower() in _RESERVED_HEADERS:
+            raise ValueError(f"Header {value!r} can't carry API keys")
+        return value
+
+
 class TesServiceEntry(ServiceEntry):
     """TES instance of `custom.tes.backends`, with the settings of proTES.
 
@@ -371,7 +446,13 @@ class TesServiceEntry(ServiceEntry):
         audience: Audience of the access tokens of proTES for the TES
             instance, requested with `client_credentials.audience_parameter`
             (e.g., the client ID of the TES instance); by default, its URL.
-        **data: Fields of :py:class:`foca.plugins.backends.ServiceEntry`.
+        auth: Credentials for the TES instance, as of
+            :py:class:`foca.plugins.backends.ServiceEntry`, or an API key of
+            proTES (`api_key`, cf. `api_key`).
+        api_key: API key of proTES for the TES instance; set if, and only
+            if, `auth` is `api_key`.
+        **data: Other fields of
+            :py:class:`foca.plugins.backends.ServiceEntry`.
 
     Attributes:
         api_path: Path of the TES API, relative to `url`, without trailing
@@ -379,15 +460,42 @@ class TesServiceEntry(ServiceEntry):
         audience: Audience of the access tokens of proTES for the TES
             instance, requested with `client_credentials.audience_parameter`
             (e.g., the client ID of the TES instance); by default, its URL.
+        auth: Credentials for the TES instance.
+        api_key: API key of proTES for the TES instance, if any.
     """
 
     api_path: str = DEFAULT_API_PATH
     audience: str | None = Field(default=None, min_length=1)
+    # FOCA's values, and API keys of TES instances (not of registries, whose
+    # TES instances would all get the same key)
+    auth: TesAuth = "client_credentials"  # type: ignore[assignment]
+    api_key: ApiKey | None = None
+
+    @model_validator(mode="after")
+    def check_api_key(self) -> Self:
+        """Check that `api_key` is set with, and only with, `auth: api_key`.
+
+        Returns:
+            The entry.
+
+        Raises:
+            ValueError: `api_key` is missing for `auth: api_key`, or set
+                otherwise.
+        """
+        if (self.auth == "api_key") != (self.api_key is not None):
+            raise ValueError(
+                f"Backend {self.id!r}: `api_key` is needed with, and only with,"
+                " `auth: api_key`"
+            )
+        return self
 
     @field_validator("api_path")
     @classmethod
     def check_api_path(cls, value: str) -> str:
         """Check the API path, and remove trailing slashes.
+
+        FOCA's `ServiceEntry` checks its characters and segments before
+        (since FOCA 0.23); it also allows an empty path, proTES doesn't.
 
         Args:
             value: API path, as given.
@@ -396,20 +504,11 @@ class TesServiceEntry(ServiceEntry):
             The API path.
 
         Raises:
-            ValueError: The path is not absolute, has characters other than
-                unreserved ones (e.g., a query), or segments `.` or `..`.
+            ValueError: The path is not absolute.
         """
         if not value.startswith("/"):
             raise ValueError("API path must be absolute")
-        path = value.removesuffix("/")
-        if path and (
-            not _API_PATH.fullmatch(path) or {".", ".."} & set(path.split("/"))
-        ):
-            raise ValueError(
-                "API path must have unreserved characters only, and no segments"
-                " `.` or `..`"
-            )
-        return path
+        return value.removesuffix("/")
 
 
 class Tes(ConfigModel):
@@ -471,6 +570,41 @@ class Tes(ConfigModel):
     probe_with_token: bool = False
     max_response_size: Annotated[int, Field(ge=1048576, le=268435456)] = 10485760
 
+    @field_serializer("backends")
+    def dump_backends(
+        self, value: BackendListConfig, info: SerializationInfo
+    ) -> list[dict[str, Any]]:
+        """Dump the backend list with the models of its entries.
+
+        The field has FOCA's type, whose entries don't know the settings of
+        proTES (e.g., `auth: api_key`): Pydantic would dump them as FOCA's
+        entries, without these settings, and warn
+        (`PydanticSerializationUnexpectedValue`), e.g., when FOCA dumps the
+        config on startup.
+
+        Args:
+            value: Backend list.
+            info: Settings of the dump; those of nested fields (`include`,
+                `exclude`) and `serialize_as_any` don't apply to the
+                entries, so nested excludes can't leave out fields of
+                entries (e.g., `api_key`).
+
+        Returns:
+            The entries, each dumped with its own model.
+        """
+        return [
+            entry.model_dump(
+                mode=info.mode,
+                by_alias=bool(info.by_alias),
+                exclude_unset=info.exclude_unset,
+                exclude_defaults=info.exclude_defaults,
+                exclude_none=info.exclude_none,
+                round_trip=info.round_trip,
+                context=info.context,
+            )
+            for entry in value.root
+        ]
+
     @field_validator("backends", mode="before")
     @classmethod
     def parse_tes_instances(cls, value: object) -> object:
@@ -478,9 +612,8 @@ class Tes(ConfigModel):
 
         FOCA's backend list keeps entries that are instances of its models as
         they are (also :py:class:`foca.plugins.backends.BackendList`), so the
-        settings are available from the entries of its candidates. As the
-        field has FOCA's type, `model_dump()` leaves them out: don't load the
-        config from such a dump.
+        settings are available from the entries of its candidates. Dumps
+        keep them, too (cf. :py:meth:`dump_backends`).
 
         Args:
             value: Backend list, as given.
@@ -524,30 +657,23 @@ class Tes(ConfigModel):
             The configuration.
 
         Raises:
-            ValueError: An entry has an audience, but no `auth:
-                client_credentials`, or audiences are not requested
-                (`client_credentials.audience_parameter`); or an audience
-                has surrounding whitespace; or one requested as `resource`
-                is not an absolute URI without query and fragment (RFC
-                8707, section 2).
+            ValueError: An entry has an audience, but audiences are not
+                requested (`client_credentials.audience_parameter`); or one
+                requested as `resource` is not an absolute URI without query
+                and fragment (RFC 8707, section 2). FOCA's `ServiceEntry`
+                checks before (since FOCA 0.23) that entries with an
+                audience have `auth: client_credentials` and that audiences
+                have no surrounding whitespace.
         """
         parameter = self.client_credentials.audience_parameter
         for entry in self.backends.root:
             audience = getattr(entry, "audience", None)
             if audience is None:
                 continue
-            if entry.auth != "client_credentials":
-                raise ValueError(
-                    f"`audience` of {entry.url} needs `auth: client_credentials`"
-                )
             if parameter is None:
                 raise ValueError(
                     f"`audience` of {entry.url} needs"
                     " `client_credentials.audience_parameter`"
-                )
-            if audience != audience.strip():
-                raise ValueError(
-                    f"`audience` of {entry.url} must not have surrounding whitespace"
                 )
             if parameter == "resource" and not _is_resource(audience):
                 raise ValueError(
