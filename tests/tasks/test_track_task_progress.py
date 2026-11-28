@@ -718,6 +718,51 @@ def test_final_states_disagree_tracked_elsewhere(
     assert document["task"]["state"] == "QUEUED"
 
 
+def test_disagreements_reset_when_unfinished(
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+    scheduled: list[dict[str, Any]],
+    stored_states: list[str],
+) -> None:
+    """Contradicted final states count only until an unfinished state.
+
+    A backend that briefly reports a final state more often than
+    `MAX_DISAGREEMENTS` over the runtime of a task doesn't finish it.
+    """
+    episodes = track_task_progress.MAX_DISAGREEMENTS + 1
+    states: list[str | None] = ["SYSTEM_ERROR", "RUNNING"] * episodes
+    client_class.states = [*states, "COMPLETE"]
+    track(scheduled)
+    assert stored_states == ["RUNNING", "COMPLETE"]
+
+
+def test_redelivered_poll_after_disagreement(
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+    scheduled: list[dict[str, Any]],
+) -> None:
+    """A poll delivered again after a contradicted final state polls again.
+
+    E.g., if its worker was lost before the next poll took over; without the
+    view `FULL`, which may have cost its worker.
+    """
+    client_class.states = ["SYSTEM_ERROR"]
+    tasks.update_one(
+        {"worker_id": ARGS["worker_id"]},
+        {"$set": {track_task_progress.DISAGREEMENTS_FIELD: 1}},
+    )
+    TRACK.push_request(delivery_info={"redelivered": True})
+    try:
+        run()
+    finally:
+        TRACK.pop_request()
+    assert client_class.views == ["BASIC"]
+    assert len(scheduled) == 1
+    document = tasks.find_one({"worker_id": ARGS["worker_id"]})
+    assert document is not None
+    assert document["task"]["state"] == "QUEUED"
+
+
 def test_full_logs_turned_off(
     tasks: Collection[dict[str, Any]],
     client_class: type[FakeClient],

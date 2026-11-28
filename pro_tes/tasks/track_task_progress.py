@@ -81,7 +81,7 @@ INFRASTRUCTURE_ERRORS = (PyMongoError, OperationalError)
 # Doublings of intervals between polls considered (more don't change them)
 MAX_DOUBLINGS = 32
 # Field of stored tasks with the number of polls whose final state the view
-# `FULL` contradicted (cf. :py:func:`_disagreed`)
+# `FULL` contradicted (cf. :py:func:`_repoll_on_disagreement`)
 DISAGREEMENTS_FIELD = "tracking.disagreements"
 # Polls again after a final state that the view `FULL` contradicts; then the
 # final state of the last poll is stored, so that the task still finishes
@@ -158,6 +158,7 @@ def _schedule(
     collection: Collection[dict[str, Any]],
     kwargs: dict[str, Any],
     failures: int,
+    unfinished: bool = False,
 ) -> None:
     """Schedule the next poll of a task, and pass the tracking on to it.
 
@@ -169,6 +170,9 @@ def _schedule(
         kwargs: Arguments of the current poll (cf.
             :py:func:`task__track_task_progress`).
         failures: Number of consecutive failed polls.
+        unfinished: Whether the backend reported an unfinished state, which
+            resets the count of final states that the view `FULL`
+            contradicted (cf. :py:func:`_repoll_on_disagreement`).
     """
     successor = uuid4().hex
     task__track_task_progress.apply_async(
@@ -180,9 +184,11 @@ def _schedule(
         },
         countdown=backoff(failures),
     )
+    update: dict[str, Any] = {"$set": {POLL_FIELD: successor, FAILURES_FIELD: failures}}
+    if unfinished:
+        update["$unset"] = {DISAGREEMENTS_FIELD: ""}
     collection.update_one(
-        {"worker_id": kwargs["worker_id"], POLL_FIELD: kwargs["poll"]},
-        {"$set": {POLL_FIELD: successor, FAILURES_FIELD: failures}},
+        {"worker_id": kwargs["worker_id"], POLL_FIELD: kwargs["poll"]}, update
     )
 
 
@@ -231,8 +237,9 @@ def _full_task(cli: Any, worker_id: str, remote_task_id: str, basic: Any) -> Any
 
     Returns:
         The task in the view `FULL`, also if it is in another state than
-        `basic` (cf. :py:func:`_disagreed`); `basic` if it can't be got, has
-        no logs, or backend logs are not stored (`post_task.max_log_size`).
+        `basic` (cf. :py:func:`_repoll_on_disagreement`); `basic` if it can't
+        be got, has no logs, or backend logs are not stored
+        (`post_task.max_log_size`).
     """
     post_task = get_custom_config(CustomConfig).controllers.post_task
     if not post_task.max_log_size:
@@ -256,33 +263,63 @@ def _full_task(cli: Any, worker_id: str, remote_task_id: str, basic: Any) -> Any
     return full
 
 
-def _disagreed(
-    collection: Collection[dict[str, Any]],
-    kwargs: dict[str, Any],
-    basic: Any,
-    full: Any,
+def _disagreements(collection: Collection[dict[str, Any]], worker_id: str) -> int:
+    """Get the number of polls of a task whose final state was contradicted.
+
+    Args:
+        collection: Database collection of the tasks.
+        worker_id: Worker identifier of the task.
+
+    Returns:
+        Number of polls since the backend last reported an unfinished state
+        whose final state the view `FULL` contradicted.
+    """
+    document = collection.find_one(
+        {"worker_id": worker_id}, projection={DISAGREEMENTS_FIELD: True}
+    )
+    return _tracked_disagreements(document)
+
+
+def _tracked_disagreements(document: dict[str, Any] | None) -> int:
+    """Get the count of contradicted final states from a stored task.
+
+    Args:
+        document: Stored task, with its field `DISAGREEMENTS_FIELD`, if any.
+
+    Returns:
+        The count; `0` without one.
+    """
+    value: Any = document or {}
+    for key in DISAGREEMENTS_FIELD.split("."):
+        value = value.get(key) if isinstance(value, dict) else None
+    return value if isinstance(value, int) else 0
+
+
+def _repoll_on_disagreement(
+    collection: Collection[dict[str, Any]], kwargs: dict[str, Any], state: Any
 ) -> bool:
-    """Poll a task again if the view `FULL` contradicts its final state.
+    """Count a final state that the view `FULL` contradicts, and poll again.
 
     Backends may report a final state briefly (e.g., a TESK while the Job of a
-    task is finishing); neither state is stored then. After
-    `MAX_DISAGREEMENTS` polls again, the final state of the poll is stored,
-    without the logs of the view `FULL`, so that a backend that keeps
-    disagreeing doesn't keep the task from finishing.
+    task is finishing); neither state is stored then. The count is stored with
+    the task (`DISAGREEMENTS_FIELD`), and reset when the backend reports an
+    unfinished state (cf. :py:func:`_schedule`). After at most
+    `MAX_DISAGREEMENTS` polls again (fewer if a poll runs twice, as each run
+    counts, or if scheduling the next poll fails after counting), the final
+    state of the poll is stored, without the logs of the view `FULL`, so that
+    a backend that keeps disagreeing doesn't keep the task from finishing.
 
     Args:
         collection: Database collection of the tasks.
         kwargs: Arguments of the poll (cf.
             :py:func:`task__track_task_progress`).
-        basic: Task as served in the view of the poll, in a final state.
-        full: Task as served in the view `FULL`.
+        state: Final state reported by the poll.
 
     Returns:
         Whether the poll ends without storing a state: the task is polled
-        again, or another poll tracks it now.
+        again, or another poll tracks it now; `False` once the limit is
+        reached.
     """
-    if full.state == basic.state:
-        return False
     worker_id = kwargs["worker_id"]
     document = collection.find_one_and_update(
         {"worker_id": worker_id, POLL_FIELD: kwargs["poll"]},
@@ -293,20 +330,20 @@ def _disagreed(
     if document is None:
         logger.debug("[%s] Tracked by another chain of polls", worker_id)
         return True
-    if document["tracking"]["disagreements"] > MAX_DISAGREEMENTS:
+    if _tracked_disagreements(document) > MAX_DISAGREEMENTS:
         logger.warning(
-            "[%s] Logs of the finished task not used: its backend still reports"
-            " %s in the view FULL after %d polls again",
+            "[%s] Logs of the finished task not used: its backend still"
+            " contradicts %s in the view FULL after %d polls again",
             worker_id,
-            full.state,
+            state,
             MAX_DISAGREEMENTS,
         )
         return False
     logger.warning(
-        "[%s] Polling again: its backend reports %s, but %s in the view FULL",
+        "[%s] Polling again: its backend reports %s, but another state in the"
+        " view FULL",
         worker_id,
-        basic.state,
-        full.state,
+        state,
     )
     _schedule(collection=collection, kwargs=kwargs, failures=0)
     return True
@@ -699,7 +736,7 @@ def _poll(kwargs: dict[str, Any], redelivered: bool = False) -> None:
                 worker_id=worker_id,
                 state=str(response.state),
             )
-        _schedule(collection=collection, kwargs=kwargs, failures=0)
+        _schedule(collection=collection, kwargs=kwargs, failures=0, unfinished=True)
         return
     # the worker was lost after storing it, before the message was acknowledged:
     # the view of this poll would replace the logs
@@ -740,17 +777,24 @@ def _finish(
     worker_id = kwargs["worker_id"]
     # not if the message is delivered again: getting the logs may have cost its
     # worker (e.g., out of memory), which must not keep the task from finishing
-    if not redelivered:
+    if redelivered:
+        # a poll that counted a contradicted final state, and was lost before
+        # the next poll took over, is polled again, without the view `FULL`
+        disagreed = _disagreements(collection=collection, worker_id=worker_id) > 0
+    else:
         full = _full_task(
             cli=cli,
             worker_id=worker_id,
             remote_task_id=kwargs["remote_task_id"],
             basic=response,
         )
-        if _disagreed(collection=collection, kwargs=kwargs, basic=response, full=full):
-            return
-        if full.state == response.state:
+        disagreed = full.state != response.state
+        if not disagreed:
             response = full
+    if disagreed and _repoll_on_disagreement(
+        collection=collection, kwargs=kwargs, state=response.state
+    ):
+        return
     if get_custom_config(CustomConfig).accounting.enabled:
         _record_usage(collection=collection, kwargs=kwargs, response=response)
     try:
@@ -791,7 +835,7 @@ def task__track_task_progress(
     `FULL`, unless the poll is delivered again, its final state, logs and outputs
     are stored together, and tracking ends; if the view `FULL` has another
     state, the task is polled again first (up to `MAX_DISAGREEMENTS` times,
-    see :py:func:`_disagreed`). Failed polls are retried, also if
+    see :py:func:`_repoll_on_disagreement`). Failed polls are retried, also if
     the backend is not (or no longer) configured or discovered; after
     `polling.attempts` consecutive failures, the state is set to `UNKNOWN`
     (the task may still run at its backend), and polls back off (see
