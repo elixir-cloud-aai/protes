@@ -1311,7 +1311,8 @@ class TesClient(tes.HTTPClient):
             try:
                 key = read_api_key(api_key.key_env)
             except BackendAuthError as exc:
-                # the messages name neither the key nor the variables
+                # the messages name neither the key nor the variables; both
+                # classes take a message only
                 raise type(exc)(f"TES backend {self.backend.url}: {exc}") from None
             kwargs["auth"] = ApiKeyAuth(header=api_key.header, key=key)
         elif auth != "none":

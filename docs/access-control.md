@@ -555,14 +555,15 @@ custom:
   neither variable is set for a TES instance with `auth: api_key` (named
   with the other missing credentials), or if the key can't be used (both
   set, the file can't be read, or invalid characters). The messages name
-  the TES instance by its URL (e.g., ``the API keys of TES backends <url>
-  (the variables that their `key_env` names, or their `_FILE`
-  variables)``), never the key, nor the variables: a key pasted as
-  `key_env` by mistake may be a valid variable name; look up `key_env` of
-  that TES instance in the config. Requests that find no usable key fail
-  with the same messages. Each TES instance with an API key is logged with
-  a warning (``TES backend <url>: API key (`auth: api_key`, header
-  <header>) ...``).
+  the TES instance by its URL, never the key, nor the names of the
+  variables (a key pasted as `key_env` by mistake may be a valid variable
+  name): look up `key_env` of that TES instance in the config. Missing keys
+  are listed as ``the API keys of TES backends <url> (the variables that
+  their `key_env` names, or their `_FILE` variables)``, keys that can't be
+  used as ``TES backend <url>: API key: ...``; requests that find no usable
+  key fail with ``TES backend <url>: API key ...``. Each TES instance with
+  an API key is logged with a warning (``TES backend <url>: API key
+  (`auth: api_key`, header <header>) ...``).
 - **Which requests:** every request to the TES instance: creating, getting
   and canceling tasks (also by the Celery worker, which polls them), and its
   service info if `custom.tes.probe_with_token` is set (otherwise service

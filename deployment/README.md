@@ -366,8 +366,8 @@ together.
 
 Helm does not restart pods when a Secret changes (only when the config
 changes), as the chart does not manage the Secrets: restart them after
-changing one (`kubectl rollout restart deploy/protes deploy/protes-worker -n
-<namespace>`).
+changing one (`kubectl rollout restart deploy/<app> deploy/<app>-worker -n
+<namespace>`, `<app>` as in [Names and labels](#names-and-labels)).
 
 ## Names and labels
 

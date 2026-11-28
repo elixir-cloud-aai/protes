@@ -585,7 +585,8 @@ class Tes(ConfigModel):
         Args:
             value: Backend list.
             info: Settings of the dump; those of nested fields (`include`,
-                `exclude`) don't apply to the entries.
+                `exclude`) and `serialize_as_any` don't apply to the
+                entries.
 
         Returns:
             The entries, each dumped with its own model.
@@ -598,6 +599,7 @@ class Tes(ConfigModel):
                 exclude_defaults=info.exclude_defaults,
                 exclude_none=info.exclude_none,
                 round_trip=info.round_trip,
+                context=info.context,
             )
             for entry in value.root
         ]
