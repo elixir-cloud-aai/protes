@@ -5,6 +5,7 @@ import os
 from typing import NamedTuple
 
 from foca import get_config, get_custom_config
+from foca.models.config import Config
 from foca.plugins.backends import BackendList, RegistryEntry, ServiceEntry
 
 from pro_tes.config_models import CustomConfig, Tes, TesServiceEntry
@@ -49,10 +50,42 @@ def check_task_ownership() -> None:
         )
 
 
+RENAMED_RULES: dict[str, tuple[str, ...]] = {
+    "users-create-list-tasks": ("users-create-tasks", "authenticated-list-tasks"),
+}
+
+
+def check_renamed_rules(config: Config) -> None:
+    """Refuse rules under the names of rules that were renamed.
+
+    A config overlay that names a renamed rule would add it next to the new
+    rules, not change them: e.g., the overlay that earlier docs gave to
+    stop task creation (`users-create-list-tasks` for listing only) would
+    let users create tasks again. Must be called before the app is created,
+    which stores the rules in the database for all instances.
+
+    Args:
+        config: The app's config.
+
+    Raises:
+        RuntimeError: A rule has the name of a renamed rule.
+    """
+    policies = config.security.access_control.named_policies or {}
+    for old, new in RENAMED_RULES.items():
+        if old in policies:
+            names = " and ".join(f"`{name}`" for name in new)
+            raise RuntimeError(
+                f"Access control rule `{old}` was renamed to {names}, so "
+                "a rule under the old name would be added next to them, not "
+                "change them: rename it in your config (see the upgrade "
+                "notes in `docs/upgrading.md`)"
+            )
+
+
 def check_user_groups() -> None:
     """Log the groups mapped to the role `user`, or warn if there are none.
 
-    Nobody can create or list tasks without such groups. FOCA checks the
+    Nobody can create tasks without such groups. FOCA checks the
     groups of the role `admin` (`security.access_control.require_admin`) and
     that groups are only mapped with a group claim (`claim_groups`). Must be
     called in an app context.
@@ -63,7 +96,7 @@ def check_user_groups() -> None:
         logger.info("Groups mapped to the role 'user': %s", ", ".join(users))
     else:
         logger.warning(
-            "No group is mapped to the role 'user', so nobody can create or list tasks"
+            "No group is mapped to the role 'user', so nobody can create tasks"
         )
 
 

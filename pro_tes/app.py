@@ -7,7 +7,12 @@ from connexion import FlaskApp
 from foca import Foca, get_collection, get_config
 
 from pro_tes.gateway import GATEWAY, add_plugin_listing
-from pro_tes.security import check_backends, check_task_ownership, check_user_groups
+from pro_tes.security import (
+    check_backends,
+    check_renamed_rules,
+    check_task_ownership,
+    check_user_groups,
+)
 from pro_tes.service_clients import check_service_audience, check_service_clients
 from pro_tes.utils.db import (
     TASK_COLLECTION,
@@ -62,6 +67,8 @@ def init_app() -> FlaskApp:
         custom_config_model="pro_tes.config_models.CustomConfig",
         gateway=GATEWAY,
     )
+    # Before the app is created, which stores the rules for all instances
+    check_renamed_rules(foca.conf)
     add_plugin_listing(foca.conf)
     try:
         app = foca.create_app()

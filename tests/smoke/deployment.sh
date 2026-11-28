@@ -9,7 +9,11 @@
 #
 # - `TOKEN` (required): an access token of a user with the role `user`
 # - `OTHER_TOKEN`: an access token of a user without a role (e.g., not in the
-#   groups mapped to roles), who must be refused; skipped if unset
+#   groups mapped to roles), who lists only her own tasks (if any) and must
+#   be refused plugins; skipped if unset
+# - `OTHER_LISTS=false`: expect `OTHER_TOKEN` to be refused the task listing
+#   too, for deployments that list tasks for the role `user` only (see
+#   "Roles" in `docs/access-control.md`)
 # - `ALLOW_HTTP=true`: accept a URL with `http`, and skip the check that plain
 #   HTTP doesn't serve the API (for CI's smoke test, without TLS)
 #
@@ -93,6 +97,11 @@ check "${TOKEN}" GET /plugins 200 '.tag_prefix | type == "string"'
 # Unknown tasks are forbidden, as tasks of others are
 check "${TOKEN}" GET /tasks/UNKNWN 403 '.status == 403'
 if [ -n "${OTHER_TOKEN:-}" ]; then
-  check "${OTHER_TOKEN}" GET /tasks 403 '.status == 403'
+  if [ "${OTHER_LISTS:-true}" = false ]; then
+    check "${OTHER_TOKEN}" GET /tasks 403 '.status == 403'
+  else
+    check "${OTHER_TOKEN}" GET '/tasks?view=MINIMAL' 200 '.tasks | type == "array"'
+  fi
+  check "${OTHER_TOKEN}" GET /plugins 403 '.status == 403'
 fi
 echo "Deployment checks passed"

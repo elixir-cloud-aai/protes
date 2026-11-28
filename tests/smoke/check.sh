@@ -156,8 +156,12 @@ auth=""
 check GET /service-info 200 '.type.artifact == "tes"'
 check GET /tasks 401 '.status == 401'
 check GET /plugins 401 '.status == 401'
+# A user without a role lists only her own tasks (none), and can't list
+# plugins or create tasks
 auth="$(token eve)"
-check GET /tasks 403 '.status == 403'
+check GET /tasks 200 '.tasks | length == 0'
+check GET /plugins 403 '.status == 403'
+check POST /tasks 403 '.status == 403' '{"executors": [{"image": "alpine", "command": ["true"]}]}'
 auth="$(token bob)"
 check GET '/tasks?view=MINIMAL' 200 "all(.tasks[]; .id != \"${id}\")"
 check GET "/tasks/${id}" 403 '.status == 403'

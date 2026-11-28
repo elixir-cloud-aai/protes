@@ -13,10 +13,37 @@ images tagged by date, on FOCA 0.12 ([From versions before
 
 ## To version 0.8.0
 
-**No action needed:** this release adds API keys for TES instances (`auth:
-api_key`), opt-in; configurations, values and stored data of 0.7.0 work
-unchanged. To reach a TES instance that accepts API keys but no tokens of
-proTES (e.g., Poiesis), see [API keys of TES
+**Listing tasks without the role `user` (behaviour change, rules
+renamed):** `GET /tasks` is now allowed for every authenticated caller, also
+without a role (it shows only the caller's own tasks, so nothing of others
+becomes visible). The rule
+`users-create-list-tasks` is split into `users-create-tasks` (`POST /tasks`,
+role `user`) and `authenticated-list-tasks` (`GET /tasks`, any authenticated
+caller), so that owners who lost the role `user` (e.g., whose group
+membership was revoked) still list their tasks, as they could already read
+and cancel them; the list still shows only the caller's own tasks. If a
+config overlay of yours names `users-create-list-tasks`, proTES refuses to
+start (before it stores any rule, so running instances keep theirs): a
+rule under the old name would be added next to the new ones, not change
+them, so the overlay that earlier versions documented to stop task
+creation (`users-create-list-tasks` with `(GET)|(HEAD)` only) would let
+users create tasks again. An overlay that removes it
+(`users-create-list-tasks: null`) stops the start too, with FOCA's error
+naming the unknown rule. Rename it; to stop task creation, set
+`users-create-tasks: null`. To keep listing for the role `user` only, set
+`authenticated-list-tasks: null` and add a rule of your own, e.g.,
+`users-list-tasks: [p, user, /ga4gh/tes/v1/tasks, (GET)|(HEAD)]`. Every
+token that your identity providers issue for proTES now reaches the task
+listing, which costs more than a refusal (see
+[Task ownership](access-control.md#task-ownership)): with a broad identity
+provider, limit request rates at the ingress, or list for the role `user`
+only as above.
+
+**API keys for TES instances (optional):** this release adds API keys for
+TES instances (`auth: api_key`), opt-in; apart from the task listing above,
+configurations, values and stored data of 0.7.0 work unchanged. To reach
+a TES instance that accepts API keys but no tokens of proTES (e.g.,
+Poiesis), see [API keys of TES
 instances](access-control.md#api-keys-of-tes-instances), and with the Helm
 chart its README (`tes.backends`, Secrets).
 
@@ -976,7 +1003,8 @@ Remove the keys that had no effect from config overlays: all of
 
 API specifications (`api.specs`) and access control rules
 (`security.access_control.policies`) of the base config are named entries
-(the spec `tes`; rules `users-create-list-tasks`,
+(the spec `tes`; rules `users-create-list-tasks` (split in 0.8.0, see
+[To version 0.8.0](#to-version-080)),
 `owners-get-cancel-tasks`, `owners-get-provenance`, `admins-get-provenance`,
 `users-list-plugins`, `users-get-plugins`, `admins-list-add-permissions`
 and `admins-manage-permissions`), which overlays change by name (see
