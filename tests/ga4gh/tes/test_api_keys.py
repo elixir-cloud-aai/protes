@@ -648,7 +648,8 @@ def test_check_backends_key_as_key_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keys pasted as `key_env` by mistake don't show in startup errors.
 
     Keys of letters, digits and `_` are valid variable names. Missing keys
-    are named with the other missing credentials (here, of proTES).
+    are named with the other missing credentials (here, of proTES), by the
+    URLs of their backends, in order.
     """
     monkeypatch.delenv(KEY_AS_ENV, raising=False)
     monkeypatch.delenv(f"{KEY_AS_ENV}_FILE", raising=False)
@@ -656,6 +657,7 @@ def test_check_backends_key_as_key_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PROTES_CLIENT_SECRET", "secret")
     conf = tes_config(
         key_entry(key_env=KEY_AS_ENV),
+        key_entry("https://a.example.org", key_env=KEY_AS_ENV),
         {"type": "ga4gh-tes", "url": "https://other.example.org"},
     )
     with pytest.raises(RuntimeError) as exc_info:
@@ -663,7 +665,8 @@ def test_check_backends_key_as_key_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert str(exc_info.value) == (
         "Credentials of TES backends missing: set the environment variables"
         " PROTES_CLIENT_ID; and the API keys of TES backends"
-        f" {BACKEND_URL} (the variables that their `key_env` names, or their"
+        f" https://a.example.org, {BACKEND_URL} (the variables that their"
+        " `key_env` names, or their"
         " `_FILE` variables)"
     )
     assert KEY_AS_ENV not in str(exc_info.value)
