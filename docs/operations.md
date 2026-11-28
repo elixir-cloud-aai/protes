@@ -39,7 +39,9 @@ logs a warning (`Polling again`) and polls the task again after `polling.wait`
 seconds, until both views agree. After at most 5 such polls in a row (the
 count, `tracking.disagreements`, starts again when the TES instance reports
 an unfinished state), it stores the final state of the last poll, without the
-logs of the view `FULL`. A canceled
+logs of the view `FULL`. With `post_task.max_log_size: 0`, proTES doesn't get
+the view `FULL`, so it stores the final state of the first poll that reports
+one. A canceled
 task stays `CANCELING` until its TES instance has finished it, or answers that
 it no longer has it (`404`; then `CANCELED`), or until the first poll more than
 `polling.max_cancel_time` seconds after the cancel (default 3600; later if its

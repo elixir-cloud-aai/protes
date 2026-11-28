@@ -736,20 +736,31 @@ def test_disagreements_reset_when_unfinished(
     assert stored_states == ["RUNNING", "COMPLETE"]
 
 
+@pytest.mark.parametrize(("counted_by", "repolled"), [(None, True), ("other", False)])
 def test_redelivered_poll_after_disagreement(
     tasks: Collection[dict[str, Any]],
     client_class: type[FakeClient],
     scheduled: list[dict[str, Any]],
+    counted_by: str | None,
+    repolled: bool,
 ) -> None:
-    """A poll delivered again after a contradicted final state polls again.
+    """A poll delivered again after it counted a contradicted state polls again.
 
     E.g., if its worker was lost before the next poll took over; without the
-    view `FULL`, which may have cost its worker.
+    view `FULL`, which may have cost its worker. A count of an earlier poll
+    doesn't keep a poll delivered again (e.g., after its worker ran out of
+    memory getting the view `FULL`) from storing the final state.
     """
     client_class.states = ["SYSTEM_ERROR"]
     tasks.update_one(
         {"worker_id": ARGS["worker_id"]},
-        {"$set": {track_task_progress.DISAGREEMENTS_FIELD: 1}},
+        {
+            "$set": {
+                track_task_progress.DISAGREEMENTS_FIELD: 1,
+                # the poll of `run` has no identifier
+                track_task_progress.DISAGREED_POLL_FIELD: counted_by,
+            }
+        },
     )
     TRACK.push_request(delivery_info={"redelivered": True})
     try:
@@ -757,10 +768,10 @@ def test_redelivered_poll_after_disagreement(
     finally:
         TRACK.pop_request()
     assert client_class.views == ["BASIC"]
-    assert len(scheduled) == 1
+    assert len(scheduled) == int(repolled)
     document = tasks.find_one({"worker_id": ARGS["worker_id"]})
     assert document is not None
-    assert document["task"]["state"] == "QUEUED"
+    assert document["task"]["state"] == ("QUEUED" if repolled else "SYSTEM_ERROR")
 
 
 def test_full_logs_turned_off(

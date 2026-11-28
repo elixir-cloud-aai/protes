@@ -26,8 +26,9 @@ logs (e.g., a TESK that briefly answers `SYSTEM_ERROR` while the Job of a task
 is finishing), proTES no longer stores the first state without logs. It
 polls the task again, up to 5 times, and stores a final state once both views
 agree; after that, the final state of the last poll, without logs, as before
-(see [Task tracking](operations.md#task-tracking)). Stored tasks get a new
-field, `tracking.disagreements`; tasks finished before stay as they are.
+(see [Task tracking](operations.md#task-tracking)). Stored tasks get new
+fields, `tracking.disagreements` and `tracking.disagreed_poll`; tasks
+finished before stay as they are.
 
 **Tested TES implementations:** CI tested this release against Funnel
 0.12.3 (TES 1.1, by the label `tes.version` and from its service info),

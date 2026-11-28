@@ -83,6 +83,8 @@ MAX_DOUBLINGS = 32
 # Field of stored tasks with the number of polls whose final state the view
 # `FULL` contradicted (cf. :py:func:`_repoll_on_disagreement`)
 DISAGREEMENTS_FIELD = "tracking.disagreements"
+# Field of stored tasks with the identifier of the poll that counted last
+DISAGREED_POLL_FIELD = "tracking.disagreed_poll"
 # Polls again after a final state that the view `FULL` contradicts; then the
 # final state of the last poll is stored, so that the task still finishes
 MAX_DISAGREEMENTS = 5
@@ -186,7 +188,7 @@ def _schedule(
     )
     update: dict[str, Any] = {"$set": {POLL_FIELD: successor, FAILURES_FIELD: failures}}
     if unfinished:
-        update["$unset"] = {DISAGREEMENTS_FIELD: ""}
+        update["$unset"] = {DISAGREEMENTS_FIELD: "", DISAGREED_POLL_FIELD: ""}
     collection.update_one(
         {"worker_id": kwargs["worker_id"], POLL_FIELD: kwargs["poll"]}, update
     )
@@ -263,21 +265,28 @@ def _full_task(cli: Any, worker_id: str, remote_task_id: str, basic: Any) -> Any
     return full
 
 
-def _disagreements(collection: Collection[dict[str, Any]], worker_id: str) -> int:
-    """Get the number of polls of a task whose final state was contradicted.
+def _counted(collection: Collection[dict[str, Any]], kwargs: dict[str, Any]) -> bool:
+    """Check whether a poll counted a contradicted final state.
+
+    That is, whether it was the last poll to do so (cf.
+    :py:func:`_repoll_on_disagreement`), e.g., before its worker was lost.
 
     Args:
         collection: Database collection of the tasks.
-        worker_id: Worker identifier of the task.
+        kwargs: Arguments of the poll (cf.
+            :py:func:`task__track_task_progress`).
 
     Returns:
-        Number of polls since the backend last reported an unfinished state
-        whose final state the view `FULL` contradicted.
+        Whether the poll counted.
     """
     document = collection.find_one(
-        {"worker_id": worker_id}, projection={DISAGREEMENTS_FIELD: True}
+        {
+            "worker_id": kwargs["worker_id"],
+            DISAGREED_POLL_FIELD: {"$exists": True, "$eq": kwargs["poll"]},
+        },
+        projection={"_id": True},
     )
-    return _tracked_disagreements(document)
+    return document is not None
 
 
 def _tracked_disagreements(document: dict[str, Any] | None) -> int:
@@ -323,7 +332,10 @@ def _repoll_on_disagreement(
     worker_id = kwargs["worker_id"]
     document = collection.find_one_and_update(
         {"worker_id": worker_id, POLL_FIELD: kwargs["poll"]},
-        {"$inc": {DISAGREEMENTS_FIELD: 1}},
+        {
+            "$inc": {DISAGREEMENTS_FIELD: 1},
+            "$set": {DISAGREED_POLL_FIELD: kwargs["poll"]},
+        },
         projection={DISAGREEMENTS_FIELD: True},
         return_document=ReturnDocument.AFTER,
     )
@@ -340,8 +352,7 @@ def _repoll_on_disagreement(
         )
         return False
     logger.warning(
-        "[%s] Polling again: its backend reports %s, but another state in the"
-        " view FULL",
+        "[%s] Polling again: the view FULL contradicts the final state %s",
         worker_id,
         state,
     )
@@ -780,7 +791,7 @@ def _finish(
     if redelivered:
         # a poll that counted a contradicted final state, and was lost before
         # the next poll took over, is polled again, without the view `FULL`
-        disagreed = _disagreements(collection=collection, worker_id=worker_id) > 0
+        disagreed = _counted(collection=collection, kwargs=kwargs)
     else:
         full = _full_task(
             cli=cli,
