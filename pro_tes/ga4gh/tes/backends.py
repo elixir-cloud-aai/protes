@@ -212,8 +212,9 @@ def read_api_key(name: str) -> str:
     From the environment variable, or from the file named in `<name>_FILE`
     (e.g., a mounted Secret), as FOCA reads its own credentials (cf.
     :py:func:`foca.config.environment.get_env`); the file is read on each
-    call, so that rotated keys are used at once. Messages name the
-    variables, never the key.
+    call, so that rotated keys are used at once. Messages name neither the
+    key nor the variables, as a key pasted as `key_env` by mistake may be a
+    valid variable name; callers name the backend.
 
     Args:
         name: Name of the environment variable (`key_env` of the backend).
@@ -229,20 +230,30 @@ def read_api_key(name: str) -> str:
             ASCII (e.g., spaces or line breaks, which can't be sent in
             headers).
     """
+    if os.environ.get(name) and os.environ.get(f"{name}_FILE"):
+        # FOCA's message would name the variables
+        raise BackendAuthError(
+            "API key: the variable that `key_env` names and its `_FILE`"
+            " variable must not both be set"
+        )
     try:
         key = foca_get_env(name)
-    except ValueError as exc:
-        # FOCA's messages name the variables only
-        raise BackendAuthError(f"API key: {exc}") from None
+    except ValueError:
+        # the file can't be read; FOCA's message would name the variable
+        raise BackendAuthError(
+            "API key: the file named in the `_FILE` variable of `key_env`"
+            " could not be read"
+        ) from None
     # without a final line break, also in the variable (e.g., set from a
     # Secret created from a file), as FOCA reads files
     key = (key or "").removesuffix("\n").removesuffix("\r")
     if not key:
-        raise ApiKeyNotSet(f"Environment variable {name} (or {name}_FILE) is not set")
-    if not _API_KEY.fullmatch(key):
-        raise BackendAuthError(
-            f"API key of {name}: characters other than visible ASCII"
+        raise ApiKeyNotSet(
+            "API key not set (neither the variable that `key_env` names nor"
+            " its `_FILE` variable)"
         )
+    if not _API_KEY.fullmatch(key):
+        raise BackendAuthError("API key: characters other than visible ASCII")
     return key
 
 
@@ -1297,9 +1308,12 @@ class TesClient(tes.HTTPClient):
                 # prevented by the config validation (also for other
                 # backends, as plugins can't choose credentials)
                 raise BackendAuthError(f"No API key of {self.backend.url}")
-            kwargs["auth"] = ApiKeyAuth(
-                header=api_key.header, key=read_api_key(api_key.key_env)
-            )
+            try:
+                key = read_api_key(api_key.key_env)
+            except BackendAuthError as exc:
+                # the messages name neither the key nor the variables
+                raise type(exc)(f"TES backend {self.backend.url}: {exc}") from None
+            kwargs["auth"] = ApiKeyAuth(header=api_key.header, key=key)
         elif auth != "none":
             raise BackendAuthError(
                 f"Unknown credentials {auth!r} of {self.backend.url}"
