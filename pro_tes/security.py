@@ -2,6 +2,7 @@
 
 import logging
 import os
+from typing import NamedTuple
 
 from foca import get_config, get_custom_config
 from foca.plugins.backends import BackendList, RegistryEntry, ServiceEntry
@@ -109,15 +110,29 @@ def _check_registry(entry: RegistryEntry) -> None:
         )
 
 
-def _check_service(entry: ServiceEntry) -> list[str]:
+class _MissingCredentials(NamedTuple):
+    """Credentials of a configured backend that are not set.
+
+    Attributes:
+        env: Environment variables with its HTTP Basic credentials that are
+            not set.
+        api_key: Whether its API key is not set (named by the URL of the
+            backend, not by the variable, which may be a key pasted as
+            `key_env` by mistake).
+    """
+
+    env: list[str]
+    api_key: bool = False
+
+
+def _check_service(entry: ServiceEntry) -> _MissingCredentials:
     """Log how a configured backend is called.
 
     Args:
         entry: Configured backend of `custom.tes.backends`.
 
     Returns:
-        The environment variables with its HTTP Basic credentials or its API
-        key that are not set, if any.
+        Its credentials that are not set, if any.
 
     Raises:
         RuntimeError: The backend has `auth: basic`, but no `basic`; or its
@@ -134,15 +149,17 @@ def _check_service(entry: ServiceEntry) -> list[str]:
             raise RuntimeError(
                 f"TES backend {entry.url}: `auth: basic` without `basic`"
             )
-        return _missing_env(entry.basic.username_env, entry.basic.password_env)
+        return _MissingCredentials(
+            env=_missing_env(entry.basic.username_env, entry.basic.password_env)
+        )
     if entry.auth == "api_key":
-        return _check_api_key(entry)
+        return _MissingCredentials(env=[], api_key=not _check_api_key(entry))
     if entry.auth == "none":
         logger.warning("TES backend %s: no authentication (`auth: none`)", entry.url)
-    return []
+    return _MissingCredentials(env=[])
 
 
-def _check_api_key(entry: ServiceEntry) -> list[str]:
+def _check_api_key(entry: ServiceEntry) -> bool:
     """Log that a configured backend gets an API key, and check the key.
 
     Args:
@@ -150,15 +167,15 @@ def _check_api_key(entry: ServiceEntry) -> list[str]:
             api_key`.
 
     Returns:
-        The environment variable of its API key, and the one with the name
-        of its file (`<key_env>_FILE`), if neither is set (or the file is
-        empty).
+        Whether the key is set: in the environment variable `key_env`, or in
+        the file named in `<key_env>_FILE` (not if that is empty).
 
     Raises:
         RuntimeError: The backend has no `api_key`, or its key can't be used
             (both variables are set, the file can't be read, or the key has
             characters that headers can't carry); the message names the
-            variables, not the key.
+            backend, not the variables, nor the key (a key pasted as
+            `key_env` by mistake may be a valid variable name).
     """
     api_key = entry.api_key if isinstance(entry, TesServiceEntry) else None
     if api_key is None:
@@ -175,16 +192,15 @@ def _check_api_key(entry: ServiceEntry) -> list[str]:
         entry.url,
         api_key.header,
     )
-    name = api_key.key_env
     try:
-        read_api_key(name)
+        read_api_key(api_key.key_env)
     except ApiKeyNotSet:
         # also if the file is empty
-        return [f"{name} (or {name}_FILE)"]
+        return False
     except BackendAuthError as exc:
-        # the messages name the variables, never the key
+        # the messages name neither the variables nor the key
         raise RuntimeError(f"TES backend {entry.url}: {exc}") from None
-    return []
+    return True
 
 
 def check_backends(conf: Tes | None = None, public_url: str | None = None) -> None:
@@ -210,7 +226,9 @@ def check_backends(conf: Tes | None = None, public_url: str | None = None) -> No
             of proTES if a backend has (or discovered backends get) `auth:
             client_credentials`, the HTTP Basic credentials of a backend
             with `auth: basic`, or the API key of a backend with `auth:
-            api_key`. Or the API key of a backend can't be used.
+            api_key`, which is named by the URL of the backend (not by the
+            variable, which may be a key pasted as `key_env`). Or the API
+            key of a backend can't be used.
     """
     if conf is None:
         conf = get_custom_config(CustomConfig).tes
@@ -243,11 +261,15 @@ def check_backends(conf: Tes | None = None, public_url: str | None = None) -> No
             " local tests only"
         )
     missing: list[str] = []
+    missing_keys: list[str] = []
     for entry in entries:
         if isinstance(entry, RegistryEntry):
             _check_registry(entry)
-        else:
-            missing.extend(_check_service(entry))
+            continue
+        credentials = _check_service(entry)
+        missing.extend(credentials.env)
+        if credentials.api_key:
+            missing_keys.append(entry.url)
     # after the checks of the entries, which the backend list validates again
     own = [
         entry.url
@@ -287,8 +309,16 @@ def check_backends(conf: Tes | None = None, public_url: str | None = None) -> No
         )
     if conf.uses_tokens:
         missing.extend(_missing_env(CLIENT_ID_ENV, CLIENT_SECRET_ENV))
-    if missing:
+    if missing or missing_keys:
+        parts = []
+        if missing:
+            parts.append(f"the environment variables {', '.join(sorted(set(missing)))}")
+        if missing_keys:
+            parts.append(
+                "the API keys of TES backends"
+                f" {', '.join(sorted(set(missing_keys)))} (the variables that"
+                " their `key_env` names, or their `_FILE` variables)"
+            )
         raise RuntimeError(
-            "Credentials of TES backends missing: set the environment variables"
-            f" {', '.join(sorted(set(missing)))}"
+            f"Credentials of TES backends missing: set {'; and '.join(parts)}"
         )

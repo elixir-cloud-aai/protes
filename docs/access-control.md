@@ -547,16 +547,23 @@ custom:
   Secret), as FOCA reads its own credentials; setting both is an error. A
   final line break is dropped (e.g., of a Secret created from a file).
   proTES reads the key for each request, and never writes it to the config,
-  the logs, the database or the task documents, nor passes it to plugins. Keys must be visible ASCII characters (no spaces or
-  line breaks). Unknown keys of `api_key` (e.g., the key itself as a value)
-  stop the app on startup, and the error doesn't show their values.
+  the logs, the database or the task documents, nor passes it to plugins.
+  Keys must be visible ASCII characters (no spaces or line breaks). Unknown
+  keys of `api_key` (e.g., the key itself as a value) stop the app on
+  startup, and the error doesn't show their values.
 - **Checks on startup:** the app and the Celery worker refuse to start if
   neither variable is set for a TES instance with `auth: api_key` (named
   with the other missing credentials), or if the key can't be used (both
-  set, the file can't be read, or invalid characters); the messages name
-  the variables, never the key. Each TES instance with an API key is logged
-  with a warning (``TES backend <url>: API key (`auth: api_key`, header
-  <header>) ...``).
+  set, the file can't be read, or invalid characters). The messages name
+  the TES instance by its URL, never the key, nor the names of the
+  variables (a key pasted as `key_env` by mistake may be a valid variable
+  name): look up `key_env` of that TES instance in the config. Missing keys
+  are listed as ``the API keys of TES backends <url> (the variables that
+  their `key_env` names, or their `_FILE` variables)``, keys that can't be
+  used as ``TES backend <url>: API key: ...``; requests that find no usable
+  key fail with ``TES backend <url>: API key ...``. Each TES instance with
+  an API key is logged with a warning (``TES backend <url>: API key
+  (`auth: api_key`, header <header>) ...``).
 - **Which requests:** every request to the TES instance: creating, getting
   and canceling tasks (also by the Celery worker, which polls them), and its
   service info if `custom.tes.probe_with_token` is set (otherwise service
@@ -577,15 +584,16 @@ custom:
 - **Rotating the key:** create a new key at the TES instance, update the
   Secret, and restart the app and the Celery worker if the key comes from
   the environment variable (with the Helm chart, `kubectl rollout restart
-  deploy/protes deploy/protes-worker -n <namespace>`); with
+  deploy/<app> deploy/<app>-worker -n <namespace>`, `<app>` as in its
+  README, Names and labels, e.g., `protes` for the release `protes`); with
   `<key_env>_FILE`, the file is read for each request, so the new key is
   used once the file is updated. Then revoke the old key at the TES
   instance (see its docs, e.g., [Poiesis' API
   keys](https://poiesis.jaeaeich.com/docs/concepts/api-keys.html)). Keys
   may expire: rotate them in time, as requests with an expired key fail
-  with `401 Unauthorized` (new tasks then go to
-  other TES instances, and the tasks at that TES instance can't be tracked
-  or canceled until a valid key is set).
+  with `401 Unauthorized` (new tasks then go to other TES instances, and
+  the tasks at that TES instance can't be tracked or canceled until a valid
+  key is set).
 
 API keys are a transitional mode until proTES exchanges the tokens of its
 users for tokens of each TES instance (OAuth 2.0 token exchange, [RFC

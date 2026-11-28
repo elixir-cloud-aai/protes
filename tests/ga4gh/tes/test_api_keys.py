@@ -7,6 +7,7 @@ import logging
 from pathlib import Path
 import threading
 from typing import Any, ClassVar
+import warnings
 
 from connexion import FlaskApp
 from foca import get_custom_config
@@ -27,7 +28,7 @@ from pro_tes.config_models import (
     Tes,
     TesServiceEntry,
 )
-from pro_tes.exceptions import BackendAuthError, BackendOutcomeUnknown
+from pro_tes.exceptions import ApiKeyNotSet, BackendAuthError, BackendOutcomeUnknown
 from pro_tes.ga4gh.tes import backends
 from pro_tes.ga4gh.tes.backends import backend_versions
 from pro_tes.gateway import RESERVED_HEADERS
@@ -39,6 +40,9 @@ ISSUER = "https://idp.example.org/oidc/"
 KEY_ENV = "TES_API_KEY"
 # Fictitious API key, in the format of Poiesis
 KEY = "poi_k7H2pQ-fictitious-key"  # gitleaks:allow (fictitious)
+# Fictitious API key that is also a valid variable name, as pasted as
+# `key_env` by mistake
+KEY_AS_ENV = "poi_k7H2pQfictitiouskey"  # gitleaks:allow (fictitious)
 
 
 def tes_config(*entries: dict[str, Any]) -> Tes:
@@ -189,13 +193,13 @@ def test_read_api_key(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "value, file, match",
     [
-        (None, None, f"{KEY_ENV} .or {KEY_ENV}_FILE. is not set"),
-        ("", None, f"{KEY_ENV} .or {KEY_ENV}_FILE. is not set"),
-        (None, "", f"{KEY_ENV} .or {KEY_ENV}_FILE. is not set"),
-        ("\n", None, f"{KEY_ENV} .or {KEY_ENV}_FILE. is not set"),
+        (None, None, "API key not set"),
+        ("", None, "API key not set"),
+        (None, "", "API key not set"),
+        ("\n", None, "API key not set"),
         (f"{KEY}\n\n", None, "visible ASCII"),
         (KEY, KEY, "must not both be set"),
-        (None, "/nonexistent/key", f"{KEY_ENV}_FILE' could not be read"),
+        (None, "/nonexistent/key", "could not be read"),
         (f"{KEY} x", None, "visible ASCII"),
         (f" {KEY}", None, "visible ASCII"),
         (f"{KEY}\r\nX-Injected: 1", None, "visible ASCII"),
@@ -211,7 +215,9 @@ def test_read_api_key_invalid(
 ) -> None:
     """Missing, unreadable and invalid keys are refused, without their values.
 
-    `file` is the content of the key file, or the path itself if absolute.
+    Nor with the name of the variable, which may be a key pasted as
+    `key_env`; callers name the backend. `file` is the content of the key
+    file, or the path itself if absolute.
     """
     monkeypatch.delenv(KEY_ENV, raising=False)
     monkeypatch.delenv(f"{KEY_ENV}_FILE", raising=False)
@@ -225,6 +231,7 @@ def test_read_api_key_invalid(
     with pytest.raises(BackendAuthError, match=match) as exc_info:
         backends.read_api_key(KEY_ENV)
     assert KEY not in str(exc_info.value)
+    assert KEY_ENV not in str(exc_info.value)
 
 
 def test_api_key_auth() -> None:
@@ -276,8 +283,56 @@ def test_client_api_key(configured: None, monkeypatch: pytest.MonkeyPatch) -> No
     assert other["auth"] != kwargs["auth"]
     assert other["auth"] != "other-key"
     monkeypatch.delenv(KEY_ENV)
-    with pytest.raises(BackendAuthError, match=KEY_ENV):
+    with pytest.raises(
+        ApiKeyNotSet, match=f"^TES backend {BACKEND_URL}/key: API key not set"
+    ) as exc_info:
         backends.create_client(host=f"{BACKEND_URL}/key")._request_params()
+    assert KEY_ENV not in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    "value, file, match",
+    [
+        (None, None, "API key not set"),
+        (KEY, KEY, "must not both be set"),
+        (None, "/nonexistent/key", "could not be read"),
+        (f"{KEY} x", None, "visible ASCII"),
+    ],
+)
+def test_client_api_key_as_key_env(
+    app: FlaskApp,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    value: str | None,
+    file: str | None,
+    match: str,
+) -> None:
+    """Requests without a usable key name the backend, not a key pasted as `key_env`.
+
+    Nor do the errors chain those of reading the key. `file` is the content
+    of the key file, or the path itself if absolute.
+    """
+    monkeypatch.delenv(KEY_AS_ENV, raising=False)
+    monkeypatch.delenv(f"{KEY_AS_ENV}_FILE", raising=False)
+    if value is not None:
+        monkeypatch.setenv(KEY_AS_ENV, value)
+    if file is not None:
+        path = Path(file) if file.startswith("/") else tmp_path / "key"
+        if not file.startswith("/"):
+            path.write_text(file)
+        monkeypatch.setenv(f"{KEY_AS_ENV}_FILE", str(path))
+    with app.app.app_context():
+        conf = get_custom_config(CustomConfig).tes
+        conf.backends = tes_config(key_entry(key_env=KEY_AS_ENV)).backends
+        client = backends.create_client(host=BACKEND_URL)
+        with pytest.raises(
+            BackendAuthError, match=f"^TES backend {BACKEND_URL}: .*{match}"
+        ) as exc_info:
+            client._request_params()
+    assert KEY_AS_ENV not in str(exc_info.value)
+    assert KEY not in str(exc_info.value)
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__suppress_context__
 
 
 def test_client_api_key_unset(configured: None) -> None:
@@ -550,13 +605,18 @@ def test_check_backends_api_key_missing(
 ) -> None:
     """On startup, missing keys are named with the other missing credentials.
 
-    Also keys of empty files.
+    By the URL of their backend, not by the variable, which may be a key
+    pasted as `key_env`. Also keys of empty files.
     """
     monkeypatch.delenv(KEY_ENV, raising=False)
     monkeypatch.delenv(f"{KEY_ENV}_FILE", raising=False)
-    expected = f"environment variables {KEY_ENV} .or {KEY_ENV}_FILE.$"
-    with pytest.raises(RuntimeError, match=expected):
+    expected = (
+        f"API keys of TES backends {BACKEND_URL} .the variables that their"
+        " `key_env` names, or their `_FILE` variables.$"
+    )
+    with pytest.raises(RuntimeError, match=expected) as exc_info:
         check_backends(tes_config(key_entry()))
+    assert KEY_ENV not in str(exc_info.value)
     empty = tmp_path / "key"
     empty.write_text("")
     monkeypatch.setenv(f"{KEY_ENV}_FILE", str(empty))
@@ -565,14 +625,112 @@ def test_check_backends_api_key_missing(
 
 
 def test_check_backends_api_key_invalid(monkeypatch: pytest.MonkeyPatch) -> None:
-    """On startup, keys that can't be used are refused, without their values."""
+    """On startup, keys that can't be used are refused, without their values.
+
+    Nor with the names of their variables.
+    """
     monkeypatch.setenv(KEY_ENV, f"{KEY} x")
     with pytest.raises(RuntimeError, match=f"TES backend {BACKEND_URL}") as exc_info:
         check_backends(tes_config(key_entry()))
     assert KEY not in str(exc_info.value)
+    assert KEY_ENV not in str(exc_info.value)
     monkeypatch.setenv(f"{KEY_ENV}_FILE", "/nonexistent/key")
-    with pytest.raises(RuntimeError, match="must not both be set"):
+    with pytest.raises(RuntimeError, match="must not both be set") as exc_info:
         check_backends(tes_config(key_entry()))
+    assert KEY_ENV not in str(exc_info.value)
+    monkeypatch.delenv(KEY_ENV)
+    with pytest.raises(RuntimeError, match="could not be read") as exc_info:
+        check_backends(tes_config(key_entry()))
+    assert KEY_ENV not in str(exc_info.value)
+
+
+def test_check_backends_key_as_key_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keys pasted as `key_env` by mistake don't show in startup errors.
+
+    Keys of letters, digits and `_` are valid variable names. Missing keys
+    are named with the other missing credentials (here, of proTES), by the
+    URLs of their backends, in order.
+    """
+    monkeypatch.delenv(KEY_AS_ENV, raising=False)
+    monkeypatch.delenv(f"{KEY_AS_ENV}_FILE", raising=False)
+    monkeypatch.delenv("PROTES_CLIENT_ID", raising=False)
+    monkeypatch.setenv("PROTES_CLIENT_SECRET", "secret")
+    conf = tes_config(
+        key_entry(key_env=KEY_AS_ENV),
+        key_entry("https://a.example.org", key_env=KEY_AS_ENV),
+        {"type": "ga4gh-tes", "url": "https://other.example.org"},
+    )
+    with pytest.raises(RuntimeError) as exc_info:
+        check_backends(conf)
+    assert str(exc_info.value) == (
+        "Credentials of TES backends missing: set the environment variables"
+        " PROTES_CLIENT_ID; and the API keys of TES backends"
+        f" https://a.example.org, {BACKEND_URL} (the variables that their"
+        " `key_env` names, or their"
+        " `_FILE` variables)"
+    )
+    assert KEY_AS_ENV not in str(exc_info.value)
+    monkeypatch.setenv(KEY_AS_ENV, f"{KEY} x")
+    with pytest.raises(RuntimeError, match="visible ASCII") as exc_info:
+        check_backends(conf)
+    assert KEY_AS_ENV not in str(exc_info.value)
+
+
+def test_config_dump_api_key() -> None:
+    """Configs with API keys are dumped without warnings, with the settings of proTES.
+
+    FOCA dumps the whole config on startup; the entries have FOCA's type in
+    the backend list, which doesn't know `auth: api_key`.
+    """
+    conf = CustomConfig(
+        tes=tes_config(
+            key_entry(header="X-API-Key"),
+            {"type": "ga4gh-service-registry", "url": "https://registry.example.org"},
+        )
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        dumped = conf.model_dump()
+        dumped_json = conf.model_dump(mode="json")
+    for dump in (dumped, dumped_json):
+        entry, registry = dump["tes"]["backends"]
+        assert entry["auth"] == "api_key"
+        assert entry["api_key"] == {"key_env": KEY_ENV, "header": "X-API-Key"}
+        assert entry["api_path"] == "/ga4gh/tes/v1"
+        assert registry["type"] == "ga4gh-service-registry"
+    assert CustomConfig.model_validate(dumped) == conf
+    assert CustomConfig.model_validate(dumped_json) == conf
+
+
+def test_app_startup_no_serialization_warning(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, app_env: None
+) -> None:
+    """The app starts with backends with API keys without Pydantic's warnings."""
+    monkeypatch.setenv(KEY_ENV, KEY)
+    overlay = tmp_path / "overlay.yaml"
+    overlay.write_text(
+        yaml.safe_dump(
+            {
+                "custom": {
+                    "tes": {
+                        "backends": [key_entry()],
+                        "client_credentials": {"issuer": ISSUER},
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    set_overlays(monkeypatch, overlay)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        init_app()
+    unexpected = [
+        warning
+        for warning in caught
+        if "PydanticSerializationUnexpectedValue" in str(warning.message)
+    ]
+    assert not unexpected
 
 
 def test_check_backends_api_key_unvalidated() -> None:

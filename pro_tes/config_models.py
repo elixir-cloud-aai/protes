@@ -1,7 +1,7 @@
 """Custom app config models."""
 
 import re
-from typing import Annotated, Literal, Self
+from typing import Annotated, Any, Literal, Self
 from urllib.parse import SplitResult, urlsplit
 
 from foca.plugins.backends import BackendListConfig, ServiceEntry
@@ -10,6 +10,8 @@ from pydantic import (
     ConfigDict,
     Field,
     PositiveInt,
+    SerializationInfo,
+    field_serializer,
     field_validator,
     model_validator,
 )
@@ -568,6 +570,41 @@ class Tes(ConfigModel):
     probe_with_token: bool = False
     max_response_size: Annotated[int, Field(ge=1048576, le=268435456)] = 10485760
 
+    @field_serializer("backends")
+    def dump_backends(
+        self, value: BackendListConfig, info: SerializationInfo
+    ) -> list[dict[str, Any]]:
+        """Dump the backend list with the models of its entries.
+
+        The field has FOCA's type, whose entries don't know the settings of
+        proTES (e.g., `auth: api_key`): Pydantic would dump them as FOCA's
+        entries, without these settings, and warn
+        (`PydanticSerializationUnexpectedValue`), e.g., when FOCA dumps the
+        config on startup.
+
+        Args:
+            value: Backend list.
+            info: Settings of the dump; those of nested fields (`include`,
+                `exclude`) and `serialize_as_any` don't apply to the
+                entries, so nested excludes can't leave out fields of
+                entries (e.g., `api_key`).
+
+        Returns:
+            The entries, each dumped with its own model.
+        """
+        return [
+            entry.model_dump(
+                mode=info.mode,
+                by_alias=bool(info.by_alias),
+                exclude_unset=info.exclude_unset,
+                exclude_defaults=info.exclude_defaults,
+                exclude_none=info.exclude_none,
+                round_trip=info.round_trip,
+                context=info.context,
+            )
+            for entry in value.root
+        ]
+
     @field_validator("backends", mode="before")
     @classmethod
     def parse_tes_instances(cls, value: object) -> object:
@@ -575,9 +612,8 @@ class Tes(ConfigModel):
 
         FOCA's backend list keeps entries that are instances of its models as
         they are (also :py:class:`foca.plugins.backends.BackendList`), so the
-        settings are available from the entries of its candidates. As the
-        field has FOCA's type, `model_dump()` leaves them out: don't load the
-        config from such a dump.
+        settings are available from the entries of its candidates. Dumps
+        keep them, too (cf. :py:meth:`dump_backends`).
 
         Args:
             value: Backend list, as given.
