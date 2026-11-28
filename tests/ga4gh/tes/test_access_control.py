@@ -596,7 +596,10 @@ def test_old_rule_name_refused(
     set_overlays(monkeypatch, overlay)
     reset_gateway()
     stored = _stored(mongo_client)  # by the app of the fixture `backend`
-    with pytest.raises(RuntimeError, match="was renamed to `users-create-tasks`"):
+    with pytest.raises(
+        RuntimeError,
+        match="renamed to `users-create-tasks` and `authenticated-list-tasks`",
+    ):
         init_app()
     assert _stored(mongo_client) == stored
 
