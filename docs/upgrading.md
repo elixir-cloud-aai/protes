@@ -2,13 +2,31 @@
 
 The [release notes](changelog.md) list the breaking changes of each release.
 This page describes how existing setups and data are affected, and what to
-change: first for upgrades from 0.6.0 ([To version
+change: first for upgrades from 0.7.0 ([To version
+0.8.0](#to-version-080)), then from 0.6.0 ([To version
 0.7.0](#to-version-070)), then from 0.5.0 ([To version
 0.6.0](#to-version-060)), then from 0.4.0 ([To version
 0.5.0](#to-version-050)), then for upgrades from 0.3.0 ([To version
 0.4.0](#to-version-040)), then for deployments from before 0.3.0, i.e.,
 images tagged by date, on FOCA 0.12 ([From versions before
 0.3.0](#from-versions-before-030)), which apply the steps of both parts.
+
+## To version 0.8.0
+
+**No action needed:** this release adds API keys for TES instances (`auth:
+api_key`), opt-in; configurations, values and stored data of 0.7.0 work
+unchanged. To reach a TES instance that accepts API keys but no tokens of
+proTES (e.g., Poiesis), see [API keys of TES
+instances](access-control.md#api-keys-of-tes-instances), and with the Helm
+chart its README (`tes.backends`, Secrets).
+
+**Tested TES implementations:** CI tested this release against Funnel
+0.12.3 (TES 1.1, by the label `tes.version` and from its service info),
+TESP-API 0.2.0 with Pulsar 0.14.16 (TES 1.0) and tesk-api 1.1.0 with the
+taskmaster and filer v0.10.6 (TES 1.0), as in [Notes on TES
+implementations](configuration.md#notes-on-tes-implementations). Not tested:
+tesk-api 2.0.0 (TES 1.1) and Poiesis (CI checks API keys against a
+stand-in TES instance only).
 
 ## To version 0.7.0
 
