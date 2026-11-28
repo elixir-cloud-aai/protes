@@ -290,6 +290,51 @@ def test_client_api_key(configured: None, monkeypatch: pytest.MonkeyPatch) -> No
     assert KEY_ENV not in str(exc_info.value)
 
 
+@pytest.mark.parametrize(
+    "value, file, match",
+    [
+        (None, None, "API key not set"),
+        (KEY, KEY, "must not both be set"),
+        (None, "/nonexistent/key", "could not be read"),
+        (f"{KEY} x", None, "visible ASCII"),
+    ],
+)
+def test_client_api_key_as_key_env(
+    app: FlaskApp,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    value: str | None,
+    file: str | None,
+    match: str,
+) -> None:
+    """Requests without a usable key name the backend, not a key pasted as `key_env`.
+
+    Nor do the errors chain those of reading the key. `file` is the content
+    of the key file, or the path itself if absolute.
+    """
+    monkeypatch.delenv(KEY_AS_ENV, raising=False)
+    monkeypatch.delenv(f"{KEY_AS_ENV}_FILE", raising=False)
+    if value is not None:
+        monkeypatch.setenv(KEY_AS_ENV, value)
+    if file is not None:
+        path = Path(file) if file.startswith("/") else tmp_path / "key"
+        if not file.startswith("/"):
+            path.write_text(file)
+        monkeypatch.setenv(f"{KEY_AS_ENV}_FILE", str(path))
+    with app.app.app_context():
+        conf = get_custom_config(CustomConfig).tes
+        conf.backends = tes_config(key_entry(key_env=KEY_AS_ENV)).backends
+        client = backends.create_client(host=BACKEND_URL)
+        with pytest.raises(
+            BackendAuthError, match=f"^TES backend {BACKEND_URL}: .*{match}"
+        ) as exc_info:
+            client._request_params()
+    assert KEY_AS_ENV not in str(exc_info.value)
+    assert KEY not in str(exc_info.value)
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__suppress_context__
+
+
 def test_client_api_key_unset(configured: None) -> None:
     """Backends with `auth: api_key`, but no `api_key` (not validated), get none."""
     backend = Backend(id=BACKEND_URL, url=BACKEND_URL, auth="api_key")

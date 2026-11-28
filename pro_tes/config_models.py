@@ -586,7 +586,8 @@ class Tes(ConfigModel):
             value: Backend list.
             info: Settings of the dump; those of nested fields (`include`,
                 `exclude`) and `serialize_as_any` don't apply to the
-                entries.
+                entries, so nested excludes can't leave out fields of
+                entries (e.g., `api_key`).
 
         Returns:
             The entries, each dumped with its own model.
