@@ -20,6 +20,16 @@ proTES (e.g., Poiesis), see [API keys of TES
 instances](access-control.md#api-keys-of-tes-instances), and with the Helm
 chart its README (`tes.backends`, Secrets).
 
+**Final states checked against the view `FULL`:** when a TES instance reports
+a final state, but another state in the view `FULL` that proTES gets for the
+logs (e.g., a TESK that briefly answers `SYSTEM_ERROR` while the Job of a task
+is finishing), proTES no longer stores the first state without logs. It
+polls the task again, up to 5 times, and stores a final state once both views
+agree; after that, the final state of the last poll, without logs, as before
+(see [Task tracking](operations.md#task-tracking)). Stored tasks get new
+fields, `tracking.disagreements` and `tracking.disagreed_poll`; tasks
+finished before stay as they are.
+
 **Tested TES implementations:** CI tested this release against Funnel
 0.12.3 (TES 1.1, by the label `tes.version` and from its service info),
 TESP-API 0.2.0 with Pulsar 0.14.16 (TES 1.0) and tesk-api 1.1.0 with the
