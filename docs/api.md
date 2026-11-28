@@ -35,7 +35,9 @@ the TES specification describes. The view `FULL` has the logs of the TES
 instance once the task has finished, as proTES gets them once then: earlier, it
 has none, and if that one request fails (also for responses over
 `custom.tes.max_response_size`, 10 MiB by default), the task
-stays without them. The final state appears together with them. proTES
+stays without them. The final state appears together with them, once the
+TES instance reports it in both views (see [Task
+tracking](operations.md#task-tracking)). proTES
 stores at most `max_log_size` of them per task, and keeps the end of longer ones
 (see [Tasks](configuration.md#tasks)). Times (`creation_time`, and `start_time`
 and `end_time` of proTES's log of a task) are in UTC, in RFC 3339 format.

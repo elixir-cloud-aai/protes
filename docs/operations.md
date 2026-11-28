@@ -31,7 +31,13 @@ at its TES instance every `polling.wait` seconds (see
 schedules the next one, so no worker process is held for the runtime of a
 task, and long tasks don't keep the others from being tracked. Once a task has
 finished, its state, logs and outputs are stored (tracking writes no other
-fields of a task, so its tags are kept), and tracking ends; a canceled
+fields of a task, so its tags are kept), and tracking ends. If the TES
+instance reports another state in the view `FULL`, which proTES gets for the
+logs, than in the poll (e.g., a TESK that briefly answers `SYSTEM_ERROR` while
+the Job of a task is finishing), proTES stores neither, logs a warning
+(`Polling again`), and polls the task again after `polling.wait` seconds, until
+both agree; after 5 such polls, it stores the final state of the last poll,
+without the logs of the view `FULL`. A canceled
 task stays `CANCELING` until its TES instance has finished it, or answers that
 it no longer has it (`404`; then `CANCELED`), or until the first poll more than
 `polling.max_cancel_time` seconds after the cancel (default 3600; later if its

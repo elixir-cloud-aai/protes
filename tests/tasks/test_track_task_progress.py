@@ -653,19 +653,69 @@ def test_no_log_texts_without_limit() -> None:
     assert logs[0].system_logs is None
 
 
-def test_full_logs_other_state(
+def test_final_states_disagree(
     tasks: Collection[dict[str, Any]],
     client_class: type[FakeClient],
+    scheduled: list[dict[str, Any]],
+    stored_states: list[str],
+    polling: Polling,
 ) -> None:
-    """A view `FULL` in another state than the final one isn't used."""
+    """A final state that the view `FULL` contradicts isn't stored.
+
+    The task is polled again, and stored once both agree, with its logs
+    (e.g., a TESK that briefly reports `SYSTEM_ERROR` for a task whose Job is
+    finishing).
+    """
+    client_class.states = ["SYSTEM_ERROR", "COMPLETE"]
+    client_class.full_logs = {"system_logs": ["done"]}
+    countdowns = track(scheduled)
+    assert client_class.views == ["BASIC", "FULL", "BASIC", "FULL"]
+    assert countdowns == [polling.wait]
+    assert stored_states == ["COMPLETE"]
+    assert stored_log(tasks)["system_logs"] == ["done"]
+
+
+def test_final_states_keep_disagreeing(
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+    scheduled: list[dict[str, Any]],
+    stored_states: list[str],
+) -> None:
+    """A task whose final states keep disagreeing still finishes.
+
+    After `MAX_DISAGREEMENTS` polls again, the final state of the last poll is
+    stored, without the logs of the view `FULL`.
+    """
     client_class.full_state = "RUNNING"
     client_class.full_logs = {"system_logs": ["log"]}
+    countdowns = track(scheduled)
+    assert len(countdowns) == track_task_progress.MAX_DISAGREEMENTS
+    assert client_class.views.count("FULL") == len(countdowns) + 1
+    assert stored_states == ["COMPLETE"]
+    assert not stored_log(tasks).get("system_logs")
+
+
+def test_final_states_disagree_tracked_elsewhere(
+    tasks: Collection[dict[str, Any]],
+    client_class: type[FakeClient],
+    scheduled: list[dict[str, Any]],
+) -> None:
+    """A poll that lost the tracking meanwhile neither stores nor schedules."""
+    client_class.full_state = "RUNNING"
+
+    def take_over() -> None:
+        """Pass the tracking to another chain of polls."""
+        tasks.update_one(
+            {"worker_id": ARGS["worker_id"]},
+            {"$set": {track_task_progress.POLL_FIELD: "other"}},
+        )
+
+    client_class.on_full = take_over
     run()
-    log = stored_log(tasks)
-    assert not log.get("system_logs")
+    assert not scheduled
     document = tasks.find_one({"worker_id": ARGS["worker_id"]})
     assert document is not None
-    assert document["task"]["state"] == "COMPLETE"
+    assert document["task"]["state"] == "QUEUED"
 
 
 def test_full_logs_turned_off(
@@ -1011,6 +1061,8 @@ def test_preempted_final(
     tracked only if the tracker kept polling.
     """
     client_class.states = ["RUNNING", "RUNNING", "PREEMPTED", "COMPLETE"]
+    # the view `FULL` agrees (cf. `test_final_states_disagree`)
+    client_class.full_state = "PREEMPTED"
     track(scheduled)
     assert stored_states == ["RUNNING", "PREEMPTED"]
     document = tasks.find_one({"worker_id": ARGS["worker_id"]})
